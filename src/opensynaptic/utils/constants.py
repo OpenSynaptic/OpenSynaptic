@@ -74,41 +74,41 @@ class LogMsg(Enum):
     TUI_SECTION = 'TUI_SECTION'
     TUI_INTERACTIVE = 'TUI_INTERACTIVE'
 
-MESSAGES = {LogMsg.READY: 'OpenSynaptic 地基已就緒 | Root: {root}', LogMsg.CONFIG_SAVED: '配置已保存: {field}={value}', LogMsg.TIME_SYNCED: '時間同步成功: server_time={server_time} | {host}:{port}', LogMsg.LIBRARY_INDEXED: '資源庫索引完成: {modules}', LogMsg.LIBRARY_INDEX_FAILED: '資源庫索引失敗: {module}', LogMsg.LIBRARY_SYNCED: '資源庫同步完成: {output}', LogMsg.LIBRARY_SYNC_FAILED: '資源庫同步失敗: {target}', LogMsg.LIBRARY_HEADER_EXPORTED: '協議頭文件已導出: {output}', LogMsg.DRIVER_MOUNT: '驅動掛載 {module} | 來源: {source}', LogMsg.DRIVER_ACTIVATED: '驅動激活 {module} | 狀態: 運行中', LogMsg.DRIVER_SLEEP: '驅動休眠 {module} | 狀態: 已停用', LogMsg.NEW_DRIVER_REGISTERED: "新發現 驅動 '{module}' 已登記至 Config (預設關閉)", LogMsg.PROTOCOL_REFRESHED: '協議已刷新 {layer}:{protocol}', LogMsg.PROTOCOL_INVALIDATED: '協議緩存已失效 {layer}:{protocol}', LogMsg.ID_ASSIGNED: '設備 {addr} → ID={assigned}', LogMsg.ID_RECEIVED: '服務器分配 ID={assigned}', LogMsg.ID_POOL_ISSUED: 'ID 池下發 {addr} → {count} 個 ID', LogMsg.ID_POOL_RECEIVED: 'ID 池收到 {count} 個 ID: {pool}', LogMsg.ID_REQUEST_TIMEOUT: 'ID 申請 超時 ({timeout}s)', LogMsg.SUCCESS_SEND: '發送成功: {info}', LogMsg.FAILED_SEND: '發送失敗: {info}', LogMsg.LORA_CONNECTED: 'LoRa 成功連接至設備: {port}', LogMsg.LORA_CLOSED: 'LoRa 串口已關閉', LogMsg.LORA_SENDING: 'LoRa 正在發射 ({len} Bytes): {hex}', LogMsg.LORA_RESPONSE: 'LoRa 收到回傳: {hex}', LogMsg.LORA_NOT_READY: 'LoRa 發送失敗：串口未就緒。', LogMsg.TEMPLATE_LEARNED: '接收端 學習模板 TID={tid} | src={src} | vars={vars}', LogMsg.CAN_SEND: 'CAN Bus ID:{can_id} 将数据拆分为 {chunks} 帧发送...', LogMsg.IWIP_START: 'lwIP Core 內核啟動: {host}:{port}', LogMsg.IWIP_SEND: 'lwIP Net 已發送 {bytes} bytes 至 {addr}', LogMsg.APP_RECV: 'App Recv 來自 {addr} 的數據: {preview}', LogMsg.RS485_SEND: 'RS485 正在通过 {port} 发送 {len} 字节...', LogMsg.UART_SEND: 'UART 通過 {port} 噴出 {total_len} bytes...', LogMsg.UART_DURATION: 'Physical 預計波特率耗時: {duration:.4f}s', LogMsg.UART_LINE: 'Wire 物理線路上的數據: {preview}', LogMsg.UIP_LISTEN: 'uIP Sim 正在監聽 {host}:{port}...', LogMsg.UIP_SEND: 'uIP Send {len} bytes -> {addr}', LogMsg.UIP_RECV: 'uIP Recv 內容: {received}', LogMsg.RX_SERVER_START: 'UDP Server 啟動成功 | 端口: {port}', LogMsg.RX_SIGNAL_STOP: 'Server 停止信號已接收', LogMsg.RX_PACKET_IN: '接收數據包 {addr} | CMD={cmd} | {size}B', LogMsg.RX_DATA_PACKET: '數據包解析完成: {preview}', LogMsg.RX_CTRL_PACKET: '控制包解析完成: {preview}', LogMsg.RX_RESPONSE_SENT: '回覆已發送 {addr} | {size}B', LogMsg.RX_UNKNOWN_PACKET: '未知指令: {preview}', LogMsg.RX_WORKERS_READY: '分片工作線程就緒: {shards} | 每分片佇列: {queue_size} | 總容量: {capacity}', LogMsg.RX_PERF: '性能統計 recv={received} ok={completed} fail={failed} drop={dropped} backlog={backlog}/{max_backlog} avg={avg_latency_ms}ms max={max_latency_ms}ms pps(in/out)={ingress_pps}/{complete_pps}', LogMsg.RX_FINAL_STATS: '最終統計: {snapshot}', LogMsg.RX_OVERLOAD_DROP: '過載丟包 shard={shard} backlog={backlog} cap={capacity}', LogMsg.RX_WORKER_ERROR: '工作線程錯誤 shard={shard}: {error}', LogMsg.RX_SOCKET_ERROR: '接收錯誤: {error}', LogMsg.CLI_READY: 'CLI 已就緒: {mode}', LogMsg.CLI_ACTION: 'CLI 執行操作: {action}', LogMsg.CLI_RESULT: 'CLI 結果: {result}', LogMsg.TUI_READY: 'TUI 已就緒', LogMsg.TUI_RENDER: 'TUI 畫面已刷新: {section}', LogMsg.LTE_SENDING: '5G/LTE 正在通過高速蜂窩網路發送...', LogMsg.LTE_RESPONSE: '5G 伺服器響應: {res_data}', LogMsg.INJECT_STAGE: '管道注入階段 [{stage}]: {summary}', LogMsg.WATCH_TICK: '[{ts}] 監控模塊 [{module}] 無變化', LogMsg.WATCH_CHANGED: '[{ts}] 監控模塊 [{module}] 狀態變更', LogMsg.DECODE_RESULT: '解碼結果: {result}', LogMsg.TRANSPORTER_TOGGLED: '傳輸器 [{name}] → {state}'}
+MESSAGES = {LogMsg.READY: 'OpenSynaptic base is ready | Root: {root}', LogMsg.CONFIG_SAVED: 'Configuration saved: {field}={value}', LogMsg.TIME_SYNCED: 'Time synchronized successfully: server_time={server_time} | {host}:{port}', LogMsg.LIBRARY_INDEXED: 'Library indexing completed: {modules}', LogMsg.LIBRARY_INDEX_FAILED: 'Library indexing failed: {module}', LogMsg.LIBRARY_SYNCED: 'Library sync completed: {output}', LogMsg.LIBRARY_SYNC_FAILED: 'Library sync failed: {target}', LogMsg.LIBRARY_HEADER_EXPORTED: 'Protocol header exported: {output}', LogMsg.DRIVER_MOUNT: 'Driver mounted {module} | Source: {source}', LogMsg.DRIVER_ACTIVATED: 'Driver activated {module} | Status: running', LogMsg.DRIVER_SLEEP: 'Driver sleeping {module} | Status: disabled', LogMsg.NEW_DRIVER_REGISTERED: "New driver '{module}' discovered and registered in Config (disabled by default)", LogMsg.PROTOCOL_REFRESHED: 'Protocol refreshed {layer}:{protocol}', LogMsg.PROTOCOL_INVALIDATED: 'Protocol cache invalidated {layer}:{protocol}', LogMsg.ID_ASSIGNED: 'Device {addr} → ID={assigned}', LogMsg.ID_RECEIVED: 'Server assigned ID={assigned}', LogMsg.ID_POOL_ISSUED: 'ID pool issued {addr} → {count} IDs', LogMsg.ID_POOL_RECEIVED: 'ID pool received {count} IDs: {pool}', LogMsg.ID_REQUEST_TIMEOUT: 'ID request timeout ({timeout}s)', LogMsg.SUCCESS_SEND: 'Send succeeded: {info}', LogMsg.FAILED_SEND: 'Send failed: {info}', LogMsg.LORA_CONNECTED: 'LoRa successfully connected to device: {port}', LogMsg.LORA_CLOSED: 'LoRa serial port closed', LogMsg.LORA_SENDING: 'LoRa transmitting ({len} Bytes): {hex}', LogMsg.LORA_RESPONSE: 'LoRa received response: {hex}', LogMsg.LORA_NOT_READY: 'LoRa send failed: serial port not ready.', LogMsg.TEMPLATE_LEARNED: 'Receiver learned template TID={tid} | src={src} | vars={vars}', LogMsg.CAN_SEND: 'CAN Bus ID:{can_id} splitting data into {chunks} frames to send...', LogMsg.IWIP_START: 'lwIP core started: {host}:{port}', LogMsg.IWIP_SEND: 'lwIP network sent {bytes} bytes to {addr}', LogMsg.APP_RECV: 'App received data from {addr}: {preview}', LogMsg.RS485_SEND: 'RS485 sending {len} bytes through {port}...', LogMsg.UART_SEND: 'UART sent {total_len} bytes via {port}...', LogMsg.UART_DURATION: 'Physical estimated baud duration: {duration:.4f}s', LogMsg.UART_LINE: 'Data on physical wire: {preview}', LogMsg.UIP_LISTEN: 'uIP Sim listening on {host}:{port}...', LogMsg.UIP_SEND: 'uIP sent {len} bytes -> {addr}', LogMsg.UIP_RECV: 'uIP received: {received}', LogMsg.RX_SERVER_START: 'UDP Server started successfully | Port: {port}', LogMsg.RX_SIGNAL_STOP: 'Server stop signal received', LogMsg.RX_PACKET_IN: 'Received packet {addr} | CMD={cmd} | {size}B', LogMsg.RX_DATA_PACKET: 'Data packet parsed: {preview}', LogMsg.RX_CTRL_PACKET: 'Control packet parsed: {preview}', LogMsg.RX_RESPONSE_SENT: 'Response sent {addr} | {size}B', LogMsg.RX_UNKNOWN_PACKET: 'Unknown command: {preview}', LogMsg.RX_WORKERS_READY: 'Shard worker threads ready: {shards} | per-shard queue: {queue_size} | total capacity: {capacity}', LogMsg.RX_PERF: 'Performance stats recv={received} ok={completed} fail={failed} drop={dropped} backlog={backlog}/{max_backlog} avg={avg_latency_ms}ms max={max_latency_ms}ms pps(in/out)={ingress_pps}/{complete_pps}', LogMsg.RX_FINAL_STATS: 'Final stats: {snapshot}', LogMsg.RX_OVERLOAD_DROP: 'Overload drop shard={shard} backlog={backlog} cap={capacity}', LogMsg.RX_WORKER_ERROR: 'Worker thread error shard={shard}: {error}', LogMsg.RX_SOCKET_ERROR: 'Receive error: {error}', LogMsg.CLI_READY: 'CLI ready: {mode}', LogMsg.CLI_ACTION: 'CLI action executed: {action}', LogMsg.CLI_RESULT: 'CLI result: {result}', LogMsg.TUI_READY: 'TUI ready', LogMsg.TUI_RENDER: 'TUI rendered: {section}', LogMsg.LTE_SENDING: '5G/LTE sending via cellular network...', LogMsg.LTE_RESPONSE: '5G server response: {res_data}', LogMsg.INJECT_STAGE: 'Pipeline inject stage [{stage}]: {summary}', LogMsg.WATCH_TICK: '[{ts}] Watch module [{module}] no change', LogMsg.WATCH_CHANGED: '[{ts}] Watch module [{module}] state changed', LogMsg.DECODE_RESULT: 'Decode result: {result}', LogMsg.TRANSPORTER_TOGGLED: 'Transporter [{name}] → {state}'}
 
 MESSAGES.update({
-    LogMsg.CONFIG_SHOW: 'Config 顯示: {section}',
-    LogMsg.CONFIG_GET: 'Config 讀取: {key} = {value}',
-    LogMsg.CONFIG_SET: 'Config 設置: {key} = {value}',
-    LogMsg.PLUGIN_CMD: '插件指令路由: {plugin}.{sub_cmd}',
-    LogMsg.PLUGIN_TEST_START: '測試套件啟動: {plugin} suite={suite}',
-    LogMsg.PLUGIN_TEST_RESULT: '測試套件完成: {plugin} suite={suite} ok={ok} fail={fail}',
-    LogMsg.TUI_SECTION: 'TUI 區段渲染: {section}',
-    LogMsg.TUI_INTERACTIVE: 'TUI 互動模式啟動 interval={interval}s',
+    LogMsg.CONFIG_SHOW: 'Config show: {section}',
+    LogMsg.CONFIG_GET: 'Config get: {key} = {value}',
+    LogMsg.CONFIG_SET: 'Config set: {key} = {value}',
+    LogMsg.PLUGIN_CMD: 'Plugin command routing: {plugin}.{sub_cmd}',
+    LogMsg.PLUGIN_TEST_START: 'Plugin test started: {plugin} suite={suite}',
+    LogMsg.PLUGIN_TEST_RESULT: 'Plugin test completed: {plugin} suite={suite} ok={ok} fail={fail}',
+    LogMsg.TUI_SECTION: 'TUI section rendered: {section}',
+    LogMsg.TUI_INTERACTIVE: 'TUI interactive mode started interval={interval}s',
 })
 
 CLI_HELP_TABLE = {
-    'run': {'aliases': ['os-run'], 'desc': '主端持久運行模式。啟動後維持協議管理心跳，直到中斷或達到 --duration。'},
-    'snapshot': {'aliases': ['os-snapshot'], 'desc': '輸出當前節點、服務、傳輸器快照 JSON。'},
-    'receive': {'aliases': ['os-receive'], 'desc': '啟動 UDP 接收端（服務端接收模式）。'},
-    'tui': {'aliases': ['os-tui'], 'desc': '渲染一次 TUI 插件快照。'},
-    'time-sync': {'aliases': ['os-time-sync'], 'desc': '向服務端申請時間戳並同步。'},
-    'ensure-id': {'aliases': ['os-ensure-id'], 'desc': '向服務端申請設備 ID 並持久化到 Config。'},
-    'transmit': {'aliases': ['os-transmit'], 'desc': '打包一次感測器資料並發送。'},
-    'reload-protocol': {'aliases': ['os-reload-protocol'], 'desc': '按協議名稱刷新傳輸/物理層適配器。'},
-    'plugin-list': {'aliases': ['os-plugin-list'], 'desc': '列出已掛載插件及其運行狀態。'},
-    'plugin-load': {'aliases': ['os-plugin-load'], 'desc': '按插件名執行一次載入。'},
-    'transport-status': {'aliases': ['os-transport-status'], 'desc': '查看應用/傳輸/物理層狀態與激活情況。'},
-    'db-status': {'aliases': ['os-db-status'], 'desc': '查看 db_engine 是否啟用與當前方言。'},
-    'inject': {'aliases': ['os-inject'], 'desc': '向指定管道模塊注入感測器數據並顯示各階段輸出 (--module: standardize/compress/fuse/full)。'},
-    'decode': {'aliases': ['os-decode'], 'desc': '解碼二進制包 (hex) 或 Base62 壓縮字串，還原為可讀 JSON (--format: hex/b62)。'},
-    'watch': {'aliases': ['os-watch'], 'desc': '實時輪詢監控指定模塊的狀態變化 (--module: config/registry/transport/pipeline)。'},
-    'transporter-toggle': {'aliases': ['os-transporter-toggle'], 'desc': '在 Config.json 中啟用或禁用傳輸器 (--name <名稱> --enable | --disable)。'},
-    'config-show': {'aliases': ['os-config-show'], 'desc': '顯示 Config.json 全部或指定 section (--section <名稱>)。'},
-    'config-get': {'aliases': ['os-config-get'], 'desc': '讀取 Config.json 點號路徑的值 (--key a.b.c)。'},
-    'config-set': {'aliases': ['os-config-set'], 'desc': '設置 Config.json 點號路徑的值 (--key a.b.c --value <v> [--type int|float|bool|str|json])。'},
-    'plugin-cmd': {'aliases': ['os-plugin-cmd'], 'desc': '路由指令到指定插件的 CLI 處理器 (--plugin <名稱> --cmd <子命令> [args...])。'},
-    'plugin-test': {'aliases': ['os-plugin-test'], 'desc': '執行測試套件 (--suite component|stress|all [--workers N] [--total N])。'},
-    'help': {'aliases': ['os-help'], 'desc': '顯示本幫助（含中文命令註解）。'}
+    'run': {'aliases': ['os-run'], 'desc': 'Main daemon persistent run mode. After starting, maintain the protocol management heartbeat until interrupted or until --duration.'},
+    'snapshot': {'aliases': ['os-snapshot'], 'desc': 'Output current node, services, and transporters snapshot as JSON.'},
+    'receive': {'aliases': ['os-receive'], 'desc': 'Start UDP receiver (server receive mode).'},
+    'tui': {'aliases': ['os-tui'], 'desc': 'Render a TUI plugin snapshot once.'},
+    'time-sync': {'aliases': ['os-time-sync'], 'desc': 'Request a timestamp from the server and synchronize.'},
+    'ensure-id': {'aliases': ['os-ensure-id'], 'desc': 'Request a device ID from the server and persist it to Config.'},
+    'transmit': {'aliases': ['os-transmit'], 'desc': 'Pack sensor data and send once.'},
+    'reload-protocol': {'aliases': ['os-reload-protocol'], 'desc': 'Refresh transport/physical layer adapters by protocol name.'},
+    'plugin-list': {'aliases': ['os-plugin-list'], 'desc': 'List mounted plugins and their running status.'},
+    'plugin-load': {'aliases': ['os-plugin-load'], 'desc': 'Load a plugin by name once.'},
+    'transport-status': {'aliases': ['os-transport-status'], 'desc': 'View application/transport/physical layer status and activation.'},
+    'db-status': {'aliases': ['os-db-status'], 'desc': 'View whether db_engine is enabled and the current dialect.'},
+    'inject': {'aliases': ['os-inject'], 'desc': 'Inject sensor data into the specified pipeline module and show outputs of each stage (--module: standardize/compress/fuse/full).'},
+    'decode': {'aliases': ['os-decode'], 'desc': 'Decode a binary packet (hex) or a Base62 compressed string back to readable JSON (--format: hex/b62).'},
+    'watch': {'aliases': ['os-watch'], 'desc': 'Poll and monitor the state changes of the specified module in real time (--module: config/registry/transport/pipeline).'},
+    'transporter-toggle': {'aliases': ['os-transporter-toggle'], 'desc': 'Enable or disable a transporter in Config.json (--name <name> --enable | --disable).'},
+    'config-show': {'aliases': ['os-config-show'], 'desc': 'Show entire Config.json or a specified section (--section <name>).'},
+    'config-get': {'aliases': ['os-config-get'], 'desc': 'Read the value at a dotted path in Config.json (--key a.b.c).'},
+    'config-set': {'aliases': ['os-config-set'], 'desc': 'Set the value at a dotted path in Config.json (--key a.b.c --value <v> [--type int|float|bool|str|json]).'},
+    'plugin-cmd': {'aliases': ['os-plugin-cmd'], 'desc': 'Route a command to the specified plugin\'s CLI handler (--plugin <name> --cmd <subcommand> [args...]).'},
+    'plugin-test': {'aliases': ['os-plugin-test'], 'desc': 'Run a test suite (--suite component|stress|all [--workers N] [--total N]).'},
+    'help': {'aliases': ['os-help'], 'desc': 'Show this help (includes command annotations in Chinese).'}
 }
 
