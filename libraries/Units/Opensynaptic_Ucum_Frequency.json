@@ -1,0 +1,53 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"4",
+        "standard_name": "OpenSynaptic_Ucum_Frequency",
+        "class_name": "Frequency",
+        "class_id": "0x09",
+        "version": "1.1.0",
+        "author": "OpenSynaptic_Protocol_Core",
+        "base_unit": "Hz"
+    },
+    "units": {
+        "Hz": {
+            "name": "hertz",
+            "ucum_code": "Hz",
+            "tid": "0x0900",
+            "physical_attribute": "frequency",
+            "standard_unit_name": "hertz",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "rpm": {
+            "name": "revolutions per minute",
+            "ucum_code": "min-1",
+            "tid": "0x0901",
+            "physical_attribute": "frequency",
+            "standard_unit_name": "hertz",
+            "to_standard_factor": 0.016666666666666666,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "deg/s": {
+            "name": "degrees per second",
+            "ucum_code": "deg/s",
+            "tid": "0x0902",
+            "physical_attribute": "frequency",
+            "standard_unit_name": "hertz",
+            "to_standard_factor": 0.002777777777777778,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "rad/s": {
+            "name": "radians per second",
+            "ucum_code": "rad/s",
+            "tid": "0x0903",
+            "physical_attribute": "frequency",
+            "standard_unit_name": "hertz",
+            "to_standard_factor": 0.15915494309189535,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        }
+    }
+}

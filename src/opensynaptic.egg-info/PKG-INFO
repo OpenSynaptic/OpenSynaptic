@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: opensynaptic
+Version: 0.1.0
+Summary: 2-N-2 架构高性能协议栈
+Author: Your Name
+Requires-Dist: numpy
+Requires-Dist: toml

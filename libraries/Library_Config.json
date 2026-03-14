@@ -1,0 +1,11 @@
+{
+  "PATHS":
+  {
+      "protocol_spec": "./Protocol_Spec.json",
+      "units_repository": "./Units/"
+  },
+  "SETTINGS":
+  {
+      "matrix_resolve_mode": "AUTO"
+  }
+}

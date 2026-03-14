@@ -1,0 +1,53 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"0",
+        "standard_name": "OpenSynaptic_Ucum_Amount_Of_Substance",
+        "class_name": "AmountOfSubstance",
+        "class_id": "0x06",
+        "version": "1.1.0",
+        "base_unit": "mol"
+
+    },
+    "units": {
+        "mol": {
+            "name": "mole",
+            "ucum_code": "mol",
+            "tid": "0x0600",
+            "physical_attribute": "amount of substance",
+            "standard_unit_name": "mole",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "eq": {
+            "name": "equivalents",
+            "ucum_code": "eq",
+            "tid": "0x0601",
+            "physical_attribute": "amount of substance",
+            "standard_unit_name": "mole",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "osm": {
+            "name": "osmole",
+            "ucum_code": "osm",
+            "tid": "0x0602",
+            "physical_attribute": "amount of substance",
+            "standard_unit_name": "mole",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "count": {
+            "name": "particle count",
+            "ucum_code": "{particles}",
+            "tid": "0x0603",
+            "physical_attribute": "amount of substance",
+            "standard_unit_name": "mole",
+            "to_standard_factor": 1.6605390666e-24,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        }
+    }
+}

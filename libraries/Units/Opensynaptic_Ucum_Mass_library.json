@@ -1,0 +1,62 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"8",
+        "standard_name": "OpenSynaptic_Ucum_Mass",
+        "class_name": "Mass",
+        "class_id": "0x02",
+        "version": "1.1.0",
+        "base_unit": "g"
+    },
+    "units": {
+        "g": {
+            "name": "gram",
+            "ucum_code": "g",
+            "tid": "0x0200",
+            "physical_attribute": "mass",
+            "standard_unit_name": "kilogram",
+            "to_standard_factor": 0.001,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "lb": {
+            "name": "pound",
+            "ucum_code": "[lb_i]",
+            "tid": "0x0201",
+            "physical_attribute": "mass",
+            "standard_unit_name": "kilogram",
+            "to_standard_factor": 0.45359237,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "oz": {
+            "name": "ounce",
+            "ucum_code": "[oz_i]",
+            "tid": "0x0202",
+            "physical_attribute": "mass",
+            "standard_unit_name": "kilogram",
+            "to_standard_factor": 0.028349523,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "t": {
+            "name": "metric ton",
+            "ucum_code": "t",
+            "tid": "0x0203",
+            "physical_attribute": "mass",
+            "standard_unit_name": "kilogram",
+            "to_standard_factor": 1000.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "u": {
+            "name": "unified atomic mass unit",
+            "ucum_code": "u",
+            "tid": "0x0204",
+            "physical_attribute": "mass",
+            "standard_unit_name": "kilogram",
+            "to_standard_factor": 1.660539066e-27,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        }
+    }
+}

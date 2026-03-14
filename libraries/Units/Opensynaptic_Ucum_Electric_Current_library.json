@@ -1,0 +1,42 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"1",
+        "standard_name": "OpenSynaptic_Ucum_Electric_Current",
+        "class_name": "ElectricCurrent",
+        "class_id": "0x05",
+        "version": "1.1.0",
+        "base_unit": "A"
+    },
+    "units": {
+        "A": {
+            "name": "ampere",
+            "ucum_code": "A",
+            "tid": "0x0500",
+            "physical_attribute": "electric current",
+            "standard_unit_name": "ampere",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "Bi": {
+            "name": "biot",
+            "ucum_code": "Bi",
+            "tid": "0x0501",
+            "physical_attribute": "electric current",
+            "standard_unit_name": "ampere",
+            "to_standard_factor": 10.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "Gau": {
+            "name": "gauss unit",
+            "ucum_code": "Gau",
+            "tid": "0x0502",
+            "physical_attribute": "electric current",
+            "standard_unit_name": "ampere",
+            "to_standard_factor": 3.335641e-10,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        }
+    }
+}
