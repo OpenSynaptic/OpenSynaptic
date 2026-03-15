@@ -1,7 +1,7 @@
 import base64, time, struct
 from pathlib import Path
 from opensynaptic.utils.paths import read_json, ctx
-from opensynaptic.utils.base62_codec import Base62Codec
+from opensynaptic.utils.base62.base62 import Base62Codec
 from opensynaptic.utils.logger import os_log
 
 class OpenSynapticEngine:
@@ -25,18 +25,35 @@ class OpenSynapticEngine:
             self.SCALE_MAP[v['macro']] = v['f']
         for v in self.BIT_SWITCH.values():
             self.SCALE_MAP[v['micro']] = 1.0 / v['f']
+        self._bit_switch_desc = tuple(sorted((info for info in self.BIT_SWITCH.values()), key=lambda x: x['f'], reverse=True))
         res = self.config.get('RESOURCES', {})
         sym_ref = res.get('prefixes') or res.get('symbols')
         if sym_ref:
-            self.sym_path = str(Path(base_path) / sym_ref)
+            sym_candidate = Path(base_path) / sym_ref
         else:
-            self.sym_path = str(Path(base_path) / 'data' / 'symbols.json')
+            sym_candidate = Path(base_path) / 'data' / 'symbols.json'
+        if not sym_candidate.exists():
+            fallback_candidates = (
+                Path(base_path) / 'libraries' / 'OS_Symbols.json',
+                Path(ctx.root) / 'libraries' / 'OS_Symbols.json',
+                Path(base_path) / 'OS_Symbols.json',
+            )
+            for candidate in fallback_candidates:
+                if candidate.exists():
+                    sym_candidate = candidate
+                    break
+        self.sym_path = str(sym_candidate)
         self.sol_path = str(Path(base_path) / 'cache' / 'solidity_cache.json')
         settings = self.config.get('engine_settings', {})
         self.USE_MS = settings.get('use_ms', True)
         self.precision_val = 10 ** settings.get('precision', 4)
         self.CHARS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
         self._symbols_cache = None
+        self._units_map = {}
+        self._states_map = {}
+        self._unit_token_cache = {}
+        self._b62_encode_cache = {}
+        self._b62_cache_limit = 16384
         self.registry = read_json(self.sol_path).get('cached_units', {})
         self._refresh_maps()
 
@@ -45,28 +62,52 @@ class OpenSynapticEngine:
 
     def _refresh_maps(self):
         lib = self._load_json(self.sym_path)
-        self.REV_UNIT = {str(v): k for k, v in lib.get('units', {}).items()}
+        if not isinstance(lib, dict):
+            lib = {}
+        self._symbols_cache = lib
+        self._units_map = lib.get('units', {}) if isinstance(lib.get('units', {}), dict) else {}
+        self._states_map = lib.get('states', {}) if isinstance(lib.get('states', {}), dict) else {}
+        self.REV_UNIT = {str(v): k for k, v in self._units_map.items()}
         for k, v in self.registry.items():
             sym = v.get('os_symbol')
             if sym:
                 self.REV_UNIT[str(sym)] = k
-        self.REV_STATE = {str(v): k for k, v in lib.get('states', {}).items()}
-        self._symbols_cache = lib
+        self.REV_STATE = {str(v): k for k, v in self._states_map.items()}
+        self._unit_token_cache.clear()
 
     def _get_symbol(self, key, map_type='units'):
         k_low = str(key).lower()
         lib = self._symbols_cache
-        if not lib:
+        if lib is None:
             try:
                 lib = self._load_json(self.sym_path)
+                if not isinstance(lib, dict):
+                    lib = {}
                 self._symbols_cache = lib
+                self._units_map = lib.get('units', {}) if isinstance(lib.get('units', {}), dict) else {}
+                self._states_map = lib.get('states', {}) if isinstance(lib.get('states', {}), dict) else {}
             except Exception as e:
                 os_log.err('ENG', 'IO', e, {'sym_path': self.sym_path})
                 return key
-        return lib.get(map_type, {}).get(k_low, key)
+        if map_type == 'states':
+            return self._states_map.get(k_low, key)
+        return self._units_map.get(k_low, key)
 
     def encode_b62(self, n, use_precision=True):
-        return self.codec.encode(n, use_precision=use_precision)
+        try:
+            normalized = int(round(float(n) * self.precision_val)) if use_precision else int(float(n))
+        except Exception:
+            return self.codec.encode(n, use_precision=use_precision)
+        cache_key = (1 if use_precision else 0, normalized)
+        cached = self._b62_encode_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        encoded = self.codec.encode(n, use_precision=use_precision)
+        cache = self._b62_encode_cache
+        if len(cache) >= self._b62_cache_limit:
+            cache.clear()
+        cache[cache_key] = encoded
+        return encoded
 
     def decode_b62(self, s, use_precision=True):
         return self.codec.decode(s, use_precision=use_precision)
@@ -112,8 +153,13 @@ class OpenSynapticEngine:
     def _compress_unit(self, unit_str):
         if not unit_str or unit_str == 'unknown':
             return 'Z'
+        cached = self._unit_token_cache.get(unit_str)
+        if cached is not None:
+            return cached
         parts = unit_str.split('/')
         compressed = []
+        bit_switch_desc = self._bit_switch_desc
+        get_unit_symbol = self._get_symbol
         for p in parts:
             coeff, attr, pwr = self._split_coeff_attr_power(p)
             if attr is None:
@@ -123,38 +169,48 @@ class OpenSynapticEngine:
                 try:
                     c_val = float(coeff)
                 except Exception:
-                    compressed.append(self._get_symbol(attr, 'units') + p_suffix)
+                    compressed.append(get_unit_symbol(attr, 'units') + p_suffix)
                     continue
                 final_attr = attr
-                for mask, info in sorted(self.BIT_SWITCH.items(), key=lambda x: x[1]['f'], reverse=True):
+                for info in bit_switch_desc:
                     f = info['f']
                     if c_val >= f and c_val % f == 0:
                         c_val /= f
                         final_attr = info['macro'] + attr
                         break
-                sym = self._get_symbol(final_attr, 'units')
+                sym = get_unit_symbol(final_attr, 'units')
                 is_direct = c_val == int(c_val) and abs(c_val) >= 1
                 c_enc = self.encode_b62(c_val, use_precision=not is_direct)
                 compressed.append(f'{c_enc},{sym}{p_suffix}')
             else:
-                compressed.append(self._get_symbol(attr, 'units') + p_suffix)
-        return '/'.join(compressed)
+                compressed.append(get_unit_symbol(attr, 'units') + p_suffix)
+        result = '/'.join(compressed)
+        self._unit_token_cache[unit_str] = result
+        return result
 
     def compress(self, data):
         t_in = data.get('t', time.time() * (1000 if self.USE_MS else 1))
         t_raw = int(t_in * 1000) if self.USE_MS and t_in < 10 ** 11 else int(t_in)
         t_bin = struct.pack('>Q', t_raw)[2:]
         t_enc = base64.urlsafe_b64encode(t_bin).decode().rstrip('=')
-        s_sym = self._get_symbol(data.get('s', 'U'), 'states')
+        data_get = data.get
+        get_symbol = self._get_symbol
+        encode_b62 = self.encode_b62
+        compress_unit = self._compress_unit
+        s_sym = get_symbol(data_get('s', 'U'), 'states')
         header = f"{data['id']}.{s_sym}.{t_enc}|"
         segs = []
+        append_seg = segs.append
         i = 1
-        while f's{i}_id' in data:
+        while True:
             p = f's{i}'
-            un = self._compress_unit(str(data.get(f'{p}_u', '')))
-            v = self.encode_b62(data.get(f'{p}_v', 0))
-            sst = self._get_symbol(data.get(f'{p}_s', 'U'), 'states')
-            segs.append(f"{data[f'{p}_id']}>{sst}.{un}:{v}|")
+            sensor_id = data_get(f'{p}_id')
+            if sensor_id is None:
+                break
+            un = compress_unit(str(data_get(f'{p}_u', '')))
+            v = encode_b62(data_get(f'{p}_v', 0))
+            sst = get_symbol(data_get(f'{p}_s', 'U'), 'states')
+            append_seg(f"{sensor_id}>{sst}.{un}:{v}|")
             i += 1
         extra = ''
         if 'geohash' in data:

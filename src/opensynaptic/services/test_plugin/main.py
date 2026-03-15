@@ -11,7 +11,6 @@ Usage via CLI:
 import json
 import sys
 import unittest
-from pathlib import Path
 
 from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.constants import LogMsg
@@ -29,6 +28,16 @@ class TestPlugin:
     def __init__(self, node=None):
         self.node = node
         self._config_path = getattr(node, 'config_path', None) if node else None
+
+    @staticmethod
+    def get_required_config():
+        return {
+            'enabled': True,
+            'mode': 'manual',
+            'stress_workers': 8,
+            'stress_total': 200,
+            'stress_sources': 6,
+        }
 
     def auto_load(self):
         os_log.log_with_const('info', LogMsg.PLUGIN_TEST_START, plugin='test_plugin', suite='init')
@@ -57,12 +66,17 @@ class TestPlugin:
         )
         return summary, result.fail
 
-    def run_all(self, stress_total=200, stress_workers=8, verbosity=1):
+    def run_all(self, stress_total=200, stress_workers=8, stress_sources=6, verbosity=1, progress=True):
         """Run both component and stress suites. Returns combined report dict."""
         print('\n=== Component Tests ===', flush=True)
         c_ok, c_fail, _ = self.run_component(verbosity=verbosity)
         print('\n=== Stress Tests ===', flush=True)
-        s_summary, s_fail = self.run_stress(total=stress_total, workers=stress_workers)
+        s_summary, s_fail = self.run_stress(
+            total=stress_total,
+            workers=stress_workers,
+            sources=stress_sources,
+            progress=progress,
+        )
         report = {
             'component': {'ok': c_ok, 'fail': c_fail},
             'stress': s_summary,
@@ -110,10 +124,17 @@ class TestPlugin:
             p = argparse.ArgumentParser(prog='test_plugin all')
             p.add_argument('--total', type=int, default=200)
             p.add_argument('--workers', type=int, default=8)
+            p.add_argument('--sources', type=int, default=6)
             p.add_argument('--verbosity', type=int, default=1)
+            p.add_argument('--no-progress', action='store_true', default=False)
             ns = p.parse_args(argv)
-            report = self.run_all(stress_total=ns.total, stress_workers=ns.workers,
-                                  verbosity=ns.verbosity)
+            report = self.run_all(
+                stress_total=ns.total,
+                stress_workers=ns.workers,
+                stress_sources=ns.sources,
+                verbosity=ns.verbosity,
+                progress=not ns.no_progress,
+            )
             print(json.dumps(report, indent=2, ensure_ascii=False))
             return 0 if report['overall_fail'] == 0 else 1
 

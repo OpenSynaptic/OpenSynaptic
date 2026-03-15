@@ -89,6 +89,43 @@
             "rs485": false,
             "can": false,
             "lora": false
+        },
+        "service_plugins": {
+            "tui": {
+                "enabled": true,
+                "mode": "manual",
+                "default_section": "identity",
+                "default_interval": 2.0
+            },
+            "test_plugin": {
+                "enabled": true,
+                "mode": "manual",
+                "stress_workers": 8,
+                "stress_total": 200,
+                "stress_sources": 6
+            },
+            "web_user": {
+                "enabled": true,
+                "mode": "manual",
+                "host": "127.0.0.1",
+                "port": 8765,
+                "auto_start": false
+            },
+            "dependency_manager": {
+                "enabled": true,
+                "mode": "manual",
+                "auto_repair": false
+            },
+            "env_guard": {
+                "enabled": true,
+                "mode": "manual",
+                "auto_start": true,
+                "auto_install": false,
+                "max_history": 100,
+                "install_commands": [],
+                "resource_library_json_path": "data/env_guard/resources.json",
+                "status_json_path": "data/env_guard/status.json"
+            }
         }
     },
     "engine_settings": {

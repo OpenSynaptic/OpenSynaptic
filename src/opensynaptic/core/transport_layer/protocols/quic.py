@@ -1,5 +1,6 @@
 from opensynaptic.utils.logger import os_log
 import asyncio
+from opensynaptic.utils.buffer import as_readonly_view
 
 def is_supported():
     try:
@@ -11,8 +12,7 @@ def is_supported():
 def send(payload, config):
     if not is_supported():
         return False
-    if isinstance(payload, str):
-        payload = payload.encode('utf-8')
+    wire = as_readonly_view(payload)
     opts = config.get('transport_options', {}) if isinstance(config, dict) else {}
     client_cfg = config.get('Client_Core', {}) if isinstance(config, dict) else {}
     host = opts.get('host') or client_cfg.get('server_host', '127.0.0.1')
@@ -28,7 +28,7 @@ def send(payload, config):
         qconf.verify_mode = 0 if insecure else 2
         async with connect(host, port, configuration=qconf, server_name=server_name, wait_connected=True) as client:
             reader, writer = await client.create_stream()
-            writer.write(payload)
+            writer.write(wire)
             await writer.drain()
             writer.write_eof()
             await writer.drain()
@@ -42,5 +42,5 @@ def send(payload, config):
         asyncio.run(_run_once())
         return True
     except Exception as exc:
-        os_log.err('L4', 'QUIC_SEND', exc, {'host': host, 'port': port, 'len': len(payload)})
+        os_log.err('L4', 'QUIC_SEND', exc, {'host': host, 'port': port, 'len': len(wire)})
         return False

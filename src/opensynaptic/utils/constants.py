@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Dict
 
 class LogMsg(Enum):
     READY = 'READY'
@@ -109,6 +108,11 @@ CLI_HELP_TABLE = {
     'config-set': {'aliases': ['os-config-set'], 'desc': 'Set the value at a dotted path in Config.json (--key a.b.c --value <v> [--type int|float|bool|str|json]).'},
     'plugin-cmd': {'aliases': ['os-plugin-cmd'], 'desc': 'Route a command to the specified plugin\'s CLI handler (--plugin <name> --cmd <subcommand> [args...]).'},
     'plugin-test': {'aliases': ['os-plugin-test'], 'desc': 'Run a test suite (--suite component|stress|all [--workers N] [--total N]).'},
-    'help': {'aliases': ['os-help'], 'desc': 'Show this help (includes command annotations in Chinese).'}
+    'native-check': {'aliases': ['os-native-check'], 'desc': 'Check native compiler environment and selected toolchain before building C bindings.'},
+    'native-build': {'aliases': ['os-native-build'], 'desc': 'Build native C bindings with real-time compiler output streaming.'},
+    'env-guard': {'aliases': ['os-env-guard'], 'desc': 'Environment guard plugin (error monitor + auto-install attempts + local JSON resource/status file).'},
+    'web-user': {'aliases': ['os-web-user'], 'desc': 'Direct CLI entry for the web_user plugin (--cmd start|stop|status|list|add|update|delete).'},
+    'deps': {'aliases': ['os-deps'], 'desc': 'Direct CLI entry for dependency_manager (--cmd check|doctor|sync|repair|install).'},
+    'help': {'aliases': ['os-help'], 'desc': 'Show this help and command annotations.'}
 }
 

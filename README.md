@@ -17,21 +17,27 @@ sensors list
 ```
 opensynaptic/
 ├── core/
-│   ├── core.py                 # Orchestrator – OpenSynaptic class
-│   ├── standardization.py      # UCUM normalisation
-│   ├── solidity.py             # Base62 compress / decompress
-│   ├── unified_parser.py       # Binary packet encode/decode, template learning
-│   ├── handshake.py            # CMD byte dispatch, device ID negotiation
-│   └── transporter_manager.py  # Auto-discovers pluggable transporters
+│   ├── __init__.py             # Public core API export surface
+│   └── pycore/
+│       ├── core.py             # Orchestrator – OpenSynaptic class
+│       ├── standardization.py  # UCUM normalisation
+│       ├── solidity.py         # Base62 compress / decompress
+│       ├── unified_parser.py   # Binary packet encode/decode, template learning
+│       ├── handshake.py        # CMD byte dispatch, device ID negotiation
+│       └── transporter_manager.py # Auto-discovers pluggable transporters
 ├── services/
 │   ├── service_manager.py      # Plugin mount / load / dispatch hub
+│   ├── plugin_registry.py       # Built-in plugin mapping + config default sync
 │   ├── tui/                    # Terminal UI service (section-aware, interactive)
+│   ├── web_user/               # Lightweight web UI + user management API
+│   ├── dependency_manager/     # Dependency check/repair/install plugin
 │   └── test_plugin/            # Built-in component & stress test suite
 ├── utils/
 │   ├── constants.py            # LogMsg enum, MESSAGES, CLI_HELP_TABLE
 │   ├── logger.py               # os_log singleton
 │   ├── paths.py                # OSContext, read_json, write_json, get_registry_path
-│   └── base62_codec.py         # Base62Codec
+│   ├── base62.py               # Base62Codec (native-only ctypes binding)
+│   └── security_core.py        # crc/xor/session-key helpers (native-only ctypes binding)
 ├── CLI/
 │   └── app.py                  # Argparse CLI (os-node entrypoint)
 plugins/
@@ -63,12 +69,21 @@ pip install -e .
 ## Minimal Usage
 
 ```python
-from opensynaptic.core.core import OpenSynaptic
+from opensynaptic.core import OpenSynaptic
 
 node = OpenSynaptic()                        # reads Config.json automatically
 node.ensure_id("192.168.1.100", 8080)        # request device ID from server
 packet, aid, strategy = node.transmit(sensors=[["V1", "OK", 3.14, "Pa"]])
 node.dispatch(packet, medium="UDP")
+```
+
+```python
+from opensynaptic.core import get_core_manager
+
+manager = get_core_manager()
+print(manager.available_cores())             # ['pycore']
+manager.set_active_core('pycore')
+OpenSynaptic = manager.get_symbol('OpenSynaptic')
 ```
 
 ---
@@ -95,9 +110,11 @@ All commands are available via `os-node` (installed entrypoint) or `python -u sr
 | `plugin-load` | Load a mounted plugin by name |
 | `plugin-cmd` | Route a sub-command to a plugin's CLI handler |
 | `plugin-test` | Run component or stress tests |
+| `web-user` | Run web_user plugin directly from CLI |
+| `deps` | Run dependency_manager plugin directly from CLI |
 | `transport-status` | Show all transporter layer states |
 | `db-status` | Show DB engine status |
-| `help` | Print full help with Chinese annotations |
+| `help` | Print full help |
 
 Full usage examples → [`src/opensynaptic/CLI/README.md`](src/opensynaptic/CLI/README.md)
 
@@ -130,6 +147,13 @@ python -u src/main.py plugin-test --suite component
 # Stress test (200 concurrent pipeline encode cycles)
 python -u src/main.py plugin-test --suite stress --workers 8 --total 200
 
+# Web UI (foreground mode)
+python -u src/main.py web-user --cmd start -- --host 127.0.0.1 --port 8765 --block
+
+# Dependency checks and repair
+python -u src/main.py deps --cmd check
+python -u src/main.py deps --cmd repair
+
 # Both suites
 python -u src/main.py plugin-test --suite all
 
@@ -148,4 +172,14 @@ See [`docs/TRANSPORTER_PLUGIN.md`](docs/TRANSPORTER_PLUGIN.md).
 ## API Reference
 
 See [`docs/API.md`](docs/API.md).
+
+Core facade and loader reference -> [`docs/CORE_API.md`](docs/CORE_API.md)
+
+## Plugin Config Auto-Sync
+
+Built-in plugin settings are stored in `Config.json` at:
+
+`RESOURCES.service_plugins.<plugin_name>`
+
+These entries are auto-created with defaults if missing; plugins remain manual-start and do not auto-run at process startup.
 

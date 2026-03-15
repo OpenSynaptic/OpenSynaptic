@@ -55,7 +55,7 @@ class IDAllocator:
                 self._next_candidate += 1
 
         if new_id is None:
-            raise RuntimeError(f"[IDAllocator] ID 池耗盡 ({self.start_id}-{self.end_id})")
+            raise RuntimeError(f"[IDAllocator] ID pool exhausted ({self.start_id}-{self.end_id})")
 
         self._allocated[new_id] = {
             "meta": meta or {},

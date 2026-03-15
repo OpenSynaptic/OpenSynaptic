@@ -1,11 +1,12 @@
 import struct, base64
 import threading
+import codecs
 from pathlib import Path
-from opensynaptic.utils.base62_codec import Base62Codec
+from opensynaptic.utils.base62.base62 import Base62Codec
 from opensynaptic.utils.paths import read_json, write_json, get_registry_path, ctx
 from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.constants import LogMsg
-from opensynaptic.utils.security import crc8, crc16_ccitt, xor_payload
+from opensynaptic.utils.security.security_core import crc8, crc16_ccitt, xor_payload_into
 
 class OSVisualFusionEngine:
 
@@ -22,11 +23,10 @@ class OSVisualFusionEngine:
         self._cache_lock = threading.RLock()
         registry_dir = getattr(ctx, 'registry_dir', None)
         if not registry_dir:
-            registry_dir = str(Path(self.base_dir) / 'data' / 'Device_Registry')
+            registry_dir = str(Path(self.base_dir) / 'data' / 'device_registry')
         Path(registry_dir).mkdir(parents=True, exist_ok=True)
         self.root_dir = registry_dir
-        self.local_id = 0
-        self.local_id_str = '0'
+        self._set_local_id(0)
         assigned = cfg.get('assigned_id', None)
         if assigned is None and config_path:
             try:
@@ -35,16 +35,22 @@ class OSVisualFusionEngine:
             except Exception as e:
                 os_log.err('FUS', 'CFG', e, {'path': config_path})
         if isinstance(assigned, int):
-            self.local_id = int(assigned)
+            self._set_local_id(assigned)
         elif isinstance(assigned, str) and assigned.isdigit():
-            self.local_id = int(assigned)
+            self._set_local_id(int(assigned))
         elif isinstance(assigned, str) and assigned:
             try:
-                self.local_id = self._decode_b62(assigned)
+                self._set_local_id(self._decode_b62(assigned))
             except Exception as e:
                 os_log.err('FUS', 'B62_DECODE', e, {'val': assigned})
-                self.local_id = 0
-        self.local_id_str = str(self.local_id)
+                self._set_local_id(0)
+
+    def _set_local_id(self, local_id):
+        val = int(local_id or 0)
+        self.local_id = val
+        self.local_id_str = str(val)
+        self._single_route_ids = (val,)
+        self._single_route_bin = struct.pack('>I', val)
 
     def _decode_ts_token(self, ts_str):
         try:
@@ -137,7 +143,19 @@ class OSVisualFusionEngine:
         for tid, tpl in data.get('templates', {}).items():
             stored = tpl.get('last_vals_bin', [])
             runtime_vals_by_tid[tid] = [base64.b64decode(v) for v in stored]
-        reg = {'data': data, 'path': f_path, 'dirty': False, 'lock': threading.RLock(), 'runtime_vals': runtime_vals_by_tid}
+        sig_index = {}
+        for tid, tpl in data.get('templates', {}).items():
+            sig = tpl.get('sig')
+            if sig:
+                sig_index[sig] = tid
+        reg = {
+            'data': data,
+            'path': f_path,
+            'dirty': False,
+            'lock': threading.RLock(),
+            'runtime_vals': runtime_vals_by_tid,
+            'sig_index': sig_index,
+        }
         with self._cache_lock:
             existing = self._RAM_CACHE.get(key)
             if existing:
@@ -152,6 +170,12 @@ class OSVisualFusionEngine:
             return
         with reg['lock']:
             if reg['dirty']:
+                templates = reg.get('data', {}).get('templates', {})
+                runtime_vals = reg.get('runtime_vals', {}) if isinstance(reg.get('runtime_vals'), dict) else {}
+                for tid, vals in runtime_vals.items():
+                    tpl = templates.get(tid)
+                    if isinstance(tpl, dict):
+                        tpl['last_vals_bin'] = [base64.b64encode(v).decode() for v in vals]
                 write_json(reg['path'], reg['data'], indent=4)
                 reg['dirty'] = False
 
@@ -183,11 +207,23 @@ class OSVisualFusionEngine:
 
     def _auto_decompose(self, raw_input):
         try:
-            work_str = raw_input
-            if ';' in work_str:
-                _, work_str = work_str.split(';', 1)
-            head, payload = work_str.split('|', 1)
-            h_base, ts_str = head.rsplit('.', 1)
+            if isinstance(raw_input, bytes):
+                work_str = codecs.decode(raw_input, 'utf-8', errors='ignore')
+            elif isinstance(raw_input, bytearray):
+                work_str = codecs.decode(raw_input, 'utf-8', errors='ignore')
+            elif isinstance(raw_input, memoryview):
+                work_str = codecs.decode(raw_input, 'utf-8', errors='ignore')
+            else:
+                work_str = str(raw_input)
+            semi_idx = work_str.find(';')
+            if semi_idx >= 0:
+                work_str = work_str[semi_idx + 1:]
+            pipe_idx = work_str.find('|')
+            head = work_str[:pipe_idx]
+            payload = work_str[pipe_idx + 1:]
+            dot_idx = head.rfind('.')
+            h_base = head[:dot_idx]
+            ts_str = head[dot_idx + 1:]
             raw_vals = []
             sig_segments = []
             for seg in payload.split('|'):
@@ -203,7 +239,7 @@ class OSVisualFusionEngine:
                     sig_segments.append(seg)
             full_sig = f"{h_base}.{{TS}}|{'|'.join(sig_segments)}|"
             src_aid = int(self.local_id)
-            return (ts_str, full_sig, raw_vals, src_aid, [self.local_id])
+            return (ts_str, full_sig, raw_vals, src_aid, self._single_route_ids)
         except Exception as e:
             os_log.err('FUS', 'DECOMPOSE', e, {'raw': raw_input})
             return None
@@ -211,119 +247,190 @@ class OSVisualFusionEngine:
     def run_engine(self, raw_input, strategy='DIFF'):
         decomp = self._auto_decompose(raw_input)
         if not decomp:
-            return raw_input.encode()
+            if isinstance(raw_input, bytes):
+                return raw_input
+            if isinstance(raw_input, (bytearray, memoryview)):
+                return bytes(raw_input)
+            return str(raw_input).encode('utf-8')
         ts_str, sig, vals_bin, src_aid, route_ids = decomp
         reg = self._get_active_registry(src_aid)
+        if isinstance(raw_input, bytes):
+            raw_input_bytes = raw_input
+        elif isinstance(raw_input, bytearray):
+            raw_input_bytes = memoryview(raw_input)
+        elif isinstance(raw_input, memoryview):
+            raw_input_bytes = raw_input
+        else:
+            raw_input_bytes = str(raw_input).encode('utf-8')
+        if strategy == 'FULL':
+            runtime_vals = reg.get('runtime_vals')
+            sig_index = reg.get('sig_index')
+            if isinstance(runtime_vals, dict) and isinstance(sig_index, dict):
+                tid = sig_index.get(sig)
+                tid_vals = runtime_vals.get(tid) if tid else None
+                if tid_vals and len(tid_vals) == len(vals_bin) and (tid_vals == vals_bin):
+                    return self._finalize_bin(63, tid, ts_str, raw_input_bytes, route_ids, src_aid=src_aid)
+        cmd = None
+        tid_out = None
+        body_out = None
         with reg['lock']:
             reg_data = reg['data']
-            tid = next((k for k, v in reg_data['templates'].items() if v.get('sig') == sig), None)
+            sig_index = reg.setdefault('sig_index', {})
+            tid = sig_index.get(sig)
             if not tid:
                 tid = str(len(reg_data['templates']) + 1).zfill(2)
                 reg_data['templates'][tid] = {'sig': sig}
+                sig_index[sig] = tid
                 reg['dirty'] = True
             if not isinstance(reg.get('runtime_vals'), dict):
                 reg['runtime_vals'] = {}
             tid_vals = reg['runtime_vals'].get(tid, [])
             if strategy == 'FULL':
+                if len(tid_vals) != len(vals_bin) or (tid_vals != vals_bin):
+                    reg['runtime_vals'][tid] = list(vals_bin)
+                    reg['dirty'] = True
+                cmd = 63
+                tid_out = tid
+                body_out = raw_input_bytes
+            elif len(tid_vals) != len(vals_bin):
+                cmd = 63
+                tid_out = tid
                 reg['runtime_vals'][tid] = list(vals_bin)
-                reg_data['templates'][tid]['last_vals_bin'] = [base64.b64encode(v).decode() for v in vals_bin]
                 reg['dirty'] = True
-                return self._finalize_bin(63, tid, ts_str, raw_input.encode(), route_ids, src_aid=src_aid)
-            if len(tid_vals) != len(vals_bin):
-                return self.run_engine(raw_input, strategy='FULL')
-            mask, diff_pay, changed = (0, b'', False)
-            for i, v in enumerate(vals_bin):
-                if v != tid_vals[i]:
-                    mask |= 1 << i
-                    diff_pay += struct.pack('B', len(v)) + v
-                    tid_vals[i] = v
-                    changed = True
-            if not changed:
-                return self._finalize_bin(127, tid, ts_str, b'', route_ids, src_aid=src_aid)
-            reg['runtime_vals'][tid] = tid_vals
-            reg_data['templates'][tid]['last_vals_bin'] = [base64.b64encode(v).decode() for v in tid_vals]
-            reg['dirty'] = True
-            mask_bytes = mask.to_bytes((len(vals_bin) + 7) // 8, 'big')
-            return self._finalize_bin(170, tid, ts_str, mask_bytes + diff_pay, route_ids, src_aid=src_aid)
+                body_out = raw_input_bytes
+            else:
+                mask = 0
+                diff_parts = []
+                changed = False
+                for i, v in enumerate(vals_bin):
+                    if v != tid_vals[i]:
+                        mask |= 1 << i
+                        diff_parts.append(struct.pack('B', len(v)))
+                        diff_parts.append(v)
+                        tid_vals[i] = v
+                        changed = True
+                if not changed:
+                    cmd = 127
+                    tid_out = tid
+                    body_out = b''
+                else:
+                    reg['runtime_vals'][tid] = tid_vals
+                    reg['dirty'] = True
+                    mask_bytes = mask.to_bytes((len(vals_bin) + 7) // 8, 'big')
+                    cmd = 170
+                    tid_out = tid
+                    body_out = mask_bytes + b''.join(diff_parts)
+        return self._finalize_bin(cmd, tid_out, ts_str, body_out, route_ids, src_aid=src_aid)
 
     def _finalize_bin(self, b, tid, ts_str, body_bytes, route_ids, src_aid=None):
-        r_bin = b''
-        for rid in route_ids:
-            if isinstance(rid, (bytes, bytearray)) and len(rid) == 4:
-                r_bin += bytes(rid)
-                continue
-            if isinstance(rid, int):
-                r_bin += struct.pack('>I', rid)
-                continue
-            s = str(rid)
-            if s.isdigit():
-                r_bin += struct.pack('>I', int(s))
-            else:
-                val = self._decode_b62(s)
-                r_bin += struct.pack('>I', val)
+        if route_ids is self._single_route_ids:
+            r_bin = self._single_route_bin
+            route_count = 1
+        else:
+            route_parts = []
+            append_part = route_parts.append
+            for rid in route_ids:
+                if isinstance(rid, (bytes, bytearray)) and len(rid) == 4:
+                    append_part(rid if isinstance(rid, bytes) else bytes(rid))
+                    continue
+                if isinstance(rid, int):
+                    append_part(struct.pack('>I', rid))
+                    continue
+                s = str(rid)
+                if s.isdigit():
+                    append_part(struct.pack('>I', int(s)))
+                else:
+                    append_part(struct.pack('>I', self._decode_b62(s)))
+            r_bin = b''.join(route_parts)
+            route_count = len(route_ids)
         ts_raw = base64.urlsafe_b64decode(ts_str + '==')[:6]
         secure_enabled, secure_key = self._resolve_outbound_security(src_aid)
         wire_cmd = getattr(getattr(self, 'protocol', None), 'secure_variant_cmd', lambda cmd: cmd)(b) if secure_enabled else b
-        crc8_val = crc8(body_bytes)
-        wire_body = xor_payload(body_bytes, secure_key, crc8_val & 31) if secure_enabled else body_bytes
-        frame = struct.pack('>BB', wire_cmd, len(route_ids)) + r_bin + struct.pack('>B6s', int(tid), ts_raw) + wire_body + struct.pack('>B', crc8_val)
-        crc16_val = crc16_ccitt(frame)
-        return frame + struct.pack('>H', crc16_val)
+        body_view = memoryview(body_bytes)
+        crc8_val = crc8(body_view)
+        body_len = len(body_view)
+        frame_len_no_crc16 = 2 + len(r_bin) + 7 + body_len + 1
+        frame = bytearray(frame_len_no_crc16 + 2)
+        off = 0
+        frame[off] = wire_cmd
+        frame[off + 1] = route_count
+        off += 2
+        frame[off:off + len(r_bin)] = r_bin
+        off += len(r_bin)
+        frame[off] = int(tid)
+        frame[off + 1:off + 7] = ts_raw
+        off += 7
+        out_slice = memoryview(frame)[off:off + body_len]
+        if secure_enabled:
+            xor_payload_into(body_view, secure_key, crc8_val & 31, out_slice)
+        else:
+            out_slice[:] = body_view
+        off += body_len
+        frame[off] = crc8_val
+        off += 1
+        crc16_val = crc16_ccitt(memoryview(frame)[:off])
+        struct.pack_into('>H', frame, off, crc16_val)
+        return bytes(frame)
 
     def decompress(self, packet):
         try:
-            if not packet or len(packet) < 5:
+            if isinstance(packet, str):
+                packet = packet.encode('utf-8')
+            packet_view = memoryview(packet).cast('B')
+            if len(packet_view) < 5:
                 return {'error': 'Packet too short', '__packet_meta__': {'crc16_ok': False}}
-            cmd = packet[0]
-            r_cnt = packet[1]
+            cmd = packet_view[0]
+            r_cnt = packet_view[1]
             tid_pos = 2 + r_cnt * 4
             base_cmd = self._normalize_data_cmd(cmd)
             secure = self._is_secure_cmd(cmd)
-            if len(packet) < tid_pos + 10:
+            if len(packet_view) < tid_pos + 10:
                 return {'error': 'Incomplete Binary Header', '__packet_meta__': {'crc16_ok': False, 'secure': secure}}
-            crc16_recv = struct.unpack('>H', packet[-2:])[0]
-            crc16_calc = crc16_ccitt(packet[:-2])
-            src_val = int.from_bytes(packet[tid_pos - 4:tid_pos], 'big') if r_cnt > 0 else 0
+            crc16_recv = struct.unpack_from('>H', packet_view, len(packet_view) - 2)[0]
+            crc16_calc = crc16_ccitt(packet_view[:-2])
+            src_val = int.from_bytes(packet_view[tid_pos - 4:tid_pos], 'big') if r_cnt > 0 else 0
             meta = {'cmd': cmd, 'base_cmd': base_cmd, 'secure': secure, 'source_aid': src_val, 'crc16_ok': crc16_calc == crc16_recv}
             if crc16_calc != crc16_recv:
                 return {'error': 'CRC16 mismatch', '__packet_meta__': meta}
             reg = self._get_active_registry(src_val)
-            tid_str = str(packet[tid_pos]).zfill(2)
-            ts_raw = packet[tid_pos + 1:tid_pos + 7]
+            tid_str = str(packet_view[tid_pos]).zfill(2)
+            ts_raw = packet_view[tid_pos + 1:tid_pos + 7]
             ts_enc = base64.urlsafe_b64encode(ts_raw).decode().rstrip('=')
             ts_raw_val = struct.unpack('>Q', b'\x00\x00' + ts_raw)[0]
             meta['timestamp_raw'] = ts_raw_val
             meta['tid'] = tid_str
-            crc8_recv = packet[-3]
-            wire_body = packet[tid_pos + 7:-3]
+            crc8_recv = packet_view[-3]
+            wire_body = packet_view[tid_pos + 7:-3]
             if secure:
                 protocol = getattr(self, 'protocol', None)
                 key = protocol.get_session_key(src_val) if protocol and hasattr(protocol, 'get_session_key') else None
                 if not key:
                     meta['crc8_ok'] = False
                     return {'error': f'Missing secure key for aid={src_val}', '__packet_meta__': meta}
-                body_bytes = xor_payload(wire_body, key, crc8_recv & 31)
+                body_buf = bytearray(len(wire_body))
+                xor_payload_into(wire_body, key, crc8_recv & 31, body_buf)
+                body_bytes = memoryview(body_buf)
             else:
                 body_bytes = wire_body
             crc8_calc = crc8(body_bytes)
             meta['crc8_ok'] = crc8_calc == crc8_recv
             if crc8_calc != crc8_recv:
                 return {'error': 'CRC8 mismatch', '__packet_meta__': meta}
-            from opensynaptic.core.solidity import OpenSynapticEngine
+            from .solidity import OpenSynapticEngine
             decoder = OpenSynapticEngine()
             with reg['lock']:
                 reg_data = reg['data']
                 if not isinstance(reg.get('runtime_vals'), dict):
                     reg['runtime_vals'] = {}
                 if base_cmd == 63:
-                    raw_str = body_bytes.decode('utf-8', errors='ignore')
+                    raw_str = codecs.decode(body_bytes, 'utf-8', errors='ignore')
                     decomp = self._decompose_for_receive(raw_str)
                     if decomp:
                         sig, vals_bin = decomp
                         if tid_str not in reg_data['templates'] or reg_data['templates'][tid_str].get('sig') != sig:
                             reg_data['templates'][tid_str] = {'sig': sig}
+                            reg.setdefault('sig_index', {})[sig] = tid_str
                         reg['runtime_vals'][tid_str] = list(vals_bin)
-                        reg_data['templates'][tid_str]['last_vals_bin'] = [base64.b64encode(v).decode() for v in vals_bin]
                         reg['dirty'] = True
                         self._sync_to_disk(src_val)
                         meta['template_learned'] = True
@@ -354,10 +461,9 @@ class OSVisualFusionEngine:
                     for i in range(len(tid_vals)):
                         if mask >> i & 1:
                             v_len = payload[off]
-                            tid_vals[i] = payload[off + 1:off + 1 + v_len]
+                            tid_vals[i] = bytes(payload[off + 1:off + 1 + v_len])
                             off += 1 + v_len
                     reg['runtime_vals'][tid_str] = tid_vals
-                    reg_data['templates'][tid_str]['last_vals_bin'] = [base64.b64encode(v).decode() for v in tid_vals]
                     reg['dirty'] = True
                     res_payload = sig.replace('{TS}', ts_enc)
                     for v in tid_vals:
@@ -369,13 +475,7 @@ class OSVisualFusionEngine:
 
     def relay(self, packet):
         try:
-            raw = packet
-            if isinstance(packet, (bytes, bytearray)):
-                try:
-                    raw = packet.decode('utf-8', errors='ignore')
-                except Exception:
-                    return packet
-            out = self.run_engine(raw)
+            out = self.run_engine(packet)
             return out if isinstance(out, (bytes, bytearray)) else out.encode() if isinstance(out, str) else packet
         except Exception as e:
             os_log.err('FUS', 'RELAY', e, {'packet': packet})

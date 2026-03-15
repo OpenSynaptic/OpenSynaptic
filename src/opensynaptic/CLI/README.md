@@ -27,9 +27,14 @@ All commands are available via `os-node` (installed entry-point) or `python -u s
 | `plugin-load` | `os-plugin-load` | Load a mounted plugin by name (calls `auto_load()`) |
 | `plugin-cmd` | `os-plugin-cmd` | Route a sub-command to a plugin's own CLI handler |
 | `plugin-test` | `os-plugin-test` | Run component tests, stress tests, or both |
+| `native-check` | `os-native-check` | Check native compiler environment and selected toolchain |
+| `native-build` | `os-native-build` | Build native C bindings with real-time progress and timeout guards |
+| `env-guard` | `os-env-guard` | Environment guard plugin status/control and local JSON resource/status files |
+| `web-user` | `os-web-user` | Standalone CLI entry for web_user plugin |
+| `deps` | `os-deps` | Standalone CLI entry for dependency_manager plugin |
 | `transport-status` | `os-transport-status` | Show application / transport / physical layer states |
 | `db-status` | `os-db-status` | Show DB engine enabled status and dialect |
-| `help` | `os-help` | Print full help with Chinese annotations |
+| `help` | `os-help` | Print full help |
 
 ---
 
@@ -96,11 +101,29 @@ python -u src/main.py plugin-cmd --config Config.json --plugin tui --cmd interac
 # Route a sub-command to the test_plugin
 python -u src/main.py plugin-cmd --config Config.json --plugin test_plugin --cmd component
 python -u src/main.py plugin-cmd --config Config.json --plugin test_plugin --cmd stress -- --total 100 --workers 4
+# Direct web_user command
+python -u src/main.py web-user --config Config.json --cmd start -- --host 127.0.0.1 --port 8765 --block
+# Direct dependency manager command
+python -u src/main.py deps --config Config.json --cmd check
+python -u src/main.py deps --config Config.json --cmd repair
+# Environment guard command
+python -u src/main.py env-guard --config Config.json --cmd status
+python -u src/main.py env-guard --config Config.json --cmd set -- --auto-install true
+python -u src/main.py env-guard --config Config.json --cmd resource-show
+python -u src/main.py env-guard --config Config.json --cmd resource-init
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 python -u src/main.py plugin-test --config Config.json --suite component
 python -u src/main.py plugin-test --config Config.json --suite stress  --workers 8 --total 200
 python -u src/main.py plugin-test --config Config.json --suite all     --workers 8 --total 200
+
+# ── Native precheck / build (timeout-safe) ───────────────────────────────────
+python -u src/main.py native-check
+python -u src/main.py native-check --json
+python -u src/main.py native-check --timeout 5
+python -u src/main.py native-build
+python -u src/main.py native-build --idle-timeout 5 --max-timeout 30
+python -u src/main.py native-build --no-progress --json
 ```
 
 ---
@@ -174,4 +197,6 @@ Add `--interactive` to enter the live-refresh loop.
 - `inject --sensors` takes a JSON array; on PowerShell use `--sensors-file <path>` to avoid quote-stripping issues.
 - `decode --format hex` accepts `aabbcc`, `aa:bb:cc`, or `aa bb cc` (separators are stripped automatically).
 - `config-set` with `--type json` writes entire sub-dicts in one command.
-- `plugin-cmd` auto-mounts `tui` and `test_plugin` on first use if not already mounted.
+- `plugin-cmd` resolves plugins through `services/plugin_registry.py`; no plugin starts automatically on node boot.
+- Required plugin settings are auto-added to `Config.json` under `RESOURCES.service_plugins.<plugin_name>`.
+- `web-user --cmd start -- --block` keeps the process in foreground so the browser UI stays available.

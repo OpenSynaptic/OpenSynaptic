@@ -1,8 +1,8 @@
 import sys, traceback
 from pathlib import Path
-from typing import Any, Dict
 import logging
 from opensynaptic.utils.constants import LogMsg, MESSAGES
+from opensynaptic.utils.errors import EnvironmentMissingError, classify_exception
 
 class LevelFilter(logging.Filter):
 
@@ -31,6 +31,7 @@ class OSLogger:
             h_err.setLevel(logging.WARNING)
             self.logger.addHandler(h_err)
             self.logger.setLevel(logging.DEBUG)
+        self._error_listeners = []
 
     def _caller_lineno(self, depth=2):
         try:
@@ -50,12 +51,30 @@ class OSLogger:
 
     def err(self, mid, eid, exc, ctx=None):
         out = self._format(mid, eid, exc, ctx)
+        out['error_type'] = type(exc).__name__
+        out.update(classify_exception(exc))
+        if isinstance(exc, EnvironmentMissingError):
+            out['environment'] = exc.as_dict()
         try:
             traceback.print_exception(type(exc), exc, exc.__traceback__)
         except Exception:
             pass
         self.logger.error(out)
+        event = {'mid': mid, 'eid': eid, 'error': exc, 'payload': out}
+        for listener in list(self._error_listeners):
+            try:
+                listener(event)
+            except Exception:
+                continue
         return {'error': out}
+
+    def add_error_listener(self, listener):
+        if callable(listener) and listener not in self._error_listeners:
+            self._error_listeners.append(listener)
+
+    def remove_error_listener(self, listener):
+        if listener in self._error_listeners:
+            self._error_listeners.remove(listener)
 
     def log_with_const(self, level, msg_key, **kwargs):
         template = MESSAGES.get(msg_key, None)

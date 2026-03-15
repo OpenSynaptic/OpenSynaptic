@@ -104,7 +104,8 @@ All resource paths, transporter registries, and driver configurations.
 
     "transport_config":      { "<name>": { ... } },
     "physical_config":       { "<name>": { ... } },
-    "application_config":    { "<name>": { ... } }
+    "application_config":    { "<name>": { ... } },
+    "service_plugins":       { "<plugin>": { ... } }
 }
 ```
 
@@ -123,6 +124,47 @@ All resource paths, transporter registries, and driver configurations.
 | `transport_config` | map-of-dicts | Per-driver config dicts for transport layer |
 | `physical_config` | map-of-dicts | Per-driver config dicts for physical layer |
 | `application_config` | map-of-dicts | Per-driver config dicts for application layer |
+| `service_plugins` | map-of-dicts | Service plugin runtime config defaults (auto-managed by plugin registry) |
+
+### `service_plugins` example
+
+```json
+"service_plugins": {
+    "tui": {
+        "enabled": true,
+        "mode": "manual",
+        "default_section": "identity",
+        "default_interval": 2.0
+    },
+    "web_user": {
+        "enabled": true,
+        "mode": "manual",
+        "host": "127.0.0.1",
+        "port": 8765,
+        "auto_start": false
+    },
+    "dependency_manager": {
+        "enabled": true,
+        "mode": "manual",
+        "auto_repair": false
+    },
+    "env_guard": {
+        "enabled": true,
+        "mode": "manual",
+        "auto_start": true,
+        "auto_install": false,
+        "max_history": 100,
+        "install_commands": [],
+        "resource_library_json_path": "data/env_guard/resources.json",
+        "status_json_path": "data/env_guard/status.json"
+    }
+}
+```
+
+`env_guard` uses local JSON files only (no HTTP endpoint):
+
+- `resource_library_json_path`: resource download/install rules (`resources.json`)
+- `status_json_path`: runtime issues/attempt history (`status.json`)
 
 ### `physical_config` examples
 

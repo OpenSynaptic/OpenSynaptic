@@ -6,7 +6,7 @@ from opensynaptic.utils.constants import LogMsg
 
 
 class OS_Registry:
-    # 模式常量 (枚舉化以提升性能)
+    # Mode constants (enum-style for faster branch checks)
     MODE_OFF = 0
     MODE_ON = 1
     MODE_AUTO = 2
@@ -91,7 +91,7 @@ class OS_Registry:
                 break
             elif prefix == p_pair["micro"]:
                 byte2 |= int(m_str, 16)
-                byte2 |= 0x08  # 點亮 Shift
+                byte2 |= 0x08  # Enable Shift bit
                 break
 
         if suffix == "2": byte2 |= 0x02

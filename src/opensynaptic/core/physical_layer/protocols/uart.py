@@ -1,15 +1,16 @@
 from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils.buffer import as_readonly_view
 
 def send(payload, config):
     opts = config.get('physical_options', {}) if isinstance(config, dict) else {}
     port = opts.get('port', 'UART0')
     baudrate = int(opts.get('baudrate', 115200))
-    if isinstance(payload, str):
-        payload = payload.encode('utf-8')
-    frame_start = b'\x02'
-    frame_end = b'\x03'
-    packet = frame_start + payload + frame_end
+    view = as_readonly_view(payload)
+    packet = bytearray(2 + len(view))
+    packet[0] = 2
+    packet[-1] = 3
+    packet[1:-1] = view
     duration = len(packet) * 10 / max(baudrate, 1)
     os_log.log_with_const('info', LogMsg.UART_SEND, port=port, total_len=len(packet))
     os_log.log_with_const('info', LogMsg.UART_DURATION, duration=duration)

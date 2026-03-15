@@ -1,16 +1,18 @@
-import os
 import socket
 import time
 from pathlib import Path
-from opensynaptic.core.standardization import OpenSynapticStandardizer
-from opensynaptic.core.solidity import OpenSynapticEngine
-from opensynaptic.core.unified_parser import OSVisualFusionEngine
-from opensynaptic.core.handshake import OSHandshakeManager, CMD
+from .standardization import OpenSynapticStandardizer
+from .solidity import OpenSynapticEngine
+from .unified_parser import OSVisualFusionEngine
+from .handshake import OSHandshakeManager, CMD
 from opensynaptic.utils.paths import read_json, write_json, ctx
-from opensynaptic.core.transporter_manager import TransporterManager
+from .transporter_manager import TransporterManager
 from opensynaptic.services import ServiceManager
+from opensynaptic.services.plugin_registry import sync_all_plugin_defaults
 from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils.c.native_loader import NativeLibraryUnavailable
+from opensynaptic.utils.buffer import ensure_bytes, payload_len, zero_copy_enabled, as_readonly_view
 try:
     from opensynaptic.services.db_engine import DatabaseManager
 except Exception:
@@ -19,7 +21,8 @@ try:
     from plugins.id_allocator import IDAllocator
 except ImportError:
     import sys
-    sys.path.append(str(Path(__file__).resolve().parents[3]))
+    # pycore/core.py is one level deeper than the old core.py layout.
+    sys.path.append(str(Path(__file__).resolve().parents[4]))
     from plugins.id_allocator import IDAllocator
 
 class OpenSynaptic:
@@ -42,6 +45,9 @@ class OpenSynaptic:
         self.standardizer = OpenSynapticStandardizer(self.config_path)
         try:
             self.engine = OpenSynapticEngine(self.config_path)
+        except NativeLibraryUnavailable:
+            # C-only Base62 path: bubble up a single clear failure.
+            raise
         except Exception as e:
             os_log.err('ENG', 'INIT', e, {'cfg': self.config_path})
             self.engine = OpenSynapticEngine()
@@ -50,7 +56,7 @@ class OpenSynaptic:
         start_id = int(self.config.get('Server_Core', {}).get('Start_ID', 1))
         end_id = int(self.config.get('Server_Core', {}).get('End_ID', 4294967295))
         self.id_allocator = IDAllocator(base_dir=self.base_dir, start_id=start_id, end_id=end_id)
-        registry_dir = getattr(ctx, 'registry_dir', None) or str(Path(self.base_dir) / 'data' / 'Device_Registry')
+        registry_dir = getattr(ctx, 'registry_dir', None) or str(Path(self.base_dir) / 'data' / 'device_registry')
         Path(registry_dir).mkdir(parents=True, exist_ok=True)
         self.protocol = OSHandshakeManager(target_sync_count=3, registry_dir=registry_dir, expire_seconds=int(self.security_settings.get('secure_session_expire_seconds', 86400)))
         self.protocol.min_valid_timestamp = int(self.security_settings.get('time_sync_threshold', self.protocol.min_valid_timestamp))
@@ -64,12 +70,17 @@ class OpenSynaptic:
         self.db_manager = None
         self.service_manager = ServiceManager(config=self.config, mode='runtime')
         try:
+            if sync_all_plugin_defaults(self.config):
+                self._save_config()
+        except Exception as e:
+            os_log.err('SVC', 'CFG_SYNC', e, {})
+        try:
             self.transporter_manager = TransporterManager(self)
             self.transporter_manager.auto_load()
             self.active_transporters = self.transporter_manager.active_transporters
         except Exception as e:
             os_log.err('TM', 'INIT', e, {})
-        id_display = self.assigned_id if self.assigned_id else '未分配'
+        id_display = self.assigned_id if self.assigned_id else 'UNASSIGNED'
         os_log.log_with_const('info', LogMsg.READY, root=self.base_dir)
         if DatabaseManager:
             try:
@@ -83,21 +94,30 @@ class OpenSynaptic:
     def _sync_assigned_id_to_fusion(self):
         try:
             aid = self.assigned_id
+            set_local_id = getattr(self.fusion, '_set_local_id', None)
+            def _apply_local_id(value):
+                if callable(set_local_id):
+                    set_local_id(value)
+                else:
+                    self.fusion.local_id = value
+                    self.fusion.local_id_str = str(value)
             if aid is None or aid == '' or aid == 'UNKNOWN' or (aid == self.MAX_UINT32) or (isinstance(aid, str) and aid.isdigit() and (int(aid) == self.MAX_UINT32)):
-                self.fusion.local_id = 0
+                _apply_local_id(0)
             elif isinstance(aid, int):
-                self.fusion.local_id = aid
+                _apply_local_id(aid)
             elif isinstance(aid, str) and aid.isdigit():
-                self.fusion.local_id = int(aid)
+                _apply_local_id(int(aid))
             elif isinstance(aid, str) and aid:
-                self.fusion.local_id = self.fusion._decode_b62(aid)
+                _apply_local_id(self.fusion._decode_b62(aid))
             else:
-                self.fusion.local_id = 0
-            self.fusion.local_id_str = str(self.fusion.local_id)
+                _apply_local_id(0)
         except Exception as e:
             os_log.err('FUS', 'SYNC', e, {})
-            self.fusion.local_id = 0
-            self.fusion.local_id_str = '0'
+            if hasattr(self.fusion, '_set_local_id'):
+                self.fusion._set_local_id(0)
+            else:
+                self.fusion.local_id = 0
+                self.fusion.local_id_str = '0'
 
     def _is_id_missing(self):
         aid = self.assigned_id
@@ -180,11 +200,10 @@ class OpenSynaptic:
 
     def dispatch_with_reply(self, packet, server_ip=None, server_port=None, timeout=3.0):
         host, port = self._resolve_server_endpoint(server_ip, server_port)
-        if isinstance(packet, str):
-            packet = packet.encode('utf-8')
+        wire_packet = as_readonly_view(packet)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(timeout)
-            sock.sendto(packet, (host, port))
+            sock.sendto(wire_packet, (host, port))
             try:
                 response, addr = sock.recvfrom(4096)
             except socket.timeout:
@@ -197,7 +216,7 @@ class OpenSynaptic:
 
     def transmit(self, sensors, device_id=None, device_status='ONLINE', **kwargs):
         if self._is_id_missing():
-            raise RuntimeError(f"[transmit] 設備 '{self.device_id}' 尚未分配物理 ID。請先調用 ensure_id() 獲取 ID。")
+            raise RuntimeError(f"[transmit] Device '{self.device_id}' has no assigned physical ID. Call ensure_id() first.")
         try:
             outbound_ts = int(float(kwargs.get('t', time.time())))
         except Exception:
@@ -249,16 +268,15 @@ class OpenSynaptic:
             driver = self.active_transporters.get(target_key)
         if driver and hasattr(driver, 'send'):
             try:
-                if isinstance(packet, str):
-                    packet = packet.encode('utf-8')
-                result = driver.send(packet, self.config)
+                wire_packet = as_readonly_view(packet) if zero_copy_enabled(self.config) else ensure_bytes(packet)
+                result = driver.send(wire_packet, self.config)
                 if not result:
-                    os_log.err('MAIN', 'SEND_FAIL', f'驅動 [{target_medium}] 拒絕發送', {'len': len(packet)})
+                    os_log.err('MAIN', 'SEND_FAIL', f'Driver [{target_medium}] rejected send', {'len': payload_len(wire_packet)})
                 return result
             except Exception as e:
                 os_log.err('MAIN', 'PHYSICAL_ERR', e, {'medium': target_medium})
                 return False
-        os_log.err('MAIN', 'NO_DRIVER', f'找不到可用驅動: {target_medium}', {'requested': target_key, 'available': sorted(list(self.active_transporters.keys()))})
+        os_log.err('MAIN', 'NO_DRIVER', f'No available driver: {target_medium}', {'requested': target_key, 'available': sorted(list(self.active_transporters.keys()))})
         return False
 if __name__ == '__main__':
     os_node = OpenSynaptic()
@@ -268,6 +286,6 @@ if __name__ == '__main__':
     bin_packet, aid, strat = os_node.transmit(device_id='HUB_01', sensors=[['V1', 'OK', 621, 'Pa'], ['Vs1', 'OK', 621, 'Pa'], ['aV1', 'OK', 6321, 'Pa'], ['Vv1', 'OK', 6221, 'Pa'], ['VC1', 'OK', 611, 'Pa']])
     success = os_node.dispatch(bin_packet, medium='UDP')
     if success:
-        os_log.log_with_const('info', LogMsg.SUCCESS_SEND, info=f'已通过 UDP 发射 {len(bin_packet)} 字节')
+        os_log.log_with_const('info', LogMsg.SUCCESS_SEND, info=f'Sent {len(bin_packet)} bytes over UDP')
     else:
-        os_log.log_with_const('error', LogMsg.FAILED_SEND, info='发射失败')
+        os_log.log_with_const('error', LogMsg.FAILED_SEND, info='Send failed')

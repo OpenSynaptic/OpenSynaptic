@@ -3,6 +3,7 @@ import pkgutil
 from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.constants import LogMsg
 from opensynaptic.services.transporters import drivers
+from opensynaptic.utils.buffer import ensure_bytes, zero_copy_enabled, as_readonly_view
 
 class _AppProxyDriver:
 
@@ -19,7 +20,8 @@ class _AppProxyDriver:
         send_fn = getattr(self._module, 'send', None)
         if not send_fn:
             return False
-        return bool(send_fn(payload, merged))
+        wire_payload = as_readonly_view(payload) if zero_copy_enabled(merged) else ensure_bytes(payload)
+        return bool(send_fn(wire_payload, merged))
 
 class TransporterService:
     """Service plugin responsible for transporter driver discovery and dispatch."""

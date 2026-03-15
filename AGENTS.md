@@ -1,7 +1,7 @@
 # OpenSynaptic – AI Agent Guide
 
 ## Project Overview
-OpenSynaptic is a **2-N-2 high-performance IoT protocol stack** (描述: `pyproject.toml`).  
+OpenSynaptic is a **2-N-2 high-performance IoT protocol stack** (description: `pyproject.toml`).  
 It standardises sensor readings into UCUM units, compresses them via Base62 encoding, wraps them in a binary packet, and dispatches over pluggable transporters (TCP/UDP/UART/LoRa/MQTT/CAN…).
 
 ---
@@ -20,13 +20,15 @@ sensors list
 
 | Class | File | Role |
 |---|---|---|
-| `OpenSynaptic` | `src/opensynaptic/core/core.py` | Orchestrator – compose all subsystems |
-| `OpenSynapticStandardizer` | `core/standardization.py` | Sensor → UCUM fact normalisation |
-| `OpenSynapticEngine` | `core/solidity.py` | Base62 compress / decompress |
-| `OSVisualFusionEngine` | `core/unified_parser.py` | Binary packet encode/decode, template learning |
-| `OSHandshakeManager` | `core/handshake.py` | CMD byte dispatch; device ID negotiation |
+| `OpenSynaptic` | `src/opensynaptic/core/pycore/core.py` | Orchestrator – compose all subsystems |
+| `OpenSynapticStandardizer` | `src/opensynaptic/core/pycore/standardization.py` | Sensor → UCUM fact normalisation |
+| `OpenSynapticEngine` | `src/opensynaptic/core/pycore/solidity.py` | Base62 compress / decompress |
+| `OSVisualFusionEngine` | `src/opensynaptic/core/pycore/unified_parser.py` | Binary packet encode/decode, template learning |
+| `OSHandshakeManager` | `src/opensynaptic/core/pycore/handshake.py` | CMD byte dispatch; device ID negotiation |
 | `IDAllocator` | `plugins/id_allocator.py` | uint32 ID pool, persisted to `data/id_allocation.json` |
-| `TransporterManager` | `core/transporter_manager.py` | Auto-discovers and lazy-loads transporters |
+| `TransporterManager` | `src/opensynaptic/core/pycore/transporter_manager.py` | Auto-discovers and lazy-loads transporters |
+| `ServiceManager` | `src/opensynaptic/services/service_manager.py` | Mount/load lifecycle hub for internal services and plugins |
+| `plugin_registry` helpers | `src/opensynaptic/services/plugin_registry.py` | Built-in plugin defaults + alias normalization (`web-user` → `web_user`) |
 
 ---
 
@@ -37,10 +39,13 @@ sensors list
 
 Critical keys:
 - `assigned_id` – uint32 device ID; `4294967295` (MAX_UINT32) is the **sentinel for "unassigned"**
-- `RESOURCES.transporters_status` – map of `<transporter_name>: true/false`; `TransporterManager` reads this on startup and writes new keys automatically
+- `RESOURCES.transporters_status` – legacy merged status map used by CLI/tools; keep lowercase keys
+- `RESOURCES.application_status / transport_status / physical_status` – active enable maps for L7/L4/PHY loading
+- `RESOURCES.application_config / transport_config / physical_config` – per-layer driver options passed into `send()` as `application_options` / `transport_options` / `physical_options`
 - `RESOURCES.registry` – path to device registry dir (default `data/device_registry/`)
 - `engine_settings.precision` – Base62 decimal precision (default 4)
 - `engine_settings.active_standardization / active_compression / active_collapse` – pipeline stage toggles
+- `RESOURCES.service_plugins.<plugin_name>` – plugin runtime defaults auto-synced from `services/plugin_registry.py`
 
 ---
 
@@ -55,10 +60,14 @@ Critical keys:
 
 ## Transporter Plugin System
 
-- Each `.py` in `src/opensynaptic/transporters/` is auto-discovered via `pkgutil`.
-- A transporter must expose `send(payload: bytes, config: dict) -> bool` (and optionally `listen(config, callback)`).
-- Enable a transporter: set its lowercase name to `true` in `Config.json → RESOURCES.transporters_status`.
-- New files are **automatically registered as `false`** on first boot; no manual config edit required.
+- Transporters are tiered now:
+  - Application: `src/opensynaptic/services/transporters/drivers/` (managed by `TransporterService`)
+  - Transport: `src/opensynaptic/core/transport_layer/protocols/` (managed by `TransportLayerManager`)
+  - Physical: `src/opensynaptic/core/physical_layer/protocols/` (managed by `PhysicalLayerManager`)
+- Drivers still implement `send(payload: bytes, config: dict) -> bool` (optional `listen(config, callback)`).
+- Enable protocols in the **layer-specific** status map (`application_status`, `transport_status`, `physical_status`).
+- Application auto-discovery is constrained to `TransporterService.APP_LAYER_DRIVERS`; adding a new app driver requires adding its key there.
+- Transport/physical discovery iterates manager candidate tuples (`_CANDIDATES` in each manager); adding a new protocol requires updating candidates + status/config entries.
 
 ---
 
@@ -66,9 +75,9 @@ Critical keys:
 
 Registry files live at:
 ```
-data/device_registry/{id[0:2]}/{id[2:4]}/{id}.json
+data/device_registry/{id[0:2]}/{id[2:4]}/{aid}.json
 ```
-where `id` is zero-padded to 10 digits.  
+where shard segments are derived from `str(aid).zfill(10)`.  
 Helper: `from opensynaptic.utils.paths import get_registry_path; get_registry_path(aid)`
 
 ---
@@ -77,6 +86,7 @@ Helper: `from opensynaptic.utils.paths import get_registry_path; get_registry_pa
 
 - `libraries/Units/` – UCUM unit definitions as JSON with `__METADATA__.OS_UNIT_SYMBOLS`.
 - `libraries/harvester.py → SymbolHarvester.sync()` – merges all unit files into `libraries/OS_Symbols.json`.
+- `OpenSynapticEngine` resolves its symbol table from `RESOURCES.prefixes` or `RESOURCES.symbols` in `Config.json`; keep that path aligned with the harvester output.
 - **Run harvester after adding/editing any unit JSON** so `OpenSynapticEngine` picks up the new symbols.
 
 ---
@@ -108,13 +118,26 @@ pip install -e .
 python scripts/concurrency_smoke.py [total=200] [workers=8] [sources=6]
 ```
 
+**Run built-in plugin test suites:**
+```bash
+python -u src/main.py plugin-test --suite component
+python -u src/main.py plugin-test --suite stress --workers 8 --total 200
+python -u src/main.py plugin-test --suite all --workers 8 --total 200
+```
+
+**Check/build native bindings** (required for Base62 + security code paths):
+```bash
+python -u src/main.py native-check
+python -u src/main.py native-build
+```
+
 **Sync unit symbol table after editing `libraries/Units/`:**
 ```python
 from libraries.harvester import SymbolHarvester
 SymbolHarvester().sync()
 ```
 
-**Minimal node usage (see bottom of `core.py`):**
+**Minimal node usage (see bottom of `src/opensynaptic/core/pycore/core.py`):**
 ```python
 node = OpenSynaptic()           # reads Config.json via ctx auto-detection
 node.ensure_id("192.168.1.100", 8080)
@@ -127,8 +150,12 @@ node.dispatch(packet, medium="UDP")
 ## Key Conventions
 
 - **`config_path` always passed as absolute path** – all subsystems receive it from `OpenSynaptic.__init__` to avoid CWD-relative path bugs.
+- Import core symbols from `opensynaptic.core` only; `src/opensynaptic/core/__init__.py` is the public facade and `get_core_manager()` selects the active core plugin (`pycore`).
 - `plugins/` is outside `src/`; `core.py` adds the project root to `sys.path` if the import fails.
 - `OSContext` (`ctx`) is a module-level singleton imported at `from opensynaptic.utils.paths import ctx`; it is instantiated at import time.
 - `4294967295` / `MAX_UINT32` is treated as "unassigned" everywhere – never use it as a real device ID.
-- Transporter keys in `transporters_status` are **lowercase** (`"tcp"`, not `"TCP"`).
+- Transporter keys in all status maps are **lowercase** (`"tcp"`, not `"TCP"`).
+- `TransporterManager._migrate_resource_maps()` keeps `transporters_status` as a merged mirror of the three layer maps.
+- Built-in plugin defaults are synced on node startup via `sync_all_plugin_defaults(self.config)` before transporters auto-load.
+- `Base62Codec` (`src/opensynaptic/utils/base62/base62.py`) and security helpers are native-only ctypes bindings loaded via `src/opensynaptic/utils/c/native_loader.py`; there is no Python fallback for those code paths.
 

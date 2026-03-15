@@ -15,6 +15,15 @@ class TUIService:
         os_log.log_with_const('info', LogMsg.TUI_READY)
         return self
 
+    @staticmethod
+    def get_required_config():
+        return {
+            'enabled': True,
+            'mode': 'manual',
+            'default_section': 'identity',
+            'default_interval': 2.0,
+        }
+
     # ------------------------------------------------------------------ #
     #  Individual section renderers                                        #
     # ------------------------------------------------------------------ #
@@ -114,20 +123,111 @@ class TUIService:
     def run_once(self, sections=None):
         return self.render_text(sections)
 
-    def run_interactive(self, interval=2.0, sections=None):
-        """Blocking loop – clears terminal and reprints every *interval* seconds. Exits on Ctrl+C."""
+    @staticmethod
+    def _clear_screen():
+        print('\033[2J\033[H', end='', flush=True)
+
+    def _render_bios_screen(self, active_section, interval, payload, elapsed_s):
+        ts = time.strftime('%Y-%m-%d %H:%M:%S')
+        rows = [
+            '+' + ('-' * 78) + '+',
+            '| OpenSynaptic BIOS Console'.ljust(79) + '|',
+            '| Time: {} | Active: {} | Refresh: {:.2f}s | Last render: {:.3f}s'.format(ts, active_section, interval, elapsed_s).ljust(79) + '|',
+            '+' + ('-' * 78) + '+',
+            '| Sections:'.ljust(79) + '|',
+        ]
+        for idx, name in enumerate(_SECTIONS, start=1):
+            marker = '*' if name == active_section else ' '
+            rows.append('|  {} {}. {}'.format(marker, idx, name).ljust(79) + '|')
+        rows.extend([
+            '+' + ('-' * 78) + '+',
+            '| Commands:'.ljust(79) + '|',
+            '|   [1-6] switch section   [a] all sections   [r] refresh current'.ljust(79) + '|',
+            '|   [auto N] auto-refresh N cycles            [i SEC] set interval'.ljust(79) + '|',
+            '|   [j] print JSON payload                     [h/?] help'.ljust(79) + '|',
+            '|   [p] plugin snapshot                        [q] quit'.ljust(79) + '|',
+            '+' + ('-' * 78) + '+',
+        ])
+        self._clear_screen()
+        print('\n'.join(rows), flush=True)
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str), flush=True)
+
+    def run_bios(self, interval=2.0, section=None):
+        """Interactive BIOS-like terminal shell for exploring service state."""
         os_log.log_with_const('info', LogMsg.TUI_INTERACTIVE, interval=interval)
-        print('[TUI Interactive] interval={}s  Ctrl+C 停止'.format(interval), flush=True)
-        try:
-            while True:
-                text = self.render_text(sections)
-                print('\033[2J\033[H', end='', flush=True)
-                ts = time.strftime('%Y-%m-%d %H:%M:%S')
-                print('── OpenSynaptic TUI  [{}]  (Ctrl+C 停止) ──'.format(ts), flush=True)
-                print(text, flush=True)
-                time.sleep(max(0.5, interval))
-        except KeyboardInterrupt:
-            print('\n[TUI] 已退出', flush=True)
+        current = (section or 'identity').lower()
+        if current not in self._SECTION_METHODS:
+            current = 'identity'
+        interval = max(0.2, float(interval))
+        while True:
+            t0 = time.monotonic()
+            payload = self.render_section(current)
+            elapsed_s = time.monotonic() - t0
+            self._render_bios_screen(current, interval, payload, elapsed_s)
+            try:
+                command = input('bios> ').strip()
+            except (EOFError, KeyboardInterrupt):
+                print('\n[TUI] Exited.', flush=True)
+                return
+            if not command:
+                continue
+            cmd = command.lower()
+            if cmd in ('q', 'quit', 'exit'):
+                print('[TUI] Exited.', flush=True)
+                return
+            if cmd in ('a', 'all'):
+                self._clear_screen()
+                print(self.render_text(), flush=True)
+                input('Press Enter to return to BIOS view...')
+                continue
+            if cmd in ('j', 'json'):
+                print(json.dumps(payload, indent=2, ensure_ascii=False, default=str), flush=True)
+                input('Press Enter to return to BIOS view...')
+                continue
+            if cmd in ('h', '?', 'help'):
+                print('Commands: 1-6 | a | r | auto N | i SEC | j | p | q', flush=True)
+                input('Press Enter to return to BIOS view...')
+                continue
+            if cmd in ('p', 'plugin'):
+                plugins = {}
+                if hasattr(self.node, 'service_manager'):
+                    plugins = self.node.service_manager.collect_cli_commands()
+                print(json.dumps({'plugins': sorted(list(plugins.keys()))}, indent=2, ensure_ascii=False), flush=True)
+                input('Press Enter to return to BIOS view...')
+                continue
+            if cmd in ('r', 'refresh'):
+                continue
+            if cmd.startswith('i '):
+                try:
+                    interval = max(0.2, float(cmd.split(None, 1)[1]))
+                except Exception:
+                    pass
+                continue
+            if cmd.startswith('auto '):
+                try:
+                    cycles = max(1, int(cmd.split(None, 1)[1]))
+                except Exception:
+                    cycles = 5
+                for _ in range(cycles):
+                    t0 = time.monotonic()
+                    payload = self.render_section(current)
+                    elapsed_s = time.monotonic() - t0
+                    self._render_bios_screen(current, interval, payload, elapsed_s)
+                    time.sleep(interval)
+                continue
+            if cmd.isdigit():
+                idx = int(cmd) - 1
+                if 0 <= idx < len(_SECTIONS):
+                    current = _SECTIONS[idx]
+                continue
+            if cmd in self._SECTION_METHODS:
+                current = cmd
+                continue
+
+    def run_interactive(self, interval=2.0, sections=None):
+        """Backward-compatible interactive entrypoint; now routes to BIOS mode."""
+        selected = sections[0] if sections else None
+        return self.run_bios(interval=interval, section=selected)
 
     # ------------------------------------------------------------------ #
     #  Plugin CLI integration                                              #
@@ -154,7 +254,17 @@ class TUIService:
             self.run_interactive(interval=ns.interval, sections=sections)
             return 0
 
+        def _bios(argv):
+            import argparse
+            p = argparse.ArgumentParser(prog='tui bios')
+            p.add_argument('--interval', type=float, default=2.0)
+            p.add_argument('--section', default=None)
+            ns = p.parse_args(argv)
+            self.run_bios(interval=ns.interval, section=ns.section)
+            return 0
+
         return {
             'render': _render,
             'interactive': _interactive,
+            'bios': _bios,
         }

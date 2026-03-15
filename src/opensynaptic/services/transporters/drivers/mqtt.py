@@ -1,4 +1,5 @@
 from opensynaptic.utils.logger import os_log
+from opensynaptic.utils.buffer import ensure_bytes
 
 def send(payload, config):
     try:
@@ -12,10 +13,7 @@ def send(payload, config):
     host = mqtt_cfg.get('host', 'broker.hivemq.com')
     port = int(mqtt_cfg.get('port', 1883))
     topic = mqtt_cfg.get('topic', 'os/sensors/raw')
-    if isinstance(payload, bytes):
-        send_payload = payload
-    else:
-        send_payload = str(payload).encode('utf-8')
+    send_payload = ensure_bytes(payload)
     client = mqtt.Client(client_id=mqtt_cfg.get('client_id', 'OpenSynapticNode'))
     try:
         client.connect(host, port, 60)

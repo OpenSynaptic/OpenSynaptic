@@ -2,6 +2,7 @@ import importlib
 import os
 from opensynaptic.utils.constants import LogMsg
 from opensynaptic.utils.logger import os_log
+from opensynaptic.utils.buffer import ensure_bytes, zero_copy_enabled, as_readonly_view
 
 class ProtocolAdapter:
 
@@ -120,7 +121,8 @@ class LayeredProtocolManager:
             merged.update(config or {} if isinstance(config, dict) else self.config)
             if options_key:
                 merged[options_key] = self._protocol_conf(str(name).lower())
-            return adapter.send(payload, merged)
+            wire_payload = as_readonly_view(payload) if zero_copy_enabled(merged) else ensure_bytes(payload)
+            return adapter.send(wire_payload, merged)
         except Exception as exc:
             os_log.err(self.layer_tag, 'SEND', exc, {'protocol': name})
             return False

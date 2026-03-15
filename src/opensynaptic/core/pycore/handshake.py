@@ -2,11 +2,10 @@ import json
 import struct
 import time
 import threading
-from typing import Optional, List
 from opensynaptic.utils.paths import get_registry_path, read_json
 from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.constants import LogMsg
-from opensynaptic.utils.security import derive_session_key
+from opensynaptic.utils.security.security_core import derive_session_key
 
 class CMD:
     DATA_FULL = 63
@@ -358,7 +357,7 @@ class OSHandshakeManager:
         return struct.pack('>BHH', CMD.ID_POOL_REQ, seq, count) + payload
 
     def build_ping(self):
-        """構造 0x09 PING"""
+        """Build a 0x09 PING packet."""
         seq = self._next_seq()
         return struct.pack('>BH', CMD.PING, seq)
 
@@ -457,7 +456,7 @@ class OSHandshakeManager:
         try:
             transport_send_fn(req_packet)
         except Exception as e:
-            os_log.err('ID 申請', '發送失敗', e)
+            os_log.err('ID_REQUEST', 'SEND_FAILED', e)
             return None
         start = time.time()
         while time.time() - start < timeout:
@@ -468,12 +467,12 @@ class OSHandshakeManager:
                     if result['cmd'] == CMD.ID_ASSIGN:
                         return result['result'].get('assigned_id')
                     elif result['cmd'] == CMD.HANDSHAKE_NACK:
-                        os_log.err('ID 申請', '被拒絕', result['result'].get('reason'))
+                        os_log.err('ID_REQUEST', 'REJECTED', result['result'].get('reason'))
                         return None
             except Exception as e:
-                os_log.err('ID 申請', '接收回覆失敗', e)
+                os_log.err('ID_REQUEST', 'RECV_FAILED', e)
                 time.sleep(0.05)
-        os_log.err('ID 申請', f'超時 ({timeout}s)')
+        os_log.err('ID_REQUEST', f'TIMEOUT ({timeout}s)')
         return None
 
     def request_id_pool_via_transport(self, transport_send_fn, transport_recv_fn, count=10, meta=None, timeout=5.0):
@@ -481,7 +480,7 @@ class OSHandshakeManager:
         try:
             transport_send_fn(req_packet)
         except Exception as e:
-            os_log.err('ID 池申請', '發送失敗', e)
+            os_log.err('ID_POOL_REQUEST', 'SEND_FAILED', e)
             return []
         start = time.time()
         while time.time() - start < timeout:
@@ -494,7 +493,7 @@ class OSHandshakeManager:
                     elif result['cmd'] == CMD.HANDSHAKE_NACK:
                         return []
             except Exception as e:
-                os_log.err('ID 池申請', '接收回覆失敗', e)
+                os_log.err('ID_POOL_REQUEST', 'RECV_FAILED', e)
                 time.sleep(0.05)
         return []
 

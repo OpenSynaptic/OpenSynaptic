@@ -4,7 +4,7 @@ All public classes and methods exposed by the `opensynaptic` package.
 
 ---
 
-## `OpenSynaptic` — `src/opensynaptic/core/core.py`
+## `OpenSynaptic` — `src/opensynaptic/core/pycore/core.py` (exported via `opensynaptic.core`)
 
 The top-level orchestrator. Instantiating it wires all subsystems from `Config.json`.
 
@@ -103,7 +103,7 @@ Returns `True` if `assigned_id` is absent, zero, or equal to `MAX_UINT32` (`4294
 
 ---
 
-## `OpenSynapticStandardizer` — `core/standardization.py`
+## `OpenSynapticStandardizer` — `core/pycore/standardization.py`
 
 Normalises raw sensor readings into UCUM-tagged fact dicts.
 
@@ -126,7 +126,7 @@ Returns a fact dict ready for `OpenSynapticEngine.compress()`.
 
 ---
 
-## `OpenSynapticEngine` — `core/solidity.py`
+## `OpenSynapticEngine` — `core/pycore/solidity.py`
 
 Base62 compress and decompress pipeline facts.
 
@@ -146,7 +146,7 @@ Reverses `compress()` back to a fact dict.
 
 ---
 
-## `OSVisualFusionEngine` — `core/unified_parser.py`
+## `OSVisualFusionEngine` — `core/pycore/unified_parser.py`
 
 Binary packet encoder/decoder with template learning for DIFF compression.
 
@@ -171,7 +171,7 @@ Decode a binary packet back to a dict.
 
 ---
 
-## `OSHandshakeManager` — `core/handshake.py`
+## `OSHandshakeManager` — `core/pycore/handshake.py`
 
 CMD byte dispatch, device session management, ID and time negotiation.
 
@@ -220,7 +220,7 @@ IDAllocator(base_dir=None, start_id=1, end_id=4294967295,
 
 ---
 
-## `TransporterManager` — `core/transporter_manager.py`
+## `TransporterManager` — `core/pycore/transporter_manager.py`
 
 Auto-discovers transporter driver modules from `services/transporters/` and the physical/transport layers.
 
@@ -238,6 +238,39 @@ TransporterManager(master: OpenSynaptic)
 | `get_driver(medium)` | `driver \| None` | Return the driver for a medium key |
 | `refresh_protocol(medium)` | `driver \| None` | Invalidate cache and reload one driver |
 | `runtime_tick()` | `None` | Periodic heartbeat; reloads stale drivers |
+
+---
+
+## `CoreManager` — `core/coremanager.py`
+
+Discovers and lazy-loads core plugins (currently `pycore`) and resolves the public `opensynaptic.core` symbols.
+
+### Constructor
+
+```python
+CoreManager(base_package: str = 'opensynaptic.core', default_core: str = 'pycore')
+```
+
+### Key Methods
+
+| Method | Returns | Description |
+|---|---|---|
+| `discover_cores()` | `list[str]` | Discover available core plugin packages under `opensynaptic.core.*` |
+| `available_cores()` | `list[str]` | Return registered core plugin names |
+| `set_config(config)` | `dict` | Set in-memory config for backend selection |
+| `set_config_path(config_path)` | `dict` | Load Config and cache it for selection |
+| `set_active_core(name)` | `str` | Force the active core plugin |
+| `get_active_core_name()` | `str` | Return selected core plugin name |
+| `load_core(name=None)` | `dict` | Load a core plugin manifest lazily |
+| `list_symbols(name=None)` | `list[str]` | Return exported symbols for the selected core |
+| `get_symbol(symbol_name, name=None)` | `Any` | Resolve one exported symbol from the selected core |
+| `create_node(config_path=None, name=None)` | `OpenSynaptic` | Instantiate the selected core's `OpenSynaptic` class |
+
+Top-level helper:
+
+```python
+from opensynaptic.core import get_core_manager
+```
 
 ---
 
@@ -266,6 +299,20 @@ ServiceManager(config: dict | None = None, mode: str = 'runtime')
 
 ---
 
+## `plugin_registry` — `services/plugin_registry.py`
+
+Utility module for decoupled plugin mounting and config default synchronization.
+
+| Function | Returns | Description |
+|---|---|---|
+| `normalize_plugin_name(name)` | `str` | Normalize aliases (`web-user` -> `web_user`, `deps` -> `dependency_manager`) |
+| `list_builtin_plugins()` | `list[str]` | Built-in plugin keys |
+| `ensure_plugin_defaults(config, plugin_name)` | `bool` | Inject missing defaults into `RESOURCES.service_plugins.<plugin>` |
+| `sync_all_plugin_defaults(config)` | `bool` | Ensure defaults for all built-ins |
+| `ensure_and_mount_plugin(node, plugin_name, load=False, mode='runtime')` | `service` | Ensure config defaults, mount service, optionally load |
+
+---
+
 ## `TUIService` — `services/tui/main.py`
 
 Section-aware terminal UI snapshot renderer with interactive live mode.
@@ -285,8 +332,9 @@ TUIService(node: OpenSynaptic)
 | `build_snapshot()` | `dict` | Full snapshot dict (all sections + timestamp) |
 | `render_text(sections=None)` | `str` | JSON-formatted string of `render_sections()` |
 | `run_once(sections=None)` | `str` | Alias for `render_text()` |
-| `run_interactive(interval=2.0, sections=None)` | `None` | Blocking ANSI live-refresh loop (Ctrl+C exits) |
-| `get_cli_commands()` | `dict` | Returns `{"render": fn, "interactive": fn}` for `ServiceManager.dispatch_plugin_cli()` |
+| `run_bios(interval=2.0, section=None)` | `None` | Interactive BIOS-style view with hotkeys |
+| `run_interactive(interval=2.0, sections=None)` | `None` | Backward-compatible wrapper to BIOS mode |
+| `get_cli_commands()` | `dict` | Returns `{"render": fn, "interactive": fn, "bios": fn}` |
 
 ---
 
@@ -306,8 +354,44 @@ TestPlugin(node: OpenSynaptic | None = None)
 |---|---|---|
 | `run_component(verbosity=1)` | `(ok, fail, result)` | Run all `unittest.TestCase` component tests |
 | `run_stress(total=200, workers=8, sources=6, progress=True)` | `(summary_dict, fail_count)` | Run concurrent pipeline stress test |
-| `run_all(stress_total=200, stress_workers=8, verbosity=1)` | `dict` | Both suites; returns combined report |
+| `run_all(stress_total=200, stress_workers=8, stress_sources=6, verbosity=1, progress=True)` | `dict` | Both suites; returns combined report |
 | `get_cli_commands()` | `dict` | Returns `{"component": fn, "stress": fn, "all": fn}` |
+
+---
+
+## `WebUserService` — `services/web_user/main.py`
+
+Lightweight HTTP user-management plugin with a minimal browser UI.
+
+| Method | Returns | Description |
+|---|---|---|
+| `start(host='127.0.0.1', port=8765)` | `bool` | Start web service thread |
+| `stop()` | `bool` | Stop web service |
+| `status()` | `dict` | Runtime state (`running`, `users`, `data_file`, `uptime_s`) |
+| `get_cli_commands()` | `dict` | Returns `start/stop/status/list/add/update/delete` handlers |
+
+HTTP routes:
+
+- `GET /` - browser UI
+- `GET /health`
+- `GET /users`
+- `POST /users`
+- `PUT /users/{username}`
+- `DELETE /users/{username}`
+
+---
+
+## `DependencyManagerPlugin` — `services/dependency_manager/main.py`
+
+Dependency inspection and repair plugin.
+
+| Command | Description |
+|---|---|
+| `check` | Compare `pyproject.toml` dependencies with installed packages |
+| `doctor` | Run `pip check` |
+| `sync` | Install all declared dependencies |
+| `repair` | Install only missing dependencies |
+| `install` | Install one named dependency |
 
 ---
 

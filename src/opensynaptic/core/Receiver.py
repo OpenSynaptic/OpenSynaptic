@@ -19,10 +19,10 @@ for _p in (PROJECT_ROOT, SRC_DIR):
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 try:
-    from opensynaptic.core.core import OpenSynaptic
+    from opensynaptic.core import OpenSynaptic
 except Exception:
     try:
-        from src.opensynaptic.core.core import OpenSynaptic
+        from src.opensynaptic.core import OpenSynaptic
     except Exception as e:
         raise ImportError(f"Cannot import OpenSynaptic. Ensure this repository's root (containing 'src/')\nis on PYTHONPATH or run this script from the project root.\nTried PROJECT_ROOT={PROJECT_ROOT!r} and SRC_DIR={SRC_DIR!r}\nsys.path = {sys.path!r}") from e
 import socket

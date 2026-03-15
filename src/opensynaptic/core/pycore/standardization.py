@@ -63,7 +63,7 @@ class OpenSynapticStandardizer:
         return read_json(path)
 
     def _save_cache(self):
-        """持久化緩存到硬碟"""
+        """Persist cache data to disk."""
         if not self._is_dirty:
             return
         write_json(self.cache_path, {'cached_units': self.registry, 'updated_at': int(time.time()), 'engine': 'OS-Standardizer-v4-GCD-Final'}, indent=4)

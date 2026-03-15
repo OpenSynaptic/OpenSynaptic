@@ -36,7 +36,7 @@ class SymbolHarvester:
 
                 metadata = data.get("__METADATA__", {})
                 class_symbol = metadata.get("OS_UNIT_SYMBOLS")
-                class_name = metadata.get("class_name")  # 提取類別名稱，如 Informatics
+                class_name = metadata.get("class_name")  # Extract class name, e.g. Informatics
                 units_dict = data.get("units", {})
 
                 if class_symbol is not None:

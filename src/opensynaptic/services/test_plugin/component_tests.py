@@ -7,7 +7,11 @@ Run via:
 import sys
 import time
 import unittest
+import tempfile
+import shutil
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 # Ensure package is importable when run directly
 _ROOT = None
@@ -20,6 +24,24 @@ if _ROOT and str(Path(_ROOT) / 'src') not in sys.path:
 if _ROOT and _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from opensynaptic.utils.c.native_loader import has_native_library
+from opensynaptic.utils.errors import EnvironmentMissingError
+
+
+class TestCoreManager(unittest.TestCase):
+    """Core plugin discovery / symbol resolution."""
+
+    def test_pycore_discovered(self):
+        from opensynaptic.core import get_core_manager
+        manager = get_core_manager()
+        self.assertIn('pycore', manager.available_cores())
+
+    def test_can_resolve_opensynaptic_symbol(self):
+        from opensynaptic.core import get_core_manager
+        manager = get_core_manager()
+        symbol = manager.get_symbol('OpenSynaptic')
+        self.assertEqual(symbol.__name__, 'OpenSynaptic')
+
 
 # ---------------------------------------------------------------------------
 # Base62 Codec
@@ -28,7 +50,9 @@ class TestBase62Codec(unittest.TestCase):
     """Round-trip encoding/decoding tests for Base62Codec."""
 
     def setUp(self):
-        from opensynaptic.utils.base62_codec import Base62Codec
+        if not has_native_library('os_base62'):
+            raise unittest.SkipTest('os_base62 native library is not available')
+        from opensynaptic.utils.base62.base62 import Base62Codec
         self.codec = Base62Codec(precision=4)
 
     def test_encode_positive(self):
@@ -62,7 +86,7 @@ class TestOpenSynapticStandardizer(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from opensynaptic.core.standardization import OpenSynapticStandardizer
+        from opensynaptic.core import OpenSynapticStandardizer
         cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
         cls.std = OpenSynapticStandardizer(cfg)
 
@@ -94,8 +118,9 @@ class TestOpenSynapticEngine(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from opensynaptic.core.standardization import OpenSynapticStandardizer
-        from opensynaptic.core.solidity import OpenSynapticEngine
+        if not has_native_library('os_base62'):
+            raise unittest.SkipTest('os_base62 native library is not available')
+        from opensynaptic.core import OpenSynapticStandardizer, OpenSynapticEngine
         cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
         std = OpenSynapticStandardizer(cfg)
         cls.engine = OpenSynapticEngine(cfg)
@@ -127,9 +152,9 @@ class TestOSVisualFusionEngine(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from opensynaptic.core.standardization import OpenSynapticStandardizer
-        from opensynaptic.core.solidity import OpenSynapticEngine
-        from opensynaptic.core.unified_parser import OSVisualFusionEngine
+        if not has_native_library('os_base62') or not has_native_library('os_security'):
+            raise unittest.SkipTest('required native libraries are not available')
+        from opensynaptic.core import OpenSynapticStandardizer, OpenSynapticEngine, OSVisualFusionEngine
         cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
         std = OpenSynapticStandardizer(cfg)
         eng = OpenSynapticEngine(cfg)
@@ -155,6 +180,22 @@ class TestOSVisualFusionEngine(unittest.TestCase):
         pkt = self.fusion.run_engine(self.raw_input, strategy='DIFF')
         self.assertIsInstance(pkt, (bytes, bytearray))
         self.assertTrue(len(pkt) > 0)
+
+    def test_run_engine_accepts_bytearray_input(self):
+        pkt = self.fusion.run_engine(bytearray(self.raw_input, 'utf-8'), strategy='FULL')
+        self.assertIsInstance(pkt, (bytes, bytearray))
+        self.assertTrue(len(pkt) > 0)
+
+    def test_decompress_accepts_memoryview_packet(self):
+        pkt = self.fusion.run_engine(self.raw_input, strategy='FULL')
+        decoded = self.fusion.decompress(memoryview(pkt))
+        self.assertIsInstance(decoded, dict)
+
+    def test_relay_accepts_bytearray_packet(self):
+        pkt = self.fusion.run_engine(self.raw_input, strategy='FULL')
+        relayed = self.fusion.relay(bytearray(pkt))
+        self.assertIsInstance(relayed, (bytes, bytearray))
+        self.assertTrue(len(relayed) > 0)
 
 
 # ---------------------------------------------------------------------------
@@ -199,13 +240,113 @@ class TestIDAllocator(unittest.TestCase):
         self.assertEqual(len(set(pool)), 5)
 
 
+class TestEnvGuardService(unittest.TestCase):
+    """Checks env_guard local JSON lifecycle and issue capture."""
+
+    def setUp(self):
+        from opensynaptic.services.env_guard.main import EnvironmentGuardService
+        self.tmp_dir = tempfile.mkdtemp()
+        cfg = {
+            'RESOURCES': {
+                'service_plugins': {
+                    'env_guard': {
+                        'auto_start': False,
+                        'auto_install': False,
+                        'resource_library_json_path': 'data/env_guard/resources.json',
+                        'status_json_path': 'data/env_guard/status.json',
+                    },
+                },
+            },
+        }
+        node = SimpleNamespace(base_dir=self.tmp_dir, config=cfg)
+        self.svc = EnvironmentGuardService(node=node)
+
+    def tearDown(self):
+        self.svc.close()
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_start_creates_json_files(self):
+        self.svc.start()
+        status_path = Path(self.tmp_dir) / 'data' / 'env_guard' / 'status.json'
+        resources_path = Path(self.tmp_dir) / 'data' / 'env_guard' / 'resources.json'
+        self.assertTrue(status_path.exists())
+        self.assertTrue(resources_path.exists())
+        data = json.loads(status_path.read_text(encoding='utf-8'))
+        self.assertIn('resource_library_json_path', data)
+
+    def test_environment_error_updates_status(self):
+        self.svc.start()
+        exc = EnvironmentMissingError(
+            message='No compiler detected',
+            missing_kind='compiler',
+            resource='toolchain',
+        )
+        self.svc._on_error({
+            'error': exc,
+            'payload': {
+                'eid': 'PRECHECK_ENV_MISSING',
+                'mid': 'NATIVE',
+                'category': 'environment_missing',
+                'error_type': 'EnvironmentMissingError',
+            },
+        })
+        status_path = Path(self.tmp_dir) / 'data' / 'env_guard' / 'status.json'
+        data = json.loads(status_path.read_text(encoding='utf-8'))
+        self.assertEqual(data.get('issues_total'), 1)
+        self.assertEqual(data.get('issues', [])[0].get('environment', {}).get('missing_kind'), 'compiler')
+
+    def test_auto_install_uses_resource_commands(self):
+        self.svc.config['auto_install'] = True
+        self.svc.start()
+
+        resources_path = Path(self.tmp_dir) / 'data' / 'env_guard' / 'resources.json'
+        resources = json.loads(resources_path.read_text(encoding='utf-8'))
+        resources['resources']['compiler']['toolchain']['commands'] = ['echo env-guard-auto-install']
+        resources_path.write_text(json.dumps(resources, indent=2, ensure_ascii=False), encoding='utf-8')
+
+        self.svc._run_shell_command = staticmethod(lambda command: {
+            'ok': True,
+            'command': command,
+            'return_code': 0,
+            'stdout': 'mock-ok',
+            'stderr': '',
+            'ts': round(time.time(), 3),
+        })
+
+        exc = EnvironmentMissingError(
+            message='No compiler detected',
+            missing_kind='compiler',
+            resource='toolchain',
+        )
+        self.svc._on_error({
+            'error': exc,
+            'payload': {
+                'eid': 'PRECHECK_ENV_MISSING',
+                'mid': 'NATIVE',
+                'category': 'environment_missing',
+                'error_type': 'EnvironmentMissingError',
+            },
+        })
+
+        deadline = time.time() + 2.0
+        attempts = []
+        while time.time() < deadline:
+            payload = self.svc._status_payload()
+            attempts = list(payload.get('attempts', []))
+            if attempts:
+                break
+            time.sleep(0.05)
+        self.assertTrue(attempts)
+        self.assertEqual(attempts[0].get('command'), 'echo env-guard-auto-install')
+
+
 def build_suite():
     """Return a TestSuite with all component tests."""
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
-    for cls in (TestBase62Codec, TestOpenSynapticStandardizer,
+    for cls in (TestCoreManager, TestBase62Codec, TestOpenSynapticStandardizer,
                 TestOpenSynapticEngine, TestOSVisualFusionEngine,
-                TestIDAllocator):
+                TestIDAllocator, TestEnvGuardService):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     return suite
 

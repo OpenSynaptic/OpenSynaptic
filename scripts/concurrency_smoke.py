@@ -39,32 +39,36 @@ def _parse_args():
         try:
             defaults[keys[i]] = int(val)
         except ValueError:
-            print('[smoke] 無效參數 {!r}，使用預設值 {}'.format(val, defaults[keys[i]]))
+            print('[smoke] Invalid argument {!r}; using default {}'.format(val, defaults[keys[i]]))
     return defaults
 
 
 def main():
     params = _parse_args()
-    print('[smoke] 啟動壓力測試  total={total}  workers={workers}  sources={sources}'.format(**params))
+    print('[smoke] Starting stress test  total={total}  workers={workers}  sources={sources}'.format(**params))
 
     from opensynaptic.services.test_plugin.stress_tests import run_stress
-    result, summary = run_stress(
-        total=params['total'],
-        workers=params['workers'],
-        sources=params['sources'],
-        progress=True,
-    )
+    try:
+        result, summary = run_stress(
+            total=params['total'],
+            workers=params['workers'],
+            sources=params['sources'],
+            progress=True,
+        )
+    except RuntimeError as exc:
+        print('[smoke] Native prerequisite missing: {}'.format(exc))
+        sys.exit(1)
 
-    print('\n[smoke] 結果摘要:')
+    print('\n[smoke] Summary:')
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
     if result.fail > 0:
-        print('\n[smoke] ❌  {} 次失敗。抽樣錯誤:'.format(result.fail))
+        print('\n[smoke] FAIL: {} failed iterations. Sample errors:'.format(result.fail))
         for err in result.errors[:5]:
             print('  •', err)
         sys.exit(1)
     else:
-        print('\n[smoke] ✅  全部通過！吞吐量 {} pps'.format(summary.get('throughput_pps', '?')))
+        print('\n[smoke] PASS: all iterations succeeded. Throughput {} pps'.format(summary.get('throughput_pps', '?')))
         sys.exit(0)
 
 

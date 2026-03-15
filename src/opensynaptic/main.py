@@ -21,7 +21,7 @@ def _read_cmdline_with_timeout(timeout_s):
 
     def _reader():
         try:
-            line = input("[OpenSynaptic] 输入命令(例如: os-help)。空闲超时后自动进入 run: ")
+            line = input("[OpenSynaptic] Enter a command (example: os-help). Idle timeout will auto-run `run`: ")
             q.put(line)
         except Exception:
             try:
