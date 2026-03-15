@@ -4,6 +4,26 @@
 
 ---
 
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Install](#install)
+- [Minimal Usage](#minimal-usage)
+- [CLI Quick Reference](#cli-quick-reference)
+- [Config.json](#configjson)
+- [Testing](#testing)
+- [v0.2.0 Performance Focus](#v020-performance-focus)
+  - [Optimized Usage Examples](#optimized-usage-examples)
+- [RS Core (rscore) Quick Start](#rs-core-rscore-quick-start)
+- [Adding a Transporter](#adding-a-transporter)
+- [API Reference](#api-reference)
+- [Documentation Hub](#documentation-hub)
+- [Release Notes](#release-notes)
+- [Plugin Config Auto-Sync](#plugin-config-auto-sync)
+
+---
+
 ## Architecture
 
 ```
@@ -17,27 +37,37 @@ sensors list
 ```
 opensynaptic/
 ├── core/
-│   ├── __init__.py             # Public core API export surface
-│   └── pycore/
-│       ├── core.py             # Orchestrator – OpenSynaptic class
-│       ├── standardization.py  # UCUM normalisation
-│       ├── solidity.py         # Base62 compress / decompress
-│       ├── unified_parser.py   # Binary packet encode/decode, template learning
-│       ├── handshake.py        # CMD byte dispatch, device ID negotiation
-│       └── transporter_manager.py # Auto-discovers pluggable transporters
+│   ├── __init__.py             # Public core facade + active backend loader
+│   ├── pycore/
+│   │   ├── core.py             # Orchestrator – OpenSynaptic class
+│   │   ├── standardization.py  # UCUM normalisation
+│   │   ├── solidity.py         # Base62 compress / decompress
+│   │   ├── unified_parser.py   # Binary packet encode/decode, template learning
+│   │   ├── handshake.py        # CMD byte dispatch, device ID negotiation
+│   │   └── transporter_manager.py # Auto-discovers pluggable transporters
+│   ├── rscore/                 # Rust core backend + build/check helpers
+│   ├── transport_layer/        # L4 protocol managers and protocols/
+│   ├── physical_layer/         # PHY protocol managers and protocols/
+│   ├── layered_protocol_manager.py # 3-layer protocol orchestration
+│   ├── coremanager.py          # Core selection/runtime manager
+│   └── loader.py               # Core/plugin loader
 ├── services/
 │   ├── service_manager.py      # Plugin mount / load / dispatch hub
-│   ├── plugin_registry.py       # Built-in plugin mapping + config default sync
+│   ├── plugin_registry.py      # Built-in plugin mapping + config default sync
 │   ├── tui/                    # Terminal UI service (section-aware, interactive)
 │   ├── web_user/               # Lightweight web UI + user management API
 │   ├── dependency_manager/     # Dependency check/repair/install plugin
+│   ├── env_guard/              # Environment guard service
+│   ├── transporters/           # Application-layer transporter service
+│   ├── db_engine/              # Database integration service
 │   └── test_plugin/            # Built-in component & stress test suite
 ├── utils/
 │   ├── constants.py            # LogMsg enum, MESSAGES, CLI_HELP_TABLE
 │   ├── logger.py               # os_log singleton
 │   ├── paths.py                # OSContext, read_json, write_json, get_registry_path
-│   ├── base62.py               # Base62Codec (native-only ctypes binding)
-│   └── security_core.py        # crc/xor/session-key helpers (native-only ctypes binding)
+│   ├── base62/                 # Base62 codec bindings/utilities
+│   ├── security/               # crc/xor/session-key helpers
+│   └── c/                      # Native loader/build helpers
 ├── CLI/
 │   └── app.py                  # Argparse CLI (os-node entrypoint)
 plugins/
@@ -81,7 +111,7 @@ node.dispatch(packet, medium="UDP")
 from opensynaptic.core import get_core_manager
 
 manager = get_core_manager()
-print(manager.available_cores())             # ['pycore']
+print(manager.available_cores())             # e.g. ['pycore', 'rscore']
 manager.set_active_core('pycore')
 OpenSynaptic = manager.get_symbol('OpenSynaptic')
 ```
@@ -105,11 +135,16 @@ All commands are available via `os-node` (installed entrypoint) or `python -u sr
 | `config-show` | Display Config.json or a specific section |
 | `config-get` | Read a dot-notation key path from Config |
 | `config-set` | Write a typed value to a Config key path |
+| `core` | Show/switch core backend (`pycore` / `rscore`) |
 | `transporter-toggle` | Enable or disable a transporter in Config |
 | `plugin-list` | List mounted service plugins |
 | `plugin-load` | Load a mounted plugin by name |
 | `plugin-cmd` | Route a sub-command to a plugin's CLI handler |
 | `plugin-test` | Run component or stress tests |
+| `native-check` | Check native compiler/toolchain availability |
+| `native-build` | Build native C bindings (optionally include RS core) |
+| `rscore-build` | Build and install Rust RS core shared library |
+| `rscore-check` | Check RS core DLL/runtime readiness and active core |
 | `web-user` | Run web_user plugin directly from CLI |
 | `deps` | Run dependency_manager plugin directly from CLI |
 | `transport-status` | Show all transporter layer states |
@@ -160,6 +195,65 @@ python -u src/main.py plugin-test --suite all
 # Standalone smoke test
 python scripts/concurrency_smoke.py 200 8 6
 ```
+
+---
+
+## v0.2.0 Performance Focus
+
+This release line emphasizes practical performance tuning and backend acceleration:
+
+- Multi-process stress controls: `--processes`, `--threads-per-process`, `--batch-size`
+- Auto-tuning profile scan: `--auto-profile` with `--profile-processes`, `--profile-threads`, `--profile-batches`
+- RS core workflow: `rscore-build`, `rscore-check`, `core --set rscore --persist`
+- Backend comparison flow: `plugin-test --suite compare`
+
+Detailed release note -> [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md)
+
+### Optimized Usage Examples
+
+```powershell
+# High-throughput multi-process stress
+python -u src/main.py plugin-test --suite stress --total 20000 --workers 16 --processes 4 --threads-per-process 4 --batch-size 64
+
+# Auto-profile best concurrency matrix
+python -u src/main.py plugin-test --suite stress --auto-profile --profile-total 50000 --profile-runs 1 --final-runs 1 --profile-processes 1,2,4,8 --profile-threads 4,8,16 --profile-batches 32,64,128
+
+# Build/check/switch to RS core
+python -u src/main.py rscore-build
+python -u src/main.py rscore-check
+python -u src/main.py core --set rscore --persist
+
+# Compare pycore vs rscore performance
+python -u src/main.py plugin-test --suite compare --total 10000 --workers 8 --processes 2 --threads-per-process 4 --runs 2 --warmup 1
+```
+
+---
+
+## RS Core (rscore) Quick Start
+
+Use this flow to build, verify, and switch to the Rust core backend.
+
+```powershell
+# 1) Build RS core shared library
+python -u src/main.py rscore-build
+
+# 2) Verify runtime status (DLL path/load state, active core)
+python -u src/main.py rscore-check
+
+# 3) Switch backend for current process + persist in Config.json
+python -u src/main.py core --set rscore --persist
+
+# 4) Optional: enforce RS path in stress tests
+python -u src/main.py plugin-test --suite stress --total 5000 --workers 8 --processes 2 --require-rust
+```
+
+If you need to keep Python backend, switch back with:
+
+```powershell
+python -u src/main.py core --set pycore --persist
+```
+
+More details: [`docs/RSCORE_API.md`](docs/RSCORE_API.md), [`docs/PYCORE_RUST_API.md`](docs/PYCORE_RUST_API.md), [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md)
 
 ---
 
