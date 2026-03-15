@@ -86,6 +86,10 @@ class CoreManager:
     def create_node(self, config_path=None, name=None, **kwargs):
         if config_path:
             self.set_config_path(config_path)
+        if not name:
+            # Always re-evaluate configured backend for node startup so
+            # Config.json core_backend is respected even after prior loads.
+            name = self._configured_core_name()
         node_cls = self.get_symbol('OpenSynaptic', name=name)
         return node_cls(config_path=config_path, **kwargs)
 

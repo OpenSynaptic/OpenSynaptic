@@ -1,11 +1,12 @@
 import json
+import os
 from pathlib import Path
 import argparse
 import logging
 import sys
 import time
 from types import SimpleNamespace
-from opensynaptic.core import OpenSynaptic
+from opensynaptic.core import get_core_manager
 from opensynaptic.core.Receiver import main as receiver_main
 from opensynaptic.services.env_guard.main import EnvironmentGuardService
 from opensynaptic.services.plugin_registry import (
@@ -19,6 +20,7 @@ from opensynaptic.utils.c.check_native_toolchain import build_guidance, get_tool
 from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.constants import LogMsg, CLI_HELP_TABLE
 from opensynaptic.utils.c.native_loader import NativeLibraryUnavailable
+from opensynaptic.utils.paths import ctx
 
 
 _ENV_GUARD_STANDALONE = None
@@ -136,6 +138,15 @@ def _build_parser():
                             choices=['str', 'int', 'float', 'bool', 'json'],
                             default='str',
                             help='Value type (str/int/float/bool/json), default=str')
+    # --- core ---
+    core_cmd = sub.add_parser('core', aliases=['os-core'])
+    core_cmd.add_argument('--config', dest='config_path', default=None)
+    core_cmd.add_argument('--set', dest='set_core', choices=['pycore', 'rscore'], default=None,
+                          help='Switch active core in this process (pycore/rscore)')
+    core_cmd.add_argument('--persist', action='store_true', default=False,
+                          help='Persist --set value to Config.json engine_settings.core_backend')
+    core_cmd.add_argument('--json', action='store_true', default=False,
+                          help='Output core status as JSON')
     # --- plugin-cmd ---
     plugin_cmd = sub.add_parser('plugin-cmd', aliases=['os-plugin-cmd'])
     plugin_cmd.add_argument('--config', dest='config_path', default=None)
@@ -148,8 +159,8 @@ def _build_parser():
     # --- plugin-test ---
     plugin_test = sub.add_parser('plugin-test', aliases=['os-plugin-test'])
     plugin_test.add_argument('--config', dest='config_path', default=None)
-    plugin_test.add_argument('--suite', choices=['component', 'stress', 'all'],
-                             default='all', help='Test suite (component/stress/all)')
+    plugin_test.add_argument('--suite', choices=['component', 'stress', 'all', 'compare', 'full_load'],
+                             default='all', help='Test suite (component/stress/all/compare/full_load)')
     plugin_test.add_argument('--workers', type=int, default=8,
                              help='Stress test worker threads')
     plugin_test.add_argument('--total', type=int, default=200,
@@ -160,6 +171,54 @@ def _build_parser():
                              help='Disable live progress bar during stress test')
     plugin_test.add_argument('--verbosity', type=int, default=1,
                              help='Component test verbosity level')
+    plugin_test.add_argument('--core-backend', dest='core_backend', default=None,
+                             choices=['pycore', 'rscore'],
+                             help='Core plugin for stress/all suites (pycore/rscore)')
+    plugin_test.add_argument('--runs', type=int, default=1,
+                             help='Measured compare runs per backend (suite=compare)')
+    plugin_test.add_argument('--warmup', type=int, default=0,
+                             help='Warmup compare runs per backend (suite=compare)')
+    plugin_test.add_argument('--json-out', dest='json_out', default=None,
+                             help='Optional compare report output path (suite=compare)')
+    plugin_test.add_argument('--require-rust', action='store_true', default=False,
+                             help='Fail when rscore path cannot use os_rscore DLL')
+    plugin_test.add_argument('--header-probe-rate', type=float, default=0.0,
+                             help='Optional packet-header probe sample rate [0.0-1.0] for stress/compare')
+    plugin_test.add_argument('--batch-size', type=int, default=1,
+                             help='Stress task batch size per future (higher reduces scheduler overhead)')
+    plugin_test.add_argument('--processes', type=int, default=1,
+                             help='Stress process count (1 = thread-only mode)')
+    plugin_test.add_argument('--threads-per-process', type=int, default=None,
+                             help='Thread count inside each process (default: --workers)')
+    plugin_test.add_argument('--auto-profile', action='store_true', default=False,
+                             help='Scan candidate stress concurrency combos, then run final stress with best config')
+    plugin_test.add_argument('--profile-total', type=int, default=100000,
+                             help='Per-candidate scan workload when --auto-profile is enabled')
+    plugin_test.add_argument('--profile-runs', type=int, default=1,
+                             help='Measured scan runs per candidate when --auto-profile is enabled')
+    plugin_test.add_argument('--final-runs', type=int, default=1,
+                             help='Measured final runs with selected best profile config')
+    plugin_test.add_argument('--profile-processes', default='1,2,4,8',
+                             help='Candidate process counts (CSV), e.g. 1,2,4,8')
+    plugin_test.add_argument('--profile-threads', default=None,
+                             help='Candidate thread counts per process (CSV), defaults to --workers')
+    plugin_test.add_argument('--profile-batches', default='32,64,128',
+                             help='Candidate batch sizes (CSV)')
+    plugin_test.add_argument('--parallel-component', action='store_true', default=False,
+                             help='Run component tests in parallel (thread per class)')
+    plugin_test.add_argument('--max-class-workers', type=int, default=None,
+                             help='Thread count for parallel component runner (suite=component)')
+    plugin_test.add_argument('--component-processes', type=int, default=0,
+                             help='>0: run that many component classes in separate OS processes'
+                                  ' (suite=component, implies --parallel-component)')
+    plugin_test.add_argument('--workers-hint', type=int, default=None,
+                             help='Override auto-detected process count (suite=full_load)')
+    plugin_test.add_argument('--threads-hint', type=int, default=None,
+                             help='Override auto-detected threads-per-process (suite=full_load)')
+    plugin_test.add_argument('--batch-hint', type=int, default=None,
+                             help='Override auto-detected batch size (suite=full_load)')
+    plugin_test.add_argument('--with-component', action='store_true', default=False,
+                             help='Run parallel component tests before full-load stress (suite=full_load)')
     # --- web-user (standalone plugin command) ---
     web_user = sub.add_parser('web-user', aliases=['os-web-user'])
     web_user.add_argument('--config', dest='config_path', default=None)
@@ -191,6 +250,20 @@ def _build_parser():
                               help='Timeout in seconds when compiler produces no output')
     native_build.add_argument('--max-timeout', type=float, default=300.0,
                               help='Maximum compile time per target in seconds')
+    native_build.add_argument('--include-rscore', action='store_true', default=False,
+                              help='Also compile the Rust RSCore crate after building C targets')
+    rscore_build = sub.add_parser('rscore-build', aliases=['os-rscore-build'],
+                                  help='Compile the Rust RSCore crate and install os_rscore DLL')
+    rscore_build.add_argument('--json', action='store_true', default=False,
+                              help='Output build result as JSON')
+    rscore_build.add_argument('--no-progress', action='store_true', default=False,
+                              help='Disable cargo output stream')
+    rscore_build.add_argument('--debug', action='store_true', default=False,
+                              help='Build a debug (unoptimised) DLL instead of release')
+    rscore_check = sub.add_parser('rscore-check', aliases=['os-rscore-check'],
+                                  help='Report RSCore Rust DLL availability and active codec backend')
+    rscore_check.add_argument('--json', action='store_true', default=False,
+                              help='Output status as JSON')
     sub.add_parser('help', aliases=['os-help'])
     return parser
 
@@ -226,8 +299,18 @@ def _render_help_text(parser):
     parser.print_help()
 
 def _make_node(config_path):
-    cfg = str(Path(config_path).resolve()) if config_path else None
-    return OpenSynaptic(cfg)
+    manager = get_core_manager()
+    if config_path:
+        cfg = str(Path(config_path).resolve())
+    else:
+        # Use OSContext-discovered root first; CWD may be inside src/ during CLI loop.
+        candidate = Path(getattr(ctx, 'root', '') or '') / 'Config.json'
+        if candidate.exists():
+            cfg = str(candidate.resolve())
+        else:
+            fallback = Path.cwd() / 'Config.json'
+            cfg = str(fallback.resolve()) if fallback.exists() else None
+    return manager.create_node(config_path=cfg)
 
 
 def _load_config_for_cli(config_path):
@@ -441,6 +524,13 @@ def main(argv=None):
             max_timeout=max_timeout,
             progress_cb=_progress,
         )
+        # Optionally build the Rust crate in the same invocation.
+        if bool(getattr(args, 'include_rscore', False)):
+            from opensynaptic.core.rscore.build_rscore import build_rscore
+            rs_result = build_rscore(release=True, show_progress=show_progress, progress_cb=_progress)
+            result.setdefault('targets', {})['os_rscore'] = rs_result
+            if not rs_result.get('ok'):
+                result['ok'] = False
         if bool(getattr(args, 'json', False)):
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
@@ -451,6 +541,70 @@ def main(argv=None):
                 if info.get('output'):
                     print('  output:', info['output'])
         return 0 if bool(result.get('ok')) else 1
+    if cmd in ('rscore-build', 'os-rscore-build'):
+        os_log.log_with_const('info', LogMsg.CLI_ACTION, action='rscore-build')
+        from opensynaptic.core.rscore.build_rscore import build_rscore
+        show_progress = not bool(getattr(args, 'no_progress', False))
+        release = not bool(getattr(args, 'debug', False))
+
+        def _rs_progress(evt):
+            et = str(evt.get('type', ''))
+            elapsed = evt.get('elapsed_s', 0.0)
+            if et == 'build-start':
+                print('[rscore][0.000s] build-start', file=sys.stderr, flush=True)
+            elif et == 'target-start':
+                print('[rscore][{:.3f}s] start compiler=cargo'.format(elapsed), file=sys.stderr, flush=True)
+            elif et == 'target-exit':
+                print('[rscore][{:.3f}s] exit_code={}'.format(elapsed, evt.get('exit_code')), file=sys.stderr, flush=True)
+            elif et == 'build-end':
+                print('[rscore][{:.3f}s] build-end ok={}'.format(elapsed, evt.get('ok')), file=sys.stderr, flush=True)
+
+        result = build_rscore(release=release, show_progress=show_progress, progress_cb=_rs_progress)
+        if bool(getattr(args, 'json', False)):
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print('rscore build:', 'ok' if result.get('ok') else 'failed')
+            status = result.get('status', '')
+            if status == 'cargo-missing':
+                print('hint: install Rust from https://rustup.rs/ then re-run rscore-build')
+            if result.get('output'):
+                print('  output:', result['output'])
+        return 0 if bool(result.get('ok')) else 1
+    if cmd in ('rscore-check', 'os-rscore-check'):
+        os_log.log_with_const('info', LogMsg.CLI_ACTION, action='rscore-check')
+        from opensynaptic.core.rscore.codec import has_rs_native, rs_version
+        from opensynaptic.core.rscore.build_rscore import _find_cargo, _NATIVE_BIN, _LIB_NAME, _shared_ext
+        rs_ok = has_rs_native()
+        ver = rs_version() if rs_ok else None
+        dll_path = str(_NATIVE_BIN / (_LIB_NAME + _shared_ext()))
+        import os as _os
+        dll_exists = _os.path.exists(dll_path)
+        cargo = _find_cargo()
+        manager = get_core_manager()
+        active_core = manager.get_active_core_name()
+        payload = {
+            'rs_native_loaded': rs_ok,
+            'version': ver,
+            'dll_path': dll_path,
+            'dll_exists': dll_exists,
+            'cargo_available': cargo is not None,
+            'cargo_path': cargo,
+            'active_core': active_core,
+            'available_cores': manager.available_cores(),
+        }
+        if bool(getattr(args, 'json', False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print('rs_native_loaded :', payload['rs_native_loaded'])
+            print('version          :', payload['version'] or 'n/a')
+            print('dll_path         :', payload['dll_path'])
+            print('dll_exists       :', payload['dll_exists'])
+            print('cargo_available  :', payload['cargo_available'])
+            print('active_core      :', payload['active_core'])
+            print('available_cores  :', ', '.join(payload['available_cores']))
+            if not rs_ok and not dll_exists:
+                print('hint: run "os-node rscore-build" to compile and install the Rust DLL')
+        return 0 if rs_ok else 1
     if cmd in ('env-guard', 'os-env-guard'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='env-guard')
         svc = _standalone_env_guard(getattr(args, 'config_path', None))
@@ -788,6 +942,47 @@ def main(argv=None):
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
         return 0
 
+    if cmd in ('core', 'os-core'):
+        os_log.log_with_const('info', LogMsg.CLI_ACTION, action='core')
+        manager = get_core_manager()
+        requested = getattr(args, 'set_core', None)
+        persisted = False
+
+        if requested:
+            try:
+                manager.set_active_core(requested)
+            except Exception as exc:
+                print(json.dumps({'error': str(exc)}, ensure_ascii=False))
+                return 1
+            if bool(getattr(args, 'persist', False)):
+                _config_dotpath_set(node.config, 'engine_settings.core_backend', requested)
+                node._save_config()
+                persisted = True
+
+        settings = node.config.get('engine_settings', {}) if isinstance(node.config, dict) else {}
+        cfg_core = str(settings.get('core_backend', '')).strip().lower() or manager.default_core
+        env_core = str(os.getenv('OPENSYNAPTIC_CORE', '')).strip().lower() or None
+        payload = {
+            'requested': requested,
+            'persisted': persisted,
+            'available_cores': manager.available_cores(),
+            'configured_core': cfg_core,
+            'env_override': env_core,
+            'active_core': manager.get_active_core_name(),
+        }
+        os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(payload, ensure_ascii=False))
+        if bool(getattr(args, 'json', False)):
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print('active_core   :', payload['active_core'])
+            print('configured    :', payload['configured_core'])
+            print('env_override  :', payload['env_override'] or '-')
+            print('available     :', ', '.join(payload['available_cores']))
+            if requested:
+                print('switched_to   :', requested)
+                print('persisted     :', persisted)
+        return 0
+
     if cmd in ('plugin-cmd', 'os-plugin-cmd'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='plugin-cmd')
         plugin_name = normalize_plugin_name(args.plugin)
@@ -828,16 +1023,127 @@ def main(argv=None):
         sources = str(int(getattr(args, 'sources', 6)))
         verbosity = str(int(getattr(args, 'verbosity', 1)))
         no_progress = bool(getattr(args, 'no_progress', False))
+        core_backend = getattr(args, 'core_backend', None) or None
+        runs = str(int(getattr(args, 'runs', 1)))
+        warmup = str(int(getattr(args, 'warmup', 0)))
+        json_out = getattr(args, 'json_out', None) or None
+        require_rust = bool(getattr(args, 'require_rust', False))
+        header_probe_rate = str(float(getattr(args, 'header_probe_rate', 0.0) or 0.0))
+        batch_size = str(int(getattr(args, 'batch_size', 1) or 1))
+        processes = str(int(getattr(args, 'processes', 1) or 1))
+        auto_profile = bool(getattr(args, 'auto_profile', False))
+        profile_total = str(int(getattr(args, 'profile_total', 100000) or 100000))
+        profile_runs = str(int(getattr(args, 'profile_runs', 1) or 1))
+        final_runs = str(int(getattr(args, 'final_runs', 1) or 1))
+        profile_processes = str(getattr(args, 'profile_processes', '1,2,4,8') or '1,2,4,8')
+        profile_threads = getattr(args, 'profile_threads', None)
+        profile_batches = str(getattr(args, 'profile_batches', '32,64,128') or '32,64,128')
+        threads_per_process_val = getattr(args, 'threads_per_process', None)
+        threads_per_process = str(int(threads_per_process_val)) if threads_per_process_val is not None else None
+        parallel_component = bool(getattr(args, 'parallel_component', False))
+        max_class_workers_val = getattr(args, 'max_class_workers', None)
+        component_processes = int(getattr(args, 'component_processes', 0) or 0)
+        workers_hint_val = getattr(args, 'workers_hint', None)
+        threads_hint_val = getattr(args, 'threads_hint', None)
+        batch_hint_val = getattr(args, 'batch_hint', None)
+        with_component = bool(getattr(args, 'with_component', False))
         if suite == 'component':
             extra_args = ['--verbosity', verbosity]
+            if parallel_component or component_processes > 0:
+                extra_args.append('--parallel')
+            if component_processes > 0:
+                extra_args += ['--processes', str(component_processes)]
+            if max_class_workers_val is not None:
+                extra_args += ['--max-class-workers', str(int(max_class_workers_val))]
         elif suite == 'stress':
-            extra_args = ['--total', total, '--workers', workers, '--sources', sources]
+            extra_args = [
+                '--total', total,
+                '--workers', workers,
+                '--sources', sources,
+                '--header-probe-rate', header_probe_rate,
+                '--batch-size', batch_size,
+                '--processes', processes,
+            ]
+            if threads_per_process is not None:
+                extra_args += ['--threads-per-process', threads_per_process]
             if no_progress:
                 extra_args.append('--no-progress')
+            if core_backend:
+                extra_args += ['--core-backend', core_backend]
+            if require_rust:
+                extra_args.append('--require-rust')
+            if auto_profile:
+                extra_args.append('--auto-profile')
+                extra_args += ['--profile-total', profile_total]
+                extra_args += ['--profile-runs', profile_runs]
+                extra_args += ['--final-runs', final_runs]
+                extra_args += ['--profile-processes', profile_processes]
+                if profile_threads:
+                    extra_args += ['--profile-threads', str(profile_threads)]
+                extra_args += ['--profile-batches', profile_batches]
+            if json_out:
+                extra_args += ['--json-out', json_out]
+        elif suite == 'compare':
+            extra_args = [
+                '--total', total,
+                '--workers', workers,
+                '--sources', sources,
+                '--runs', runs,
+                '--warmup', warmup,
+                '--header-probe-rate', header_probe_rate,
+                '--batch-size', batch_size,
+                '--processes', processes,
+            ]
+            if threads_per_process is not None:
+                extra_args += ['--threads-per-process', threads_per_process]
+            if no_progress:
+                extra_args.append('--no-progress')
+            if json_out:
+                extra_args += ['--json-out', json_out]
+            if require_rust:
+                extra_args.append('--require-rust')
+        elif suite == 'full_load':
+            extra_args = [
+                '--total', total,
+                '--sources', sources,
+                '--verbosity', verbosity,
+            ]
+            if no_progress:
+                extra_args.append('--no-progress')
+            if core_backend:
+                extra_args += ['--core-backend', core_backend]
+            if require_rust:
+                extra_args.append('--require-rust')
+            if header_probe_rate and float(header_probe_rate) > 0:
+                extra_args += ['--header-probe-rate', header_probe_rate]
+            if workers_hint_val is not None:
+                extra_args += ['--workers-hint', str(int(workers_hint_val))]
+            if threads_hint_val is not None:
+                extra_args += ['--threads-hint', str(int(threads_hint_val))]
+            if batch_hint_val is not None:
+                extra_args += ['--batch-hint', str(int(batch_hint_val))]
+            if with_component:
+                extra_args.append('--with-component')
+            if json_out:
+                extra_args += ['--json-out', json_out]
         else:
-            extra_args = ['--total', total, '--workers', workers, '--sources', sources, '--verbosity', verbosity]
+            extra_args = [
+                '--total', total,
+                '--workers', workers,
+                '--sources', sources,
+                '--verbosity', verbosity,
+                '--header-probe-rate', header_probe_rate,
+                '--batch-size', batch_size,
+                '--processes', processes,
+            ]
+            if threads_per_process is not None:
+                extra_args += ['--threads-per-process', threads_per_process]
             if no_progress:
                 extra_args.append('--no-progress')
+            if core_backend:
+                extra_args += ['--core-backend', core_backend]
+            if require_rust:
+                extra_args.append('--require-rust')
         return _dispatch_plugin(node, 'test_plugin', suite, args=extra_args, mode='runtime')
 
     parser.print_help()

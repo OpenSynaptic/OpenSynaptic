@@ -1,0 +1,14 @@
+[package]
+name = "opensynaptic_rscore"
+version = "0.1.0"
+edition = "2021"
+description = "RSCore native primitives for OpenSynaptic (Base62 codec + CMD helpers)"
+license = "MIT"
+
+[lib]
+name = "opensynaptic_rscore"
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+strip = true

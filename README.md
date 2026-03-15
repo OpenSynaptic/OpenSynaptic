@@ -175,6 +175,24 @@ See [`docs/API.md`](docs/API.md).
 
 Core facade and loader reference -> [`docs/CORE_API.md`](docs/CORE_API.md)
 
+---
+
+## Documentation Hub
+
+- Start here: [`docs/README.md`](docs/README.md)
+- Architecture walkthrough: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Config schema: [`docs/CONFIG_SCHEMA.md`](docs/CONFIG_SCHEMA.md)
+- Transporter/plugin extension: [`docs/TRANSPORTER_PLUGIN.md`](docs/TRANSPORTER_PLUGIN.md)
+- Core internals: [`docs/PYCORE_INTERNALS.md`](docs/PYCORE_INTERNALS.md)
+- Rust core references: [`docs/RSCORE_API.md`](docs/RSCORE_API.md), [`docs/PYCORE_RUST_API.md`](docs/PYCORE_RUST_API.md)
+
+---
+
+## Release Notes
+
+- Project changelog: [`CHANGELOG.md`](CHANGELOG.md)
+- Latest release draft: [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md)
+
 ## Plugin Config Auto-Sync
 
 Built-in plugin settings are stored in `Config.json` at:

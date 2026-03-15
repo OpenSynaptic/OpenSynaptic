@@ -12,6 +12,7 @@ import shutil
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 # Ensure package is importable when run directly
 _ROOT = None
@@ -41,6 +42,21 @@ class TestCoreManager(unittest.TestCase):
         manager = get_core_manager()
         symbol = manager.get_symbol('OpenSynaptic')
         self.assertEqual(symbol.__name__, 'OpenSynaptic')
+
+    def test_rscore_discovered(self):
+        from opensynaptic.core import get_core_manager
+        manager = get_core_manager()
+        self.assertIn('rscore', manager.available_cores())
+
+    def test_rscore_loadable(self):
+        from opensynaptic.core import get_core_manager
+        manager = get_core_manager()
+        plugin = manager.load_core('rscore')
+        try:
+            self.assertEqual(plugin.get('name'), 'rscore')
+            self.assertIn('OpenSynapticEngine', plugin.get('symbols', {}))
+        finally:
+            manager.load_core('pycore')
 
 
 # ---------------------------------------------------------------------------
@@ -340,13 +356,1006 @@ class TestEnvGuardService(unittest.TestCase):
         self.assertEqual(attempts[0].get('command'), 'echo env-guard-auto-install')
 
 
+# ---------------------------------------------------------------------------
+# RSCore native library (Rust DLL)
+# ---------------------------------------------------------------------------
+class TestRscore(unittest.TestCase):
+    """Tests for the Rust-compiled os_rscore native library."""
+
+    @classmethod
+    def setUpClass(cls):
+        from opensynaptic.core.rscore.codec import has_rs_native
+        if not has_rs_native():
+            raise unittest.SkipTest(
+                'os_rscore DLL not found. '
+                'Build it with: python -u src/opensynaptic/core/rscore/build_rscore.py'
+            )
+
+    # ------------------------------------------------------------------
+    # has_rs_native / version
+    # ------------------------------------------------------------------
+    def test_has_rs_native_returns_true(self):
+        from opensynaptic.core.rscore.codec import has_rs_native
+        self.assertTrue(has_rs_native())
+
+    def test_rs_version_non_empty(self):
+        from opensynaptic.core.rscore.codec import rs_version
+        ver = rs_version()
+        self.assertIsInstance(ver, str)
+        self.assertTrue(len(ver) > 0)
+        self.assertIn('rscore', ver)
+
+    # ------------------------------------------------------------------
+    # RsBase62Codec encode / decode round-trips
+    # ------------------------------------------------------------------
+    def test_rs_codec_encode_positive(self):
+        from opensynaptic.core.rscore.codec import RsBase62Codec
+        codec = RsBase62Codec(precision=4)
+        enc = codec.encode(12345.6789)
+        self.assertIsInstance(enc, str)
+        self.assertTrue(len(enc) > 0)
+
+    def test_rs_codec_roundtrip(self):
+        from opensynaptic.core.rscore.codec import RsBase62Codec
+        codec = RsBase62Codec(precision=4)
+        for val in [0.0, 1.0, -1.0, 3.14159, 99999.9999, 0.0001, -42.5]:
+            enc = codec.encode(val)
+            dec = codec.decode(enc)
+            self.assertAlmostEqual(val, dec, places=3,
+                                   msg='Rust round-trip failed for {}'.format(val))
+
+    def test_rs_codec_zero(self):
+        from opensynaptic.core.rscore.codec import RsBase62Codec
+        codec = RsBase62Codec(precision=4)
+        enc = codec.encode(0)
+        dec = codec.decode(enc)
+        self.assertAlmostEqual(dec, 0.0, places=4)
+
+    # ------------------------------------------------------------------
+    # Parity: Rust codec must produce identical output to the C codec
+    # ------------------------------------------------------------------
+    def test_rs_codec_parity_with_c_codec(self):
+        if not has_native_library('os_base62'):
+            raise unittest.SkipTest('os_base62 C library not available for parity check')
+        from opensynaptic.utils.base62.base62 import Base62Codec
+        from opensynaptic.core.rscore.codec import RsBase62Codec
+        c_codec = Base62Codec(precision=4)
+        rs_codec = RsBase62Codec(precision=4)
+        for val in [0.0, 1.0, -1.0, 42.0, 3.14159, 99999.9999, 0.0001, -42.5, 1234567.89]:
+            c_enc = c_codec.encode(val)
+            rs_enc = rs_codec.encode(val)
+            self.assertEqual(c_enc, rs_enc,
+                             msg='Encode parity failed for {}: C={!r} Rust={!r}'.format(val, c_enc, rs_enc))
+            c_dec = c_codec.decode(c_enc)
+            rs_dec = rs_codec.decode(rs_enc)
+            self.assertAlmostEqual(c_dec, rs_dec, places=7,
+                                   msg='Decode parity failed for {}'.format(val))
+
+    # ------------------------------------------------------------------
+    # CMD helpers
+    # ------------------------------------------------------------------
+    def test_cmd_is_data_true_for_data_cmds(self):
+        from opensynaptic.core.rscore.codec import cmd_is_data
+        from opensynaptic.core.pycore.handshake import CMD
+        for cmd_val in CMD.DATA_CMDS:
+            self.assertTrue(cmd_is_data(cmd_val),
+                            msg='cmd_is_data should be True for cmd={}'.format(cmd_val))
+
+    def test_cmd_is_data_false_for_ctrl_cmds(self):
+        from opensynaptic.core.rscore.codec import cmd_is_data
+        from opensynaptic.core.pycore.handshake import CMD
+        for cmd_val in CMD.CTRL_CMDS:
+            self.assertFalse(cmd_is_data(cmd_val),
+                             msg='cmd_is_data should be False for ctrl cmd={}'.format(cmd_val))
+
+    def test_cmd_normalize_data_secure_to_plain(self):
+        from opensynaptic.core.rscore.codec import cmd_normalize_data
+        from opensynaptic.core.pycore.handshake import CMD
+        for sec, base in CMD.BASE_DATA_CMD.items():
+            self.assertEqual(cmd_normalize_data(sec), base,
+                             msg='normalize_data({}) expected {} got {}'.format(
+                                 sec, base, cmd_normalize_data(sec)))
+
+    def test_cmd_secure_variant_plain_to_secure(self):
+        from opensynaptic.core.rscore.codec import cmd_secure_variant
+        from opensynaptic.core.pycore.handshake import CMD
+        for plain, sec in CMD.SECURE_DATA_CMD.items():
+            self.assertEqual(cmd_secure_variant(plain), sec,
+                             msg='secure_variant({}) expected {} got {}'.format(
+                                 plain, sec, cmd_secure_variant(plain)))
+
+    # ------------------------------------------------------------------
+    # Packet header parser (Rust fast-path)
+    # ------------------------------------------------------------------
+    def test_parse_packet_header_valid(self):
+        from opensynaptic.core.rscore.codec import has_header_parser, parse_packet_header
+        if not has_header_parser():
+            raise unittest.SkipTest('os_parse_header_min symbol is not available in loaded os_rscore DLL')
+        from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+        from opensynaptic.core.pycore.solidity import OpenSynapticEngine
+        from opensynaptic.core.pycore.unified_parser import OSVisualFusionEngine
+
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        std = OpenSynapticStandardizer(cfg)
+        eng = OpenSynapticEngine(cfg)
+        fus = OSVisualFusionEngine(cfg)
+        fact = std.standardize('RS_HDR', 'ONLINE', [['V1', 'OK', 101325.0, 'Pa']])
+        compressed = eng.compress(fact)
+        pkt = fus.run_engine('42;{}'.format(compressed), strategy='FULL')
+
+        meta = parse_packet_header(pkt)
+        self.assertIsInstance(meta, dict)
+        self.assertTrue(meta.get('crc16_ok'))
+        self.assertEqual(meta.get('cmd'), 63)
+        self.assertEqual(meta.get('base_cmd'), 63)
+        self.assertEqual(meta.get('source_aid'), int(getattr(fus, 'local_id', 0)))
+
+    def test_parse_packet_header_crc_mismatch(self):
+        from opensynaptic.core.rscore.codec import has_header_parser, parse_packet_header
+        if not has_header_parser():
+            raise unittest.SkipTest('os_parse_header_min symbol is not available in loaded os_rscore DLL')
+        from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+        from opensynaptic.core.pycore.solidity import OpenSynapticEngine
+        from opensynaptic.core.pycore.unified_parser import OSVisualFusionEngine
+
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        std = OpenSynapticStandardizer(cfg)
+        eng = OpenSynapticEngine(cfg)
+        fus = OSVisualFusionEngine(cfg)
+        fact = std.standardize('RS_HDR_BAD', 'ONLINE', [['V1', 'OK', 3.14, 'Pa']])
+        compressed = eng.compress(fact)
+        pkt = bytearray(fus.run_engine('42;{}'.format(compressed), strategy='FULL'))
+        pkt[-1] ^= 0x01
+
+        meta = parse_packet_header(pkt)
+        self.assertIsInstance(meta, dict)
+        self.assertFalse(meta.get('crc16_ok'))
+
+    def test_parse_packet_header_short_packet(self):
+        from opensynaptic.core.rscore.codec import has_header_parser, parse_packet_header
+        if not has_header_parser():
+            raise unittest.SkipTest('os_parse_header_min symbol is not available in loaded os_rscore DLL')
+        self.assertIsNone(parse_packet_header(b'\x01\x02\x03'))
+
+    # ------------------------------------------------------------------
+    # Input auto-decompose fast-path (Rust)
+    # ------------------------------------------------------------------
+    def test_auto_decompose_available(self):
+        from opensynaptic.core.rscore.codec import has_auto_decompose
+        self.assertTrue(has_auto_decompose())
+
+    def test_auto_decompose_parity_with_pycore(self):
+        from opensynaptic.core.rscore.codec import has_auto_decompose, auto_decompose_input
+        if not has_auto_decompose():
+            raise unittest.SkipTest('os_auto_decompose_input symbol is not available in loaded os_rscore DLL')
+        from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+        from opensynaptic.core.pycore.solidity import OpenSynapticEngine
+        from opensynaptic.core.pycore.unified_parser import OSVisualFusionEngine
+
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        std = OpenSynapticStandardizer(cfg)
+        eng = OpenSynapticEngine(cfg)
+        fus = OSVisualFusionEngine(cfg)
+        fact = std.standardize('RS_DECOMP', 'ONLINE', [['V1', 'OK', 101325.0, 'Pa']])
+        compressed = eng.compress(fact)
+        raw_input = '42;{}'.format(compressed)
+
+        py_decomp = fus._auto_decompose(raw_input)
+        rs_decomp = auto_decompose_input(raw_input)
+
+        self.assertIsNotNone(py_decomp)
+        self.assertIsNotNone(rs_decomp)
+        self.assertEqual(py_decomp[0], rs_decomp[0])
+        self.assertEqual(py_decomp[1], rs_decomp[1])
+        self.assertEqual(py_decomp[2], rs_decomp[2])
+
+    def test_auto_decompose_accepts_memoryview(self):
+        from opensynaptic.core.rscore.codec import has_auto_decompose, auto_decompose_input
+        if not has_auto_decompose():
+            raise unittest.SkipTest('os_auto_decompose_input symbol is not available in loaded os_rscore DLL')
+        sample = memoryview(b'42;DEV.OK.AQIDBA|V1>OK.Pa:abc|')
+        out = auto_decompose_input(sample)
+        self.assertIsInstance(out, tuple)
+        self.assertEqual(len(out), 3)
+
+    def test_solidity_compressor_available(self):
+        from opensynaptic.core.rscore.codec import has_solidity_compressor
+        self.assertTrue(has_solidity_compressor())
+
+    def test_fusion_state_available(self):
+        from opensynaptic.core.rscore.codec import has_fusion_state
+        self.assertTrue(has_fusion_state())
+
+    # ------------------------------------------------------------------
+    # rscore plugin metadata
+    # ------------------------------------------------------------------
+    def test_rscore_plugin_rs_native_flag_true(self):
+        from opensynaptic.core import get_core_manager
+        plugin = get_core_manager().load_core('rscore')
+        try:
+            self.assertTrue(plugin.get('rs_native'),
+                            msg='CORE_PLUGIN.rs_native should be True when DLL is loaded')
+            self.assertIn('rs_auto_decompose', plugin)
+            self.assertIn('rs_solidity_compressor', plugin)
+            self.assertIn('rs_fusion_state', plugin)
+        finally:
+            get_core_manager().load_core('pycore')
+
+    # ------------------------------------------------------------------
+    # CRC helpers (Rust vs C parity)
+    # ------------------------------------------------------------------
+    def test_rs_crc_helpers_available(self):
+        """has_crc_helpers() must be True when the new DLL is loaded."""
+        from opensynaptic.core.rscore.codec import has_crc_helpers
+        self.assertTrue(has_crc_helpers(),
+                        msg='os_crc8 + os_crc16_ccitt_pub should be exported by current DLL')
+
+    def test_rs_crc8_known_vectors(self):
+        """CRC-8 must match known-good values."""
+        from opensynaptic.core.rscore.codec import has_crc_helpers, rs_crc8
+        if not has_crc_helpers():
+            raise unittest.SkipTest('CRC helpers not available in loaded DLL')
+        # CRC-8(poly=7, init=0) for b'' must be 0
+        self.assertEqual(rs_crc8(b''), 0)
+        # CRC-8 of b'\x00' with poly=7, init=0 = 0
+        self.assertEqual(rs_crc8(b'\x00'), 0)
+        # Verify non-trivial value is consistent (deterministic)
+        v1 = rs_crc8(b'OpenSynaptic')
+        v2 = rs_crc8(b'OpenSynaptic')
+        self.assertEqual(v1, v2)
+        self.assertIsInstance(v1, int)
+        self.assertGreaterEqual(v1, 0)
+        self.assertLessEqual(v1, 255)
+
+    def test_rs_crc8_parity_with_c(self):
+        """Rust CRC-8 must produce the same result as the C implementation."""
+        from opensynaptic.core.rscore.codec import has_crc_helpers, rs_crc8
+        if not has_crc_helpers():
+            raise unittest.SkipTest('CRC helpers not available in loaded DLL')
+        from opensynaptic.utils.security.security_core import crc8 as c_crc8
+        for payload in [b'', b'\x00', b'hello', b'OpenSynaptic', bytes(range(256))]:
+            rs_val = rs_crc8(payload)
+            c_val = c_crc8(payload)
+            self.assertEqual(rs_val, c_val,
+                             msg='CRC8 parity failed for payload={!r}: Rust={} C={}'.format(
+                                 payload[:16], rs_val, c_val))
+
+    def test_rs_crc16_known_vectors(self):
+        """CRC-16/CCITT must match known-good values."""
+        from opensynaptic.core.rscore.codec import has_crc_helpers, rs_crc16_ccitt
+        if not has_crc_helpers():
+            raise unittest.SkipTest('CRC helpers not available in loaded DLL')
+        # CRC-16/CCITT(b'') with init=0xFFFF = 0xFFFF
+        self.assertEqual(rs_crc16_ccitt(b''), 0xFFFF)
+        v1 = rs_crc16_ccitt(b'OpenSynaptic')
+        v2 = rs_crc16_ccitt(b'OpenSynaptic')
+        self.assertEqual(v1, v2)
+        self.assertIsInstance(v1, int)
+        self.assertGreaterEqual(v1, 0)
+        self.assertLessEqual(v1, 0xFFFF)
+
+    def test_rs_crc16_parity_with_c(self):
+        """Rust CRC-16/CCITT must produce the same result as the C implementation."""
+        from opensynaptic.core.rscore.codec import has_crc_helpers, rs_crc16_ccitt
+        if not has_crc_helpers():
+            raise unittest.SkipTest('CRC helpers not available in loaded DLL')
+        from opensynaptic.utils.security.security_core import crc16_ccitt as c_crc16
+        for payload in [b'', b'\x00', b'hello', b'OpenSynaptic', bytes(range(256))]:
+            rs_val = rs_crc16_ccitt(payload)
+            c_val = c_crc16(payload)
+            self.assertEqual(rs_val, c_val,
+                             msg='CRC16 parity failed for payload={!r}: Rust={} C={}'.format(
+                                 payload[:16], rs_val, c_val))
+
+
+# ---------------------------------------------------------------------------
+# RSCore hybrid engine (compress/decompress parity vs pycore)
+# ---------------------------------------------------------------------------
+class TestRscoreEngine(unittest.TestCase):
+    """Verify the rscore OpenSynapticEngine uses RsBase62Codec and produces
+    output that round-trips identically to the pycore engine."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not has_native_library('os_base62'):
+            raise unittest.SkipTest('os_base62 C library not available')
+        from opensynaptic.core.rscore.codec import has_rs_native
+        if not has_rs_native():
+            raise unittest.SkipTest('os_rscore Rust DLL not available')
+
+        from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+        from opensynaptic.core.pycore.solidity import OpenSynapticEngine as PyEngine
+        from opensynaptic.core.rscore.api import OpenSynapticEngine as RsEngine
+
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        std = OpenSynapticStandardizer(cfg)
+        cls.py_engine = PyEngine(cfg)
+        cls.rs_engine = RsEngine(cfg)
+        cls.fact = std.standardize('RS_ENG_TEST', 'ONLINE', [['V1', 'OK', 101325.0, 'Pa']])
+
+    # ------------------------------------------------------------------
+    def test_rs_engine_codec_is_rust(self):
+        """RsEngine.codec should be RsBase62Codec when Rust DLL is present."""
+        from opensynaptic.core.rscore.codec import RsBase62Codec
+        self.assertIsInstance(self.rs_engine.codec, RsBase62Codec,
+                              msg='Expected RsBase62Codec but got {}'.format(
+                                  type(self.rs_engine.codec).__name__))
+
+    def test_rs_engine_precision_preserved(self):
+        """The Rust codec must use the same precision as the C codec."""
+        self.assertEqual(
+            self.py_engine.codec.precision_val,
+            self.rs_engine.codec.precision_val,
+            msg='precision_val mismatch: C={} Rust={}'.format(
+                self.py_engine.codec.precision_val,
+                self.rs_engine.codec.precision_val),
+        )
+
+    def test_rs_engine_solidity_fast_path_active(self):
+        """RsEngine should attach a Rust solidity compressor when the symbol is available."""
+        from opensynaptic.core.rscore.codec import has_solidity_compressor
+        if not has_solidity_compressor():
+            raise unittest.SkipTest('Rust solidity compressor symbol not available')
+        self.assertIsNotNone(getattr(self.rs_engine, '_rs_solidity', None))
+
+    def test_rs_solidity_direct_parity(self):
+        """The direct Rust compressor helper must match pycore compress() exactly."""
+        from opensynaptic.core.rscore.codec import has_solidity_compressor
+        if not has_solidity_compressor():
+            raise unittest.SkipTest('Rust solidity compressor symbol not available')
+        py_out = self.py_engine.compress(self.fact)
+        rs_out = self.rs_engine._rs_solidity.compress(self.fact)
+        self.assertEqual(py_out, rs_out)
+
+    def test_compress_output_identical(self):
+        """compress() must produce identical strings for both engines."""
+        py_out = self.py_engine.compress(self.fact)
+        rs_out = self.rs_engine.compress(self.fact)
+        self.assertEqual(py_out, rs_out,
+                         msg='compress() output differs:\n  pycore: {}\n  rscore: {}'.format(
+                             py_out, rs_out))
+
+    def test_decompress_round_trip(self):
+        """decompress(compress(fact)) must return a non-empty dict for rscore."""
+        compressed = self.rs_engine.compress(self.fact)
+        decompressed = self.rs_engine.decompress(compressed)
+        self.assertIsInstance(decompressed, dict)
+        self.assertTrue(len(decompressed) > 0)
+
+    def test_cross_engine_interop(self):
+        """pycore compress → rscore decompress and vice versa must work."""
+        py_compressed = self.py_engine.compress(self.fact)
+        rs_decoded = self.rs_engine.decompress(py_compressed)
+        self.assertIsInstance(rs_decoded, dict)
+        self.assertTrue(len(rs_decoded) > 0)
+
+        rs_compressed = self.rs_engine.compress(self.fact)
+        py_decoded = self.py_engine.decompress(rs_compressed)
+        self.assertIsInstance(py_decoded, dict)
+        self.assertTrue(len(py_decoded) > 0)
+
+    def test_multi_sensor_parity(self):
+        """Multi-sensor facts compress identically on both engines."""
+        from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        std = OpenSynapticStandardizer(cfg)
+        fact = std.standardize(
+            'RS_MULTI', 'ONLINE',
+            [['V1', 'OK', 3.14, 'Pa'], ['T1', 'OK', 22.5, 'Cel'], ['H1', 'OK', 60.0, '%']],
+        )
+        py_out = self.py_engine.compress(fact)
+        rs_out = self.rs_engine.compress(fact)
+        self.assertEqual(py_out, rs_out)
+
+    def test_compress_optional_fields_parity(self):
+        """Rust solidity compressor must preserve geohash/url/msg formatting exactly."""
+        fact = dict(self.fact)
+        fact['geohash'] = 'wx4g0ec1'
+        fact['url'] = 'https://example.com/device/42'
+        fact['msg'] = 'hello-rscore'
+        py_out = self.py_engine.compress(fact)
+        rs_out = self.rs_engine.compress(fact)
+        self.assertEqual(py_out, rs_out)
+
+    def test_rs_solidity_direct_optional_fields_parity(self):
+        """The direct Rust compressor helper must preserve optional fields exactly."""
+        from opensynaptic.core.rscore.codec import has_solidity_compressor
+        if not has_solidity_compressor():
+            raise unittest.SkipTest('Rust solidity compressor symbol not available')
+        fact = dict(self.fact)
+        fact['geohash'] = 'wx4g0ec1'
+        fact['url'] = 'https://example.com/device/42'
+        fact['msg'] = 'hello-rscore'
+        py_out = self.py_engine.compress(fact)
+        rs_out = self.rs_engine._rs_solidity.compress(fact)
+        self.assertEqual(py_out, rs_out)
+
+    def test_stress_summary_reports_rust_backend(self):
+        """Stress summary should report requested backend and active Rust codec."""
+        from opensynaptic.services.test_plugin.stress_tests import run_stress
+        _, summary = run_stress(
+            total=20,
+            workers=1,
+            sources=2,
+            progress=False,
+            core_name='rscore',
+            expect_core='rscore',
+            expect_codec_class='RsBase62Codec',
+            config_path=str(Path(_ROOT) / 'Config.json') if _ROOT else None,
+        )
+        self.assertEqual(summary.get('requested_core'), 'rscore')
+        self.assertEqual(summary.get('core_backend'), 'rscore')
+        self.assertEqual(summary.get('codec_class'), 'RsBase62Codec')
+
+    def test_require_rust_rejects_pycore_runtime(self):
+        """Hard validation must fail when require_rust=True but runtime is pycore/C codec."""
+        from opensynaptic.services.test_plugin.stress_tests import run_stress
+        with self.assertRaises(RuntimeError) as cm:
+            run_stress(
+                total=10,
+                workers=1,
+                sources=2,
+                progress=False,
+                core_name='pycore',
+                expect_core='pycore',
+                expect_codec_class='RsBase62Codec',
+                config_path=str(Path(_ROOT) / 'Config.json') if _ROOT else None,
+            )
+        self.assertIn('codec expectation failed', str(cm.exception))
+
+    def test_header_probe_summary_fields(self):
+        """Header probe mode should publish probe summary fields without backend coupling."""
+        from opensynaptic.services.test_plugin.stress_tests import run_stress
+        _, summary = run_stress(
+            total=30,
+            workers=1,
+            sources=2,
+            progress=False,
+            core_name='pycore',
+            expect_core='pycore',
+            header_probe_rate=1.0,
+            config_path=str(Path(_ROOT) / 'Config.json') if _ROOT else None,
+        )
+        hp = summary.get('header_probe')
+        self.assertIsInstance(hp, dict)
+        self.assertTrue(hp.get('enabled'))
+        self.assertGreaterEqual(int(hp.get('attempted', 0)), 0)
+        self.assertIn('parser_available', hp)
+
+    def test_rscore_node_fusion_is_rust(self):
+        """OpenSynaptic (rscore) must have an rscore OSVisualFusionEngine as self.fusion."""
+        from opensynaptic.core.rscore.api import OpenSynaptic as RsNode
+        from opensynaptic.core.rscore.api import OSVisualFusionEngine as RsFusion
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        node = RsNode(cfg)
+        self.assertIsInstance(
+            node.fusion, RsFusion,
+            msg='node.fusion must be rscore.OSVisualFusionEngine, got {}'.format(
+                type(node.fusion).__name__),
+        )
+
+    def test_rscore_node_transmit_uses_rust_path(self):
+        """Transmit via rscore node must succeed and return bytes (integration smoke)."""
+        from opensynaptic.core.rscore.api import OpenSynaptic as RsNode
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        node = RsNode(cfg)
+        # Temporarily assign a valid ID so transmit does not raise
+        node.assigned_id = 42
+        node._sync_assigned_id_to_fusion()
+        pkt, aid, strategy = node.transmit(
+            sensors=[['V1', 'OK', 101325.0, 'Pa']],
+            device_id='RSCORE_SMOKE',
+        )
+        self.assertIsInstance(pkt, (bytes, bytearray))
+        self.assertGreater(len(pkt), 0)
+        self.assertEqual(int(aid), 42)
+
+
+# ---------------------------------------------------------------------------
+# Full-load config helper
+# ---------------------------------------------------------------------------
+class TestFullLoadConfig(unittest.TestCase):
+    """Unit tests for get_full_load_config() auto-CPU-detection helper."""
+
+    def test_returns_required_keys(self):
+        from opensynaptic.services.test_plugin.stress_tests import get_full_load_config
+        cfg = get_full_load_config()
+        for key in ('processes', 'threads_per_process', 'workers', 'batch_size', 'cpu_count'):
+            self.assertIn(key, cfg, msg='Missing key: {}'.format(key))
+
+    def test_all_values_positive(self):
+        from opensynaptic.services.test_plugin.stress_tests import get_full_load_config
+        cfg = get_full_load_config()
+        for key, val in cfg.items():
+            self.assertGreater(int(val), 0, msg='{}={} must be > 0'.format(key, val))
+
+    def test_cpu_count_matches_os(self):
+        import os
+        from opensynaptic.services.test_plugin.stress_tests import get_full_load_config
+        cfg = get_full_load_config()
+        expected_cpu = max(1, os.cpu_count() or 4)
+        self.assertEqual(cfg['cpu_count'], expected_cpu)
+
+    def test_workers_hint_overrides_processes(self):
+        from opensynaptic.services.test_plugin.stress_tests import get_full_load_config
+        cfg = get_full_load_config(workers_hint=3)
+        self.assertEqual(cfg['processes'], 3)
+
+    def test_threads_hint_overrides_tpp(self):
+        from opensynaptic.services.test_plugin.stress_tests import get_full_load_config
+        cfg = get_full_load_config(threads_hint=7)
+        self.assertEqual(cfg['threads_per_process'], 7)
+        self.assertEqual(cfg['workers'], 7)
+
+    def test_batch_hint_overrides_batch(self):
+        from opensynaptic.services.test_plugin.stress_tests import get_full_load_config
+        cfg = get_full_load_config(batch_hint=256)
+        self.assertEqual(cfg['batch_size'], 256)
+
+    def test_default_batch_is_128(self):
+        from opensynaptic.services.test_plugin.stress_tests import get_full_load_config
+        cfg = get_full_load_config()
+        self.assertEqual(cfg['batch_size'], 128)
+
+
+class TestStressAutoProfile(unittest.TestCase):
+
+    @staticmethod
+    def _mk_summary(throughput, fail=0, avg=1.0, p95=1.5, ok=20, total=20, max_lat=2.0):
+        return {
+            'total': total,
+            'ok': ok,
+            'fail': fail,
+            'throughput_pps': throughput,
+            'avg_latency_ms': avg,
+            'p95_latency_ms': p95,
+            'max_latency_ms': max_lat,
+        }
+
+    def test_auto_profile_selects_highest_throughput_when_all_zero_fail(self):
+        from opensynaptic.services.test_plugin import stress_tests
+
+        side_effect = [
+            (SimpleNamespace(fail=0), self._mk_summary(100.0, fail=0)),
+            (SimpleNamespace(fail=0), self._mk_summary(220.0, fail=0)),
+            (SimpleNamespace(fail=0), self._mk_summary(210.0, fail=0, total=100, ok=100)),
+            (SimpleNamespace(fail=0), self._mk_summary(205.0, fail=0, total=100, ok=100)),
+        ]
+        with patch.object(stress_tests, 'run_stress', side_effect=side_effect):
+            report = stress_tests.run_auto_profile(
+                total=100,
+                workers=8,
+                sources=2,
+                profile_total=20,
+                profile_runs=1,
+                final_runs=2,
+                process_candidates=[1, 2],
+                thread_candidates=[4],
+                batch_candidates=[64],
+                default_batch_size=64,
+                progress=False,
+            )
+
+        best_cfg = report.get('best', {}).get('config', {})
+        self.assertEqual(best_cfg.get('processes'), 2)
+        self.assertEqual(best_cfg.get('threads_per_process'), 4)
+        self.assertEqual(best_cfg.get('batch_size'), 64)
+        final_agg = report.get('final', {}).get('aggregate', {})
+        self.assertEqual(final_agg.get('runs'), 2)
+        self.assertEqual(final_agg.get('fail'), 0)
+
+    def test_auto_profile_prefers_zero_fail_candidate(self):
+        from opensynaptic.services.test_plugin import stress_tests
+
+        side_effect = [
+            (SimpleNamespace(fail=1), self._mk_summary(300.0, fail=1, ok=19)),
+            (SimpleNamespace(fail=0), self._mk_summary(250.0, fail=0)),
+            (SimpleNamespace(fail=0), self._mk_summary(245.0, fail=0, total=100, ok=100)),
+        ]
+        with patch.object(stress_tests, 'run_stress', side_effect=side_effect):
+            report = stress_tests.run_auto_profile(
+                total=100,
+                workers=8,
+                sources=2,
+                profile_total=20,
+                profile_runs=1,
+                final_runs=1,
+                process_candidates=[1, 2],
+                thread_candidates=[4],
+                batch_candidates=[64],
+                default_batch_size=64,
+                progress=False,
+            )
+
+        best_cfg = report.get('best', {}).get('config', {})
+        self.assertEqual(best_cfg.get('processes'), 2)
+        self.assertEqual(report.get('final', {}).get('aggregate', {}).get('fail'), 0)
+
+
+# ---------------------------------------------------------------------------
+# RSCore OSVisualFusionEngine (Rust header fast-path)
+# ---------------------------------------------------------------------------
+class TestRscoreFusionEngine(unittest.TestCase):
+    """Verify rscore OSVisualFusionEngine uses Rust header fast-path on decompress."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not has_native_library('os_base62') or not has_native_library('os_security'):
+            raise unittest.SkipTest('required native libraries not available')
+        from opensynaptic.core.rscore.codec import has_rs_native
+        if not has_rs_native():
+            raise unittest.SkipTest('os_rscore DLL not available')
+
+        from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+        from opensynaptic.core.pycore.solidity import OpenSynapticEngine
+        from opensynaptic.core.rscore.api import OSVisualFusionEngine as RsFusion
+        from opensynaptic.core.pycore.unified_parser import OSVisualFusionEngine as PyFusion
+
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        std = OpenSynapticStandardizer(cfg)
+        eng = OpenSynapticEngine(cfg)
+        cls.rs_fusion = RsFusion(cfg)
+        cls.py_fusion = PyFusion(cfg)
+
+        fact = std.standardize('RS_FUS', 'ONLINE', [['V1', 'OK', 101325.0, 'Pa']])
+        compressed = eng.compress(fact)
+        cls.raw_input = '42;{}'.format(compressed)
+        # Build a canonical FULL packet using pycore as reference
+        cls.pkt_full = cls.py_fusion.run_engine(cls.raw_input, strategy='FULL')
+
+    # ------------------------------------------------------------------
+    # Rust header parser activation
+    # ------------------------------------------------------------------
+    def test_rs_header_parser_active(self):
+        """_rs_parse_header must be populated when Rust DLL has os_parse_header_min."""
+        from opensynaptic.core.rscore.codec import has_header_parser
+        if not has_header_parser():
+            raise unittest.SkipTest('os_parse_header_min not exported by loaded DLL')
+        self.assertIsNotNone(
+            self.rs_fusion._rs_parse_header,
+            msg='_rs_parse_header should be set when os_parse_header_min is available',
+        )
+
+    def test_rs_auto_decompose_active(self):
+        """_rs_auto_decompose must be populated when Rust DLL has os_auto_decompose_input."""
+        from opensynaptic.core.rscore.codec import has_auto_decompose
+        if not has_auto_decompose():
+            raise unittest.SkipTest('os_auto_decompose_input not exported by loaded DLL')
+        self.assertIsNotNone(
+            self.rs_fusion._rs_auto_decompose,
+            msg='_rs_auto_decompose should be set when os_auto_decompose_input is available',
+        )
+
+    def test_rs_fusion_state_active(self):
+        """_rs_fusion_state must be populated when Rust DLL has os_fusion_state_* ABI."""
+        from opensynaptic.core.rscore.codec import has_fusion_state
+        if not has_fusion_state():
+            raise unittest.SkipTest('os_fusion_state_* not exported by loaded DLL')
+        self.assertIsNotNone(
+            self.rs_fusion._rs_fusion_state,
+            msg='_rs_fusion_state should be set when os_fusion_state_* is available',
+        )
+
+    # ------------------------------------------------------------------
+    # Decompress: valid packet
+    # ------------------------------------------------------------------
+    def test_decompress_valid_packet(self):
+        decoded = self.rs_fusion.decompress(self.pkt_full)
+        self.assertIsInstance(decoded, dict)
+        self.assertNotIn('error', decoded, msg='Valid packet must not produce error key')
+
+    def test_decompress_full_seeds_rs_fusion_state(self):
+        """Receiving a FULL packet should seed native fusion state for that source AID."""
+        from opensynaptic.core.rscore.codec import has_fusion_state
+        from opensynaptic.core.rscore.codec import parse_packet_header
+        if not has_fusion_state():
+            raise unittest.SkipTest('native fusion state ABI not available')
+        fusion = type(self.rs_fusion)(str(Path(_ROOT) / 'Config.json') if _ROOT else None)
+        decoded = fusion.decompress(self.pkt_full)
+        self.assertNotIn('error', decoded)
+        meta = parse_packet_header(self.pkt_full) or {}
+        self.assertIn(int(meta.get('source_aid', -1)), getattr(fusion, '_rs_seeded_aids', set()))
+
+    def test_decompress_parity_with_pycore(self):
+        """rscore decompress must produce the same result dict as pycore for a valid packet."""
+        py_dec = self.py_fusion.decompress(self.pkt_full)
+        rs_dec = self.rs_fusion.decompress(self.pkt_full)
+        # Both must be non-error dicts
+        self.assertNotIn('error', py_dec)
+        self.assertNotIn('error', rs_dec)
+        # Core payload keys must be present in both
+        for k in py_dec:
+            if k.startswith('__'):
+                continue  # skip meta-keys
+            self.assertIn(k, rs_dec, msg='key {!r} missing from rscore result'.format(k))
+
+    def test_decompress_heart_parity_with_pycore(self):
+        """After a FULL learn, HEART receive should match pycore output."""
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        py_fusion = type(self.py_fusion)(cfg)
+        rs_fusion = type(self.rs_fusion)(cfg)
+        py_fusion.run_engine(self.raw_input, strategy='FULL')
+        rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        heart_pkt = rs_fusion.run_engine(self.raw_input, strategy='DIFF')
+        py_fusion.decompress(self.pkt_full)
+        rs_fusion.decompress(self.pkt_full)
+        py_dec = py_fusion.decompress(heart_pkt)
+        rs_dec = rs_fusion.decompress(heart_pkt)
+        self.assertEqual(py_dec.get('id'), rs_dec.get('id'))
+        self.assertEqual(py_dec.get('s1_v'), rs_dec.get('s1_v'))
+
+    def test_decompress_diff_parity_with_pycore(self):
+        """After a FULL learn, DIFF receive with changed values should match pycore output."""
+        from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+        from opensynaptic.core.pycore.solidity import OpenSynapticEngine
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        std = OpenSynapticStandardizer(cfg)
+        eng = OpenSynapticEngine(cfg)
+        fact = std.standardize('RS_FUS', 'ONLINE', [['V1', 'OK', 101326.0, 'Pa']])
+        changed_input = '42;{}'.format(eng.compress(fact))
+        py_fusion = type(self.py_fusion)(cfg)
+        rs_fusion = type(self.rs_fusion)(cfg)
+        py_fusion.run_engine(self.raw_input, strategy='FULL')
+        rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        diff_pkt = rs_fusion.run_engine(changed_input, strategy='DIFF')
+        py_fusion.decompress(self.pkt_full)
+        rs_fusion.decompress(self.pkt_full)
+        py_dec = py_fusion.decompress(diff_pkt)
+        rs_dec = rs_fusion.decompress(diff_pkt)
+        self.assertEqual(py_dec.get('id'), rs_dec.get('id'))
+        self.assertEqual(py_dec.get('s1_v'), rs_dec.get('s1_v'))
+
+    def test_decompress_memoryview_input(self):
+        """decompress must accept memoryview input."""
+        decoded = self.rs_fusion.decompress(memoryview(self.pkt_full))
+        self.assertIsInstance(decoded, dict)
+        self.assertNotIn('error', decoded)
+
+    # ------------------------------------------------------------------
+    # Decompress: corrupt packet – fast rejection via Rust
+    # ------------------------------------------------------------------
+    def test_decompress_corrupt_crc16_rejected(self):
+        """Corrupt CRC16 must be caught and returned as an error dict."""
+        corrupt = bytearray(self.pkt_full)
+        corrupt[-1] ^= 0xFF  # flip last CRC16 byte
+        result = self.rs_fusion.decompress(bytes(corrupt))
+        self.assertIsInstance(result, dict)
+        meta = result.get('__packet_meta__', {})
+        self.assertFalse(
+            meta.get('crc16_ok', True),
+            msg='CRC16 mismatch must be surfaced in __packet_meta__',
+        )
+
+    def test_decompress_corrupt_short_packet(self):
+        """A 4-byte packet (too short) must not crash."""
+        result = self.rs_fusion.decompress(b'\x3f\x01\x00\x00')
+        self.assertIsInstance(result, dict)
+
+    # ------------------------------------------------------------------
+    # run_engine delegated to pycore path
+    # ------------------------------------------------------------------
+    def test_run_engine_full_strategy(self):
+        pkt = self.rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        self.assertIsInstance(pkt, (bytes, bytearray))
+        self.assertTrue(len(pkt) > 0)
+
+    def test_run_engine_accepts_memoryview_raw_input(self):
+        pkt = self.rs_fusion.run_engine(memoryview(self.raw_input.encode('utf-8')), strategy='FULL')
+        self.assertIsInstance(pkt, (bytes, bytearray))
+        self.assertTrue(len(pkt) > 0)
+
+    def test_run_engine_diff_after_full(self):
+        """DIFF strategy must produce a valid packet after a FULL template is established."""
+        self.rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        pkt = self.rs_fusion.run_engine(self.raw_input, strategy='DIFF')
+        self.assertIsInstance(pkt, (bytes, bytearray))
+        self.assertTrue(len(pkt) > 0)
+
+    def test_run_engine_output_parity(self):
+        """rscore run_engine must produce bit-for-bit identical output to pycore."""
+        py_pkt = self.py_fusion.run_engine(self.raw_input, strategy='FULL')
+        rs_pkt = self.rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        self.assertEqual(
+            py_pkt, rs_pkt,
+            msg='run_engine FULL output must be identical for pycore and rscore',
+        )
+
+    def test_run_engine_heart_parity(self):
+        """After FULL warmup, DIFF on unchanged payload should match pycore HEART output."""
+        py_fusion = type(self.py_fusion)(str(Path(_ROOT) / 'Config.json') if _ROOT else None)
+        rs_fusion = type(self.rs_fusion)(str(Path(_ROOT) / 'Config.json') if _ROOT else None)
+        py_fusion.run_engine(self.raw_input, strategy='FULL')
+        rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        py_pkt = py_fusion.run_engine(self.raw_input, strategy='DIFF')
+        rs_pkt = rs_fusion.run_engine(self.raw_input, strategy='DIFF')
+        self.assertEqual(py_pkt, rs_pkt)
+
+    def test_run_engine_diff_changed_parity(self):
+        """After FULL warmup, DIFF on changed payload should match pycore output."""
+        from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+        from opensynaptic.core.pycore.solidity import OpenSynapticEngine
+        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        std = OpenSynapticStandardizer(cfg)
+        eng = OpenSynapticEngine(cfg)
+        fact = std.standardize('RS_FUS', 'ONLINE', [['V1', 'OK', 101326.0, 'Pa']])
+        changed_input = '42;{}'.format(eng.compress(fact))
+        py_fusion = type(self.py_fusion)(cfg)
+        rs_fusion = type(self.rs_fusion)(cfg)
+        py_fusion.run_engine(self.raw_input, strategy='FULL')
+        rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        py_pkt = py_fusion.run_engine(changed_input, strategy='DIFF')
+        rs_pkt = rs_fusion.run_engine(changed_input, strategy='DIFF')
+        self.assertEqual(py_pkt, rs_pkt)
+
+    def test_round_trip_via_rs_fusion(self):
+        """Encode with rscore run_engine, decode with rscore decompress."""
+        pkt = self.rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        decoded = self.rs_fusion.decompress(pkt)
+        self.assertIsInstance(decoded, dict)
+        self.assertNotIn('error', decoded)
+
+    # ------------------------------------------------------------------
+    # _finalize_bin: Rust CRC path
+    # ------------------------------------------------------------------
+    def test_finalize_bin_uses_rust_crc(self):
+        """_rs_crc8_fn + _rs_crc16_fn must be populated when DLL has CRC helpers."""
+        from opensynaptic.core.rscore.codec import has_crc_helpers
+        if not has_crc_helpers():
+            raise unittest.SkipTest('CRC helpers not in loaded DLL')
+        self.assertIsNotNone(
+            self.rs_fusion._rs_crc8_fn,
+            msg='_rs_crc8_fn should be set when os_crc8 is available',
+        )
+        self.assertIsNotNone(
+            self.rs_fusion._rs_crc16_fn,
+            msg='_rs_crc16_fn should be set when os_crc16_ccitt_pub is available',
+        )
+
+    def test_finalize_bin_parity_full_strategy(self):
+        """_finalize_bin (Rust CRC) must produce bit-identical packets to pycore."""
+        rs_pkt = self.rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        py_pkt = self.py_fusion.run_engine(self.raw_input, strategy='FULL')
+        self.assertEqual(
+            rs_pkt, py_pkt,
+            msg='Packet bytes must be identical: rscore (Rust CRC) vs pycore (C CRC)',
+        )
+
+    def test_finalize_bin_parity_diff_strategy(self):
+        """DIFF packets from rscore must decode successfully with pycore (cross-decode)."""
+        # Seed the templates for both engines with the same FULL packet
+        self.rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        self.py_fusion.run_engine(self.raw_input, strategy='FULL')
+        rs_diff = self.rs_fusion.run_engine(self.raw_input, strategy='DIFF')
+        py_diff = self.py_fusion.run_engine(self.raw_input, strategy='DIFF')
+        # Both DIFF packets should decode successfully
+        self.assertNotIn('error', self.rs_fusion.decompress(rs_diff))
+        self.assertNotIn('error', self.py_fusion.decompress(py_diff))
+
+
+# ---------------------------------------------------------------------------
+# RSCore OSHandshakeManager (Rust CMD helpers)
+# ---------------------------------------------------------------------------
+class TestRscoreHandshakeManager(unittest.TestCase):
+    """Verify rscore OSHandshakeManager uses Rust CMD helpers for routing."""
+
+    @classmethod
+    def setUpClass(cls):
+        from opensynaptic.core.rscore.codec import has_rs_native
+        if not has_rs_native():
+            raise unittest.SkipTest('os_rscore DLL not available')
+        from opensynaptic.core.rscore.api import OSHandshakeManager as RsHandshake
+        from opensynaptic.core.pycore.handshake import CMD
+        cls.mgr = RsHandshake(target_sync_count=3)
+        cls.CMD = CMD
+
+    # ------------------------------------------------------------------
+    # Rust helper activation
+    # ------------------------------------------------------------------
+    def test_rust_cmd_helpers_active(self):
+        self.assertIsNotNone(self.mgr._rs_cmd_is_data,   msg='_rs_cmd_is_data must be set')
+        self.assertIsNotNone(self.mgr._rs_cmd_normalize, msg='_rs_cmd_normalize must be set')
+        self.assertIsNotNone(self.mgr._rs_cmd_secure,    msg='_rs_cmd_secure must be set')
+
+    # ------------------------------------------------------------------
+    # is_secure_data_cmd
+    # ------------------------------------------------------------------
+    def test_is_secure_data_cmd_true_for_secure(self):
+        for cmd in self.CMD.SECURE_DATA_CMDS:
+            self.assertTrue(
+                self.mgr.is_secure_data_cmd(cmd),
+                msg='is_secure_data_cmd should be True for cmd={}'.format(cmd),
+            )
+
+    def test_is_secure_data_cmd_false_for_plain(self):
+        for cmd in self.CMD.PLAIN_DATA_CMDS:
+            self.assertFalse(
+                self.mgr.is_secure_data_cmd(cmd),
+                msg='is_secure_data_cmd should be False for plain cmd={}'.format(cmd),
+            )
+
+    def test_is_secure_data_cmd_false_for_ctrl(self):
+        for cmd in self.CMD.CTRL_CMDS:
+            self.assertFalse(
+                self.mgr.is_secure_data_cmd(cmd),
+                msg='is_secure_data_cmd should be False for ctrl cmd={}'.format(cmd),
+            )
+
+    # ------------------------------------------------------------------
+    # normalize_data_cmd
+    # ------------------------------------------------------------------
+    def test_normalize_data_cmd_secure_to_plain(self):
+        for sec, base in self.CMD.BASE_DATA_CMD.items():
+            self.assertEqual(
+                self.mgr.normalize_data_cmd(sec), base,
+                msg='normalize({}) expected {} got {}'.format(
+                    sec, base, self.mgr.normalize_data_cmd(sec)),
+            )
+
+    def test_normalize_data_cmd_plain_passthrough(self):
+        for cmd in self.CMD.PLAIN_DATA_CMDS:
+            self.assertEqual(
+                self.mgr.normalize_data_cmd(cmd), cmd,
+                msg='normalize({}) should be identity for plain cmd'.format(cmd),
+            )
+
+    # ------------------------------------------------------------------
+    # secure_variant_cmd
+    # ------------------------------------------------------------------
+    def test_secure_variant_cmd_plain_to_secure(self):
+        for plain, sec in self.CMD.SECURE_DATA_CMD.items():
+            self.assertEqual(
+                self.mgr.secure_variant_cmd(plain), sec,
+                msg='secure_variant({}) expected {} got {}'.format(
+                    plain, sec, self.mgr.secure_variant_cmd(plain)),
+            )
+
+    def test_secure_variant_cmd_passthrough_ctrl(self):
+        """Control commands should pass through unchanged."""
+        for cmd in self.CMD.CTRL_CMDS:
+            self.assertEqual(
+                self.mgr.secure_variant_cmd(cmd), cmd,
+                msg='secure_variant({}) should pass through ctrl cmd'.format(cmd),
+            )
+
+    # ------------------------------------------------------------------
+    # Parity: rscore must produce identical results to pycore
+    # ------------------------------------------------------------------
+    def test_cmd_parity_with_pycore(self):
+        """All three CMD methods must produce identical results to pycore."""
+        from opensynaptic.core.pycore.handshake import OSHandshakeManager as PyHandshake
+        py_mgr = PyHandshake(target_sync_count=3)
+        all_cmds = (
+            list(self.CMD.DATA_CMDS) +
+            list(self.CMD.CTRL_CMDS) +
+            [0, 255, 128]
+        )
+        for cmd in all_cmds:
+            self.assertEqual(
+                self.mgr.is_secure_data_cmd(cmd),
+                py_mgr.is_secure_data_cmd(cmd),
+                msg='is_secure_data_cmd parity failed for cmd={}'.format(cmd),
+            )
+            self.assertEqual(
+                self.mgr.normalize_data_cmd(cmd),
+                py_mgr.normalize_data_cmd(cmd),
+                msg='normalize_data_cmd parity failed for cmd={}'.format(cmd),
+            )
+            self.assertEqual(
+                self.mgr.secure_variant_cmd(cmd),
+                py_mgr.secure_variant_cmd(cmd),
+                msg='secure_variant_cmd parity failed for cmd={}'.format(cmd),
+            )
+
+
 def build_suite():
     """Return a TestSuite with all component tests."""
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     for cls in (TestCoreManager, TestBase62Codec, TestOpenSynapticStandardizer,
                 TestOpenSynapticEngine, TestOSVisualFusionEngine,
-                TestIDAllocator, TestEnvGuardService):
+                TestIDAllocator, TestEnvGuardService, TestRscore, TestRscoreEngine,
+                TestFullLoadConfig, TestStressAutoProfile,
+                TestRscoreFusionEngine, TestRscoreHandshakeManager):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     return suite
 

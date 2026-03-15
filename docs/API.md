@@ -2,6 +2,12 @@
 
 All public classes and methods exposed by the `opensynaptic` package.
 
+> **Deep-dive references:**
+> - [`PYCORE_INTERNALS.md`](PYCORE_INTERNALS.md) — complete method-level reference for every class in `pycore/` including data contracts, wire formats, and security internals
+> - [`RSCORE_API.md`](RSCORE_API.md) — Rust core (`rscore/`) API design specification
+> - [`CONFIG_SCHEMA.md`](CONFIG_SCHEMA.md) — `Config.json` schema reference
+> - [`TRANSPORTER_PLUGIN.md`](TRANSPORTER_PLUGIN.md) — how to add new transporter drivers
+
 ---
 
 ## `OpenSynaptic` — `src/opensynaptic/core/pycore/core.py` (exported via `opensynaptic.core`)
@@ -165,9 +171,49 @@ Encode a `"<aid>;<b62_payload>"` string into a binary packet.
 | `raw_input_str` | `str` | `"{assigned_id};{compressed}"` |
 | `strategy` | `str` | `"FULL"` or `"DIFF"` |
 
+**Binary frame layout (single hop, N=1):**
+
+```
+[CMD:1][route_count:1][AID:4][TID:1][TS:6][BODY:L][CRC8:1][CRC16:2]
+                                                                 total = 15+L bytes
+```
+
+- `CMD` — data command byte (see `CMD` class in `handshake.py`)
+- `AID` — source device ID, big-endian uint32
+- `TID` — template ID uint8 (zero-padded 2-digit decimal string cast to int)
+- `TS` — 6 LSBs of millisecond timestamp (big-endian uint64 bytes [2..8])
+- `BODY` — CMD-dependent (full UTF-8 payload / diff bitmask+deltas / empty)
+- `CRC8` — CRC-8 (poly=0x07, init=0x00) over plaintext body
+- `CRC16` — CRC-16/CCITT (poly=0x1021, init=0xFFFF) over frame minus last 2 bytes
+
 ### `decompress(raw_bytes: bytes) → dict`
 
-Decode a binary packet back to a dict.
+Decode a binary packet back to a fact dict.
+
+Returns the decoded `SensorFact` dict with an extra `__packet_meta__` key:
+
+```python
+{
+    "__packet_meta__": {
+        "cmd":              int,
+        "base_cmd":         int,
+        "secure":           bool,
+        "source_aid":       int,
+        "crc16_ok":         bool,
+        "crc8_ok":          bool,
+        "timestamp_raw":    int,   # milliseconds
+        "tid":              str,
+        "template_learned": bool,
+    }
+}
+```
+
+### Other Methods
+
+| Method | Description |
+|---|---|
+| `set_local_id(id)` | Update local device ID (used internally after ID assignment) |
+| `relay(packet)` | Pass-through re-encode (relay node use case) |
 
 ---
 
@@ -181,17 +227,72 @@ CMD byte dispatch, device session management, ID and time negotiation.
 OSHandshakeManager(target_sync_count=3, registry_dir=None, expire_seconds=86400)
 ```
 
-### Key Methods
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `target_sync_count` | `int` | `3` | Successful sends required before switching to DIFF strategy |
+| `registry_dir` | `str \| None` | `None` | Device registry root directory |
+| `expire_seconds` | `int` | `86400` | Session and sync-status entry TTL in seconds |
 
-| Method | Description |
-|---|---|
-| `request_id_via_transport(send_fn, recv_fn, device_meta, timeout)` | Client-side ID request handshake |
-| `request_time_via_transport(send_fn, recv_fn, timeout)` | Client-side time sync handshake |
-| `classify_and_dispatch(raw_bytes, addr)` | Parse CMD byte and route to the correct handler |
-| `get_strategy(src_aid, has_template) → str` | Returns `"FULL_PACKET"` or `"DIFF_PACKET"` |
-| `commit_success(src_aid)` | Increment successful send counter for the given device |
-| `has_secure_dict(aid) → bool` | Check if a session encryption dict exists |
-| `note_server_time(ts)` | Record a server timestamp for local clock correction |
+### CMD Byte Constants (`CMD` class)
+
+| Constant | Value | Description |
+|---|---|---|
+| `DATA_FULL` | 0x3F | Full payload (template + data) |
+| `DATA_FULL_SEC` | 0x40 | Full payload, XOR-encrypted |
+| `DATA_DIFF` | 0xAA | Differential update (changed slots only) |
+| `DATA_DIFF_SEC` | 0xAB | Differential, XOR-encrypted |
+| `DATA_HEART` | 0x7F | Heartbeat (no value change) |
+| `DATA_HEART_SEC` | 0x80 | Heartbeat, XOR-encrypted |
+| `ID_REQUEST` | 0x01 | Node requests a device ID |
+| `ID_ASSIGN` | 0x02 | Server assigns a device ID |
+| `ID_POOL_REQ` | 0x03 | Node requests a batch of IDs |
+| `ID_POOL_RES` | 0x04 | Server batch ID assignment |
+| `HANDSHAKE_ACK` | 0x05 | Positive acknowledgement |
+| `HANDSHAKE_NACK` | 0x06 | Negative acknowledgement |
+| `PING` | 0x09 | Liveness probe |
+| `PONG` | 0x0A | Liveness reply |
+| `TIME_REQUEST` | 0x0B | Node requests server timestamp |
+| `TIME_RESPONSE` | 0x0C | Server returns UNIX timestamp |
+| `SECURE_DICT_READY` | 0x0D | Server confirms key exchange |
+| `SECURE_CHANNEL_ACK` | 0x0E | Node acknowledges encrypted channel |
+
+### Strategy Methods
+
+| Method | Returns | Description |
+|---|---|---|
+| `get_strategy(src_aid, has_template)` | `str` | Returns `"FULL_PACKET"` or `"DIFF_PACKET"` |
+| `commit_success(src_aid)` | `None` | Increment successful send counter |
+
+### Session Security Methods
+
+| Method | Returns | Description |
+|---|---|---|
+| `note_local_plaintext_sent(aid, ts_raw, addr)` | `dict` | Derive pending session key from (aid, ts_raw) |
+| `establish_remote_plaintext(aid, ts_raw, addr)` | `dict` | Server-side key derivation + mark `dict_ready=True` |
+| `confirm_secure_dict(aid, ts_raw, addr)` | `bool` | Promote pending key to active key |
+| `mark_secure_channel(aid, addr)` | `dict` | Set `decrypt_confirmed=True`, state→`"SECURE"` |
+| `has_secure_dict(aid)` | `bool` | True if `dict_ready` flag is set |
+| `should_encrypt_outbound(aid)` | `bool` | True if session has both `dict_ready` and `key` |
+| `get_session_key(aid)` | `bytes \| None` | Return 32-byte XOR session key |
+| `note_server_time(ts)` | `None` | Record server timestamp for clock correction |
+
+### Control Packet Builders
+
+| Method | Returns | Description |
+|---|---|---|
+| `build_id_request(meta)` | `bytes` | `[0x01][seq:2][json_meta]` |
+| `build_id_pool_request(count, meta)` | `bytes` | `[0x03][seq:2][count:2][json_meta]` |
+| `build_ping()` | `bytes` | `[0x09][seq:2]` |
+| `build_time_request()` | `bytes` | `[0x0B][seq:2]` |
+
+### Transport-Level Handshake Loops
+
+| Method | Returns | Description |
+|---|---|---|
+| `request_id_via_transport(send_fn, recv_fn, device_meta, timeout)` | `int \| None` | Client-side ID request handshake |
+| `request_id_pool_via_transport(send_fn, recv_fn, count, meta, timeout)` | `list[int]` | Client-side bulk ID request |
+| `request_time_via_transport(send_fn, recv_fn, timeout)` | `int \| None` | Client-side time sync handshake |
+| `classify_and_dispatch(raw_bytes, addr)` | `dict` | Parse CMD byte and route to handler |
 
 ---
 

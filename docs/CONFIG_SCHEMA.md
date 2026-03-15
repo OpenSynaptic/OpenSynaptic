@@ -117,16 +117,21 @@ All resource paths, transporter registries, and driver configurations.
 | `registry` | string (path) | Device registry base directory |
 | `symbols` | string (path) | Compiled OS symbol table (`data/symbols.json`) |
 | `prefixes` | string (path) | Prefix definition file (alternative to `symbols`) |
-| `transporters_status` | map | **Master enable map** for all transporters — `TransporterManager` reads this. Keys are lowercase driver names; values are `true`/`false`. New drivers are auto-registered here as `false`. |
-| `transport_status` | map | Transport-layer driver enable map (UDP, TCP, QUIC, lwIP, uIP) |
-| `physical_status` | map | Physical-layer driver enable map (UART, RS-485, CAN, LoRa) |
-| `application_status` | map | Application-layer driver enable map (MQTT) |
+| `transporters_status` | map | Legacy merged mirror used by CLI/tooling compatibility. Keep lowercase keys. This map is synchronized from layer-specific maps. |
+| `transport_status` | map | Active transport-layer enable map (UDP, TCP, QUIC, lwIP, uIP) |
+| `physical_status` | map | Active physical-layer enable map (UART, RS-485, CAN, LoRa) |
+| `application_status` | map | Active application-layer enable map (MQTT and app drivers) |
 | `transport_config` | map-of-dicts | Per-driver config dicts for transport layer |
 | `physical_config` | map-of-dicts | Per-driver config dicts for physical layer |
 | `application_config` | map-of-dicts | Per-driver config dicts for application layer |
 | `service_plugins` | map-of-dicts | Service plugin runtime config defaults (auto-managed by plugin registry) |
 
 ### `service_plugins` example
+
+`transporters_status` compatibility note:
+
+- Treat `application_status`, `transport_status`, and `physical_status` as authoritative.
+- `TransporterManager` keeps `transporters_status` as a merged compatibility view.
 
 ```json
 "service_plugins": {
@@ -208,6 +213,7 @@ Pipeline behaviour and precision controls.
 
 ```json
 "engine_settings": {
+    "core_backend":            "pycore",
     "global_secret_key":       "2B",
     "precision":               4,
     "lock_threshold":          3,
@@ -219,12 +225,14 @@ Pipeline behaviour and precision controls.
     "allow_nonlinear_prefix":  false,
     "time_precision":          4,
     "epoch_base":              0,
-    "use_ms":                  true
+    "use_ms":                  true,
+    "zero_copy_transport":     true
 }
 ```
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
+| `core_backend` | string | `"pycore"` | Core plugin selector used by `CoreManager` (`"pycore"` or `"rscore"`). Can also be overridden by `OPENSYNAPTIC_CORE`. |
 | `global_secret_key` | string | `"2B"` | Shared secret used for packet signing |
 | `precision` | int | `4` | Number of Base62 decimal places for sensor values |
 | `lock_threshold` | int | `3` | Number of successful sends before switching from FULL to DIFF strategy |
@@ -237,6 +245,7 @@ Pipeline behaviour and precision controls.
 | `time_precision` | int | `4` | Decimal places for timestamp compression |
 | `epoch_base` | int | `0` | Epoch offset (seconds) subtracted from UNIX timestamps before compression |
 | `use_ms` | bool | `true` | Store timestamps in milliseconds |
+| `zero_copy_transport` | bool | `true` | Use `memoryview` pass-through in the send path instead of materializing to `bytes`. Set to `false` for legacy rollback. |
 
 ---
 

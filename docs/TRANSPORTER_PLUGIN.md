@@ -14,8 +14,13 @@ OpenSynaptic's transport layer is split into three tiers:
 | **Transport** | `RESOURCES.transport_status` | `core/transport_layer/` | UDP, TCP, QUIC, lwIP, uIP |
 | **Physical** | `RESOURCES.physical_status` | `core/physical_layer/` | UART, RS-485, CAN, LoRa |
 
-The `TransporterManager` auto-discovers modules in each location at startup.  
-`ServiceManager` handles application-layer drivers; the physical and transport layers are managed directly by `TransporterManager`.
+Discovery behavior is layer-specific:
+
+- Application layer: constrained by `TransporterService.APP_LAYER_DRIVERS`.
+- Transport layer: constrained by `TransportLayerManager._CANDIDATES`.
+- Physical layer: constrained by `PhysicalLayerManager._CANDIDATES`.
+
+`ServiceManager` handles application-layer drivers; transport and physical layers are managed by their dedicated layer managers.
 
 ---
 
@@ -85,9 +90,9 @@ def send(payload: bytes, config: dict) -> bool:
         return False
 ```
 
-### 2. Register in Config.json
+### 2. Register in manager candidates and Config.json
 
-On the **first boot** after adding the file, `TransporterManager.auto_load()` discovers it and automatically adds an entry to `Config.json`:
+Add your driver key/module to the transport layer candidate tuple (`TransportLayerManager._CANDIDATES`) and then ensure `Config.json` has a status entry:
 
 ```json
 "RESOURCES": {
@@ -97,7 +102,7 @@ On the **first boot** after adding the file, `TransporterManager.auto_load()` di
 }
 ```
 
-You can also add it manually before the first boot.
+Also add matching settings under `RESOURCES.transport_config` when needed.
 
 ### 3. Enable the driver
 
@@ -170,6 +175,8 @@ class TransporterService:
     APP_LAYER_DRIVERS = {'mqtt', 'myapp'}   # ← add here
 ```
 
+If the key is not listed here, the app-layer driver will not be loaded even if the file exists.
+
 ### 3. Enable in Config.json
 
 ```json
@@ -188,7 +195,7 @@ class TransporterService:
 ## Step-by-step: Adding a Physical-layer Driver
 
 Physical drivers live in `core/physical_layer/` and follow the same `send()` / `listen()` contract.  
-Their status key sits under `RESOURCES.physical_status`.
+Register new protocols in `PhysicalLayerManager._CANDIDATES`, then enable them under `RESOURCES.physical_status`.
 
 Example: add `bluetooth.py`:
 
