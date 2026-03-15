@@ -35,7 +35,7 @@ sensors list
 ```
 
 ```
-opensynaptic/
+src/opensynaptic/
 ├── core/
 │   ├── __init__.py             # Public core facade + active backend loader
 │   ├── pycore/
@@ -166,7 +166,7 @@ Key fields:
 | `engine_settings.precision` | int | `4` | Base62 decimal places |
 | `engine_settings.active_standardization` | bool | `true` | Toggle UCUM normalisation stage |
 | `engine_settings.active_compression` | bool | `true` | Toggle Base62 compression stage |
-| `RESOURCES.transporters_status` | map | `{}` | Enable/disable each transporter |
+| `RESOURCES.transporters_status` | map | `{}` | Legacy merged compatibility map (mirrors layer-specific status maps) |
 | `security_settings.drop_on_crc16_failure` | bool | `true` | Drop packets with bad CRC |
 
 Full schema → [`docs/CONFIG_SCHEMA.md`](docs/CONFIG_SCHEMA.md)

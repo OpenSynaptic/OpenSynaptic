@@ -2,8 +2,16 @@ from pathlib import Path
 import subprocess
 import sys
 
-from setuptools import setup
-from setuptools.command.build_py import build_py as _build_py
+try:
+    from setuptools import setup
+    from setuptools.command.build_py import build_py as _build_py
+except ModuleNotFoundError as exc:  # pragma: no cover
+    if getattr(exc, 'name', '') == 'setuptools':
+        raise SystemExit(
+            'Missing dependency: setuptools. '\
+            'Install it with: python -m pip install -U setuptools wheel'
+        )
+    raise
 
 try:
     from setuptools.command.develop import develop as _develop
@@ -41,6 +49,11 @@ if _develop is not None:
     _cmdclass = {'build_py': BuildPyWithNative, 'develop': DevelopWithNative}
 else:
     _cmdclass = {'build_py': BuildPyWithNative}
+
+
+if len(sys.argv) == 1:
+    # Show usage help instead of failing with "no commands supplied".
+    sys.argv.append('--help')
 
 
 setup(cmdclass=_cmdclass)
