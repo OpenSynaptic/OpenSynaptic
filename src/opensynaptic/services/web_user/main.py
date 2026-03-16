@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from opensynaptic.utils.logger import os_log
+from opensynaptic.utils import os_log
 
 
 class WebUserService:

@@ -100,7 +100,7 @@ Device records are sharded by zero-padded ID:
 data/device_registry/{id[0:2]}/{id[2:4]}/{aid}.json
 ```
 
-Use `opensynaptic.utils.paths.get_registry_path(aid)` to derive file locations reliably.
+Use `opensynaptic.utils.get_registry_path(aid)` to derive file locations reliably.
 
 ---
 

@@ -2,10 +2,13 @@ import json
 import struct
 import time
 import threading
-from opensynaptic.utils.paths import get_registry_path, read_json
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
-from opensynaptic.utils.security.security_core import derive_session_key
+from opensynaptic.utils import (
+    get_registry_path,
+    read_json,
+    os_log,
+    LogMsg,
+    derive_session_key,
+)
 
 class CMD:
     DATA_FULL = 63

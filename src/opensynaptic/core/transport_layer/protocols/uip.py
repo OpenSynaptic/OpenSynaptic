@@ -1,6 +1,8 @@
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
-from opensynaptic.utils.buffer import payload_len
+from opensynaptic.utils import (
+    os_log,
+    LogMsg,
+    payload_len,
+)
 
 def send(payload, config):
     opts = config.get('transport_options', {}) if isinstance(config, dict) else {}

@@ -1,8 +1,12 @@
 import sys, traceback
 from pathlib import Path
 import logging
-from opensynaptic.utils.constants import LogMsg, MESSAGES
-from opensynaptic.utils.errors import EnvironmentMissingError, classify_exception
+from opensynaptic.utils import (
+    LogMsg,
+    MESSAGES,
+    EnvironmentMissingError,
+    classify_exception,
+)
 
 class LevelFilter(logging.Filter):
 

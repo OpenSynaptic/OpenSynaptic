@@ -1,6 +1,5 @@
-from opensynaptic.utils.logger import os_log
 import asyncio
-from opensynaptic.utils.buffer import as_readonly_view
+from opensynaptic.utils import os_log, as_readonly_view
 
 def is_supported():
     try:

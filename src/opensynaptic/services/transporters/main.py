@@ -1,9 +1,13 @@
 import importlib
 import pkgutil
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils import (
+    os_log,
+    LogMsg,
+    ensure_bytes,
+    zero_copy_enabled,
+    as_readonly_view,
+)
 from opensynaptic.services.transporters import drivers
-from opensynaptic.utils.buffer import ensure_bytes, zero_copy_enabled, as_readonly_view
 
 class _AppProxyDriver:
 

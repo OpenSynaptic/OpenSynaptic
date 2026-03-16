@@ -25,8 +25,52 @@ if _ROOT and str(Path(_ROOT) / 'src') not in sys.path:
 if _ROOT and _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from opensynaptic.utils.c.native_loader import has_native_library
-from opensynaptic.utils.errors import EnvironmentMissingError
+from opensynaptic.utils import (
+    has_native_library,
+    EnvironmentMissingError,
+)
+
+
+class TestUtilsEntryPointImports(unittest.TestCase):
+    """Unified `opensynaptic.utils` entry-point contract checks."""
+
+    def test_entry_point_exports_basic_symbols(self):
+        from opensynaptic import utils as u
+        from opensynaptic.utils import (
+            Base62Codec,
+            LogMsg,
+            build_native_all,
+            build_guidance,
+            get_toolchain_report,
+            crc8,
+            crc16,
+            crc16_ccitt,
+            ctx,
+            os_log,
+            read_json,
+            write_json,
+        )
+
+        self.assertIn('crc16', getattr(u, '__all__', []))
+        self.assertIs(crc16, crc16_ccitt)
+        self.assertTrue(callable(read_json))
+        self.assertTrue(callable(write_json))
+        self.assertTrue(callable(crc8))
+        self.assertTrue(callable(Base62Codec))
+        self.assertTrue(callable(build_native_all))
+        self.assertTrue(callable(build_guidance))
+        self.assertTrue(callable(get_toolchain_report))
+        self.assertTrue(hasattr(LogMsg, 'READY'))
+        self.assertTrue(hasattr(os_log, 'info'))
+        self.assertTrue(bool(getattr(ctx, 'root', None)))
+
+    def test_crc16_alias_runtime_parity(self):
+        if not has_native_library('os_security'):
+            raise unittest.SkipTest('os_security native library is not available')
+
+        from opensynaptic.utils import crc16, crc16_ccitt
+        payload = b'OpenSynaptic'
+        self.assertEqual(crc16(payload), crc16_ccitt(payload))
 
 
 class TestCoreManager(unittest.TestCase):
@@ -58,6 +102,19 @@ class TestCoreManager(unittest.TestCase):
         finally:
             manager.load_core('pycore')
 
+    def test_rscore_has_no_direct_pycore_imports(self):
+        root = Path(_ROOT) if _ROOT else Path(__file__).resolve().parents[5]
+        rscore_dir = root / 'src' / 'opensynaptic' / 'core' / 'rscore'
+        py_files = list(rscore_dir.glob('*.py'))
+        self.assertTrue(py_files, 'rscore source files not found')
+        blocked = 'opensynaptic.core.pycore'
+        violations = []
+        for file_path in py_files:
+            text = file_path.read_text(encoding='utf-8')
+            if blocked in text:
+                violations.append(str(file_path))
+        self.assertFalse(violations, 'rscore has forbidden pycore imports: {}'.format(violations))
+
 
 # ---------------------------------------------------------------------------
 # Base62 Codec
@@ -68,7 +125,7 @@ class TestBase62Codec(unittest.TestCase):
     def setUp(self):
         if not has_native_library('os_base62'):
             raise unittest.SkipTest('os_base62 native library is not available')
-        from opensynaptic.utils.base62.base62 import Base62Codec
+        from opensynaptic.utils import Base62Codec
         self.codec = Base62Codec(precision=4)
 
     def test_encode_positive(self):
@@ -417,7 +474,7 @@ class TestRscore(unittest.TestCase):
     def test_rs_codec_parity_with_c_codec(self):
         if not has_native_library('os_base62'):
             raise unittest.SkipTest('os_base62 C library not available for parity check')
-        from opensynaptic.utils.base62.base62 import Base62Codec
+        from opensynaptic.utils import Base62Codec
         from opensynaptic.core.rscore.codec import RsBase62Codec
         c_codec = Base62Codec(precision=4)
         rs_codec = RsBase62Codec(precision=4)
@@ -612,7 +669,7 @@ class TestRscore(unittest.TestCase):
         from opensynaptic.core.rscore.codec import has_crc_helpers, rs_crc8
         if not has_crc_helpers():
             raise unittest.SkipTest('CRC helpers not available in loaded DLL')
-        from opensynaptic.utils.security.security_core import crc8 as c_crc8
+        from opensynaptic.utils import crc8 as c_crc8
         for payload in [b'', b'\x00', b'hello', b'OpenSynaptic', bytes(range(256))]:
             rs_val = rs_crc8(payload)
             c_val = c_crc8(payload)
@@ -639,7 +696,7 @@ class TestRscore(unittest.TestCase):
         from opensynaptic.core.rscore.codec import has_crc_helpers, rs_crc16_ccitt
         if not has_crc_helpers():
             raise unittest.SkipTest('CRC helpers not available in loaded DLL')
-        from opensynaptic.utils.security.security_core import crc16_ccitt as c_crc16
+        from opensynaptic.utils import crc16_ccitt as c_crc16
         for payload in [b'', b'\x00', b'hello', b'OpenSynaptic', bytes(range(256))]:
             rs_val = rs_crc16_ccitt(payload)
             c_val = c_crc16(payload)
@@ -1351,7 +1408,7 @@ def build_suite():
     """Return a TestSuite with all component tests."""
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
-    for cls in (TestCoreManager, TestBase62Codec, TestOpenSynapticStandardizer,
+    for cls in (TestUtilsEntryPointImports, TestCoreManager, TestBase62Codec, TestOpenSynapticStandardizer,
                 TestOpenSynapticEngine, TestOSVisualFusionEngine,
                 TestIDAllocator, TestEnvGuardService, TestRscore, TestRscoreEngine,
                 TestFullLoadConfig, TestStressAutoProfile,

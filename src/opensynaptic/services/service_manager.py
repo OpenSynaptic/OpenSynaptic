@@ -1,5 +1,5 @@
 import threading
-from opensynaptic.utils.logger import os_log
+from opensynaptic.utils import os_log
 
 class ServiceManager:
     """Mount point for internal service plugins and their runtime/config indexes."""

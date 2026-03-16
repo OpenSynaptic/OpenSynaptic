@@ -1,8 +1,10 @@
 from datetime import datetime
 from pathlib import Path
-from opensynaptic.utils.paths import read_json
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils import (
+    read_json,
+    os_log,
+    LogMsg,
+)
 
 
 class OS_Registry:

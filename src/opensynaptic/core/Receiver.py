@@ -32,8 +32,10 @@ import threading
 import time
 import queue
 import hashlib
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils import (
+    os_log,
+    LogMsg,
+)
 
 class ReceiverStats:
 

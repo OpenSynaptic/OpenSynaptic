@@ -2,11 +2,18 @@ import struct, base64
 import threading
 import codecs
 from pathlib import Path
-from opensynaptic.utils.base62.base62 import Base62Codec
-from opensynaptic.utils.paths import read_json, write_json, get_registry_path, ctx
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
-from opensynaptic.utils.security.security_core import crc8, crc16_ccitt, xor_payload_into
+from opensynaptic.utils import (
+    Base62Codec,
+    read_json,
+    write_json,
+    get_registry_path,
+    ctx,
+    os_log,
+    LogMsg,
+    crc8,
+    crc16_ccitt,
+    xor_payload_into,
+)
 
 class OSVisualFusionEngine:
 

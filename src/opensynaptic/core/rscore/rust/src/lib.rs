@@ -11,6 +11,8 @@ use std::ffi::c_char;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use base64::Engine;
+use serde::{Deserialize, Serialize};
 
 fn push_u32_be(dst: &mut Vec<u8>, n: usize) -> Option<()> {
     let v = u32::try_from(n).ok()?;
@@ -109,6 +111,155 @@ fn encode_b62_num(n: f64, precision_val: i64, use_precision: bool) -> String {
         n.ceil() as i64
     };
     b62_encode_i64_string(normalized)
+}
+
+fn b62_decode_i64_string(s: &str) -> Option<i64> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let (neg, digits) = if bytes[0] == b'-' {
+        (true, &bytes[1..])
+    } else {
+        (false, bytes)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut val: i64 = 0;
+    for &b in digits {
+        let d: i64 = if b.is_ascii_digit() {
+            (b - b'0') as i64
+        } else if b.is_ascii_lowercase() {
+            10 + (b - b'a') as i64
+        } else if b.is_ascii_uppercase() {
+            36 + (b - b'A') as i64
+        } else {
+            return None;
+        };
+        val = val.checked_mul(62)?.checked_add(d)?;
+    }
+    if neg {
+        Some(-val)
+    } else {
+        Some(val)
+    }
+}
+
+fn b62_decode_num(s: &str, precision_val: i64, use_precision: bool) -> Option<f64> {
+    let raw = b62_decode_i64_string(s)?;
+    if use_precision {
+        Some((raw as f64) / (precision_val as f64))
+    } else {
+        Some(raw as f64)
+    }
+}
+
+fn b64_urlsafe_decode_nopad(input: &str) -> Option<Vec<u8>> {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(input.as_bytes()).ok()
+}
+
+fn decode_ts_token_to_6bytes(ts_token: &str) -> Option<[u8; 6]> {
+    let raw = b64_urlsafe_decode_nopad(ts_token)?;
+    let mut ts6 = [0u8; 6];
+    if raw.len() >= 6 {
+        ts6.copy_from_slice(&raw[..6]);
+        Some(ts6)
+    } else {
+        None
+    }
+}
+
+fn finalize_packet(cmd: u8, src_aid: u32, tid: u32, ts_token: &str, body: &[u8]) -> Option<Vec<u8>> {
+    let tid_u8 = u8::try_from(tid).ok()?;
+    let ts6 = decode_ts_token_to_6bytes(ts_token)?;
+    let route_count = 1u8;
+    let mut out = Vec::with_capacity(2 + 4 + 1 + 6 + body.len() + 1 + 2);
+    out.push(cmd);
+    out.push(route_count);
+    out.extend_from_slice(&src_aid.to_be_bytes());
+    out.push(tid_u8);
+    out.extend_from_slice(&ts6);
+    out.extend_from_slice(body);
+    let crc8 = crc8_inner(body, 0x07, 0x00);
+    out.push(crc8);
+    let crc16 = crc16_ccitt(&out, CRC16_POLY, CRC16_INIT);
+    out.extend_from_slice(&crc16.to_be_bytes());
+    Some(out)
+}
+
+fn parse_compressed_payload_to_json(payload: &str, precision_val: i64) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    let mut split = payload.split('@');
+    let main = split.next().unwrap_or("");
+    let msg = split.next();
+    let segs: Vec<&str> = main.split('|').filter(|s| !s.is_empty()).collect();
+    if segs.is_empty() {
+        return serde_json::Value::Object(out);
+    }
+
+    let head: Vec<&str> = segs[0].split('.').collect();
+    if head.len() >= 2 {
+        out.insert("id".to_string(), serde_json::Value::String(head[0].to_string()));
+        out.insert("s".to_string(), serde_json::Value::String(head[1].to_string()));
+        if head.len() >= 3 {
+            if let Some(ts6) = decode_ts_token_to_6bytes(head[2]) {
+                let mut ts8 = [0u8; 8];
+                ts8[2..8].copy_from_slice(&ts6);
+                let ts_raw = u64::from_be_bytes(ts8);
+                out.insert(
+                    "t_raw".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(ts_raw)),
+                );
+            }
+        }
+    }
+
+    let mut idx = 1usize;
+    for seg in segs.iter().skip(1) {
+        if seg.starts_with('&') {
+            out.insert("geohash".to_string(), serde_json::Value::String(seg[1..].to_string()));
+            continue;
+        }
+        if seg.starts_with('#') {
+            if let Ok(url_raw) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(seg[1..].as_bytes()) {
+                if let Ok(url_tail) = String::from_utf8(url_raw) {
+                    out.insert("url".to_string(), serde_json::Value::String(format!("https://{}", url_tail)));
+                }
+            }
+            continue;
+        }
+        if let Some((sid, rest)) = seg.split_once('>') {
+            let (meta, v_enc) = match rest.rsplit_once(':') {
+                Some(v) => v,
+                None => continue,
+            };
+            let (sst, unit_enc) = match meta.split_once('.') {
+                Some(v) => v,
+                None => (meta, ""),
+            };
+            let value = b62_decode_num(v_enc, precision_val, true).unwrap_or(0.0);
+            out.insert(format!("s{}_id", idx), serde_json::Value::String(sid.to_string()));
+            out.insert(format!("s{}_s", idx), serde_json::Value::String(sst.to_string()));
+            out.insert(format!("s{}_u", idx), serde_json::Value::String(unit_enc.to_string()));
+            out.insert(
+                format!("s{}_v", idx),
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(value).unwrap_or_else(|| serde_json::Number::from(0)),
+                ),
+            );
+            idx += 1;
+        }
+    }
+
+    if let Some(msg_b64) = msg {
+        if let Ok(msg_raw) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(msg_b64.as_bytes()) {
+            if let Ok(msg_str) = String::from_utf8(msg_raw) {
+                out.insert("msg".to_string(), serde_json::Value::String(msg_str));
+            }
+        }
+    }
+    serde_json::Value::Object(out)
 }
 
 fn base64_urlsafe_no_pad(src: &[u8]) -> String {
@@ -341,7 +492,7 @@ fn pack_fusion_result(cmd: u8, tid: u32, flags: u8, body: &[u8]) -> Option<Vec<u
 
 fn get_or_init_aid_state<'a>(state: &'a mut FusionState, src_aid: u32) -> &'a mut AidFusionState {
     state.aids.entry(src_aid).or_insert_with(|| AidFusionState {
-        next_tid: 1,
+        next_tid: 24,
         ..AidFusionState::default()
     })
 }
@@ -1282,3 +1433,528 @@ pub unsafe extern "C" fn os_rscore_version(out: *mut c_char, out_len: usize) -> 
     dst[..VER.len()].copy_from_slice(VER);
     1
 }
+
+fn write_stub_json(out: *mut u8, out_len: usize, body: &[u8]) -> i32 {
+    let needed_i32 = match i32::try_from(body.len()) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    if out.is_null() || out_len < body.len() {
+        return -needed_i32;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(body.as_ptr(), out, body.len());
+    }
+    needed_i32
+}
+
+fn write_out_bytes(out: *mut u8, out_len: usize, body: &[u8]) -> i32 {
+    let needed_i32 = match i32::try_from(body.len()) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    if out.is_null() || out_len < body.len() {
+        return -needed_i32;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(body.as_ptr(), out, body.len());
+    }
+    needed_i32
+}
+
+fn json_fusion_registry() -> &'static Mutex<HashMap<u64, Arc<Mutex<FusionState>>>> {
+    static REG: OnceLock<Mutex<HashMap<u64, Arc<Mutex<FusionState>>>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_json_fusion_arc(ctx_id: u64) -> Option<Arc<Mutex<FusionState>>> {
+    let key = if ctx_id == 0 { 1 } else { ctx_id };
+    let mut reg = json_fusion_registry().lock().ok()?;
+    let arc = reg.entry(key).or_insert_with(|| Arc::new(Mutex::new(FusionState::default())));
+    Some(Arc::clone(arc))
+}
+
+#[derive(Debug, Deserialize)]
+struct FusionRunReq {
+    #[serde(default)]
+    ctx_id: u64,
+    raw_input: String,
+    #[serde(default)]
+    strategy: String,
+    #[serde(default)]
+    src_aid: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FusionDecompressReq {
+    #[serde(default)]
+    ctx_id: u64,
+    packet_b64: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PacketMetaOut {
+    cmd: u8,
+    base_cmd: u8,
+    secure: bool,
+    source_aid: u32,
+    tid: u32,
+    timestamp_raw: u64,
+    crc16_ok: bool,
+}
+
+fn parse_src_aid(raw_input: &str) -> u32 {
+    if let Some((prefix, _)) = raw_input.split_once(';') {
+        if let Ok(v) = prefix.trim().parse::<u32>() {
+            return v;
+        }
+    }
+    0
+}
+
+fn parse_apply_blob(encoded: &[u8]) -> Option<(u8, u32, u8, Vec<u8>)> {
+    if encoded.len() < 10 {
+        return None;
+    }
+    let cmd = encoded[0];
+    let tid = u32::from_be_bytes([encoded[1], encoded[2], encoded[3], encoded[4]]);
+    let flags = encoded[5];
+    let body_len = u32::from_be_bytes([encoded[6], encoded[7], encoded[8], encoded[9]]) as usize;
+    if encoded.len() < 10 + body_len {
+        return None;
+    }
+    Some((cmd, tid, flags, encoded[10..10 + body_len].to_vec()))
+}
+
+/// JSON ABI export for fusion run path.
+#[no_mangle]
+pub unsafe extern "C" fn os_fusion_run_json_v1(
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    if input.is_null() || input_len == 0 {
+        return 0;
+    }
+    let raw = std::slice::from_raw_parts(input, input_len);
+    let req: FusionRunReq = match serde_json::from_slice(raw) {
+        Ok(v) => v,
+        Err(_) => return write_stub_json(out, out_len, br#"{"error":"invalid_json"}"#),
+    };
+
+    let (ts, sig, vals) = match auto_decompose_input_inner(&req.raw_input) {
+        Some(v) => v,
+        None => return write_stub_json(out, out_len, br#"{"error":"auto_decompose_failed"}"#),
+    };
+
+    let src_aid = req.src_aid.unwrap_or_else(|| parse_src_aid(&req.raw_input));
+    let strategy_full = req.strategy.eq_ignore_ascii_case("FULL") || req.strategy.eq_ignore_ascii_case("FULL_PACKET");
+    let arc = match get_json_fusion_arc(req.ctx_id) {
+        Some(v) => v,
+        None => return 0,
+    };
+    let encoded = {
+        let mut state = match arc.lock() {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
+        match apply_fusion_state(&mut state, src_aid, strategy_full, sig, vals) {
+            Some(v) => v,
+            None => return 0,
+        }
+    };
+    let (cmd, tid, flags, body_native) = match parse_apply_blob(&encoded) {
+        Some(v) => v,
+        None => return 0,
+    };
+
+    let body = if (flags & 0x04) != 0 {
+        req.raw_input.as_bytes().to_vec()
+    } else {
+        body_native
+    };
+    let ts_str = match String::from_utf8(ts) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let packet = match finalize_packet(cmd, src_aid, tid, &ts_str, &body) {
+        Some(v) => v,
+        None => return 0,
+    };
+    write_out_bytes(out, out_len, &packet)
+}
+
+/// JSON ABI export for fusion decompress path.
+#[no_mangle]
+pub unsafe extern "C" fn os_fusion_decompress_json_v1(
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    if input.is_null() || input_len == 0 {
+        return 0;
+    }
+    let raw = std::slice::from_raw_parts(input, input_len);
+    let req: FusionDecompressReq = match serde_json::from_slice(raw) {
+        Ok(v) => v,
+        Err(_) => return write_stub_json(out, out_len, br#"{"error":"invalid_json"}"#),
+    };
+
+    let packet = match base64::engine::general_purpose::STANDARD.decode(req.packet_b64.as_bytes()) {
+        Ok(v) => v,
+        Err(_) => return write_stub_json(out, out_len, br#"{"error":"invalid_packet_b64"}"#),
+    };
+    if packet.len() < 5 {
+        return write_stub_json(out, out_len, br#"{"error":"Packet too short"}"#);
+    }
+
+    let cmd = packet[0];
+    let route_count = packet[1] as usize;
+    let tid_pos = 2usize + route_count.saturating_mul(4);
+    if packet.len() < tid_pos + 10 {
+        return write_stub_json(out, out_len, br#"{"error":"Incomplete Binary Header"}"#);
+    }
+
+    let base_cmd = os_cmd_normalize_data(cmd);
+    let secure = os_cmd_is_data(cmd) == 1 && base_cmd != cmd;
+    let source_aid = if route_count > 0 {
+        let s = &packet[tid_pos - 4..tid_pos];
+        u32::from_be_bytes([s[0], s[1], s[2], s[3]])
+    } else {
+        0
+    };
+    let tid = packet[tid_pos] as u32;
+    let ts_raw = &packet[tid_pos + 1..tid_pos + 7];
+    let mut ts8 = [0u8; 8];
+    ts8[2..8].copy_from_slice(ts_raw);
+    let timestamp_raw = u64::from_be_bytes(ts8);
+    let recv_crc16 = u16::from_be_bytes([packet[packet.len() - 2], packet[packet.len() - 1]]);
+    let calc_crc16 = crc16_ccitt(&packet[..packet.len() - 2], CRC16_POLY, CRC16_INIT);
+    let crc16_ok = recv_crc16 == calc_crc16;
+
+    if !crc16_ok {
+        let mut out_map = serde_json::Map::new();
+        out_map.insert("error".to_string(), serde_json::Value::String("CRC16 mismatch".to_string()));
+        let meta = PacketMetaOut {
+            cmd,
+            base_cmd,
+            secure,
+            source_aid,
+            tid,
+            timestamp_raw,
+            crc16_ok,
+        };
+        out_map.insert("__packet_meta__".to_string(), serde_json::to_value(meta).unwrap_or(serde_json::Value::Null));
+        let out_json = serde_json::to_vec(&serde_json::Value::Object(out_map)).unwrap_or_else(|_| br#"{"error":"json_encode_failed"}"#.to_vec());
+        return write_out_bytes(out, out_len, &out_json);
+    }
+
+    let body = packet[tid_pos + 7..packet.len() - 3].to_vec();
+    let ts_enc = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(ts_raw);
+    let arc = match get_json_fusion_arc(req.ctx_id) {
+        Some(v) => v,
+        None => return 0,
+    };
+
+    let payload = if base_cmd == DATA_FULL {
+        let p = String::from_utf8(body.clone()).unwrap_or_default();
+        if let Some((_, sig, vals)) = auto_decompose_input_inner(&p) {
+            if let Ok(mut state) = arc.lock() {
+                let aid_state = get_or_init_aid_state(&mut state, source_aid);
+                aid_state.sig_to_tid.insert(sig.clone(), tid);
+                aid_state.tid_to_sig.insert(tid, sig);
+                aid_state.runtime_vals.insert(tid, vals);
+                aid_state.next_tid = aid_state.next_tid.max(tid.saturating_add(1));
+            }
+        }
+        p
+    } else if base_cmd == DATA_DIFF || base_cmd == DATA_HEART {
+        let resolved = {
+            let mut state = match arc.lock() {
+                Ok(v) => v,
+                Err(_) => return 0,
+            };
+            match apply_fusion_receive_state(&mut state, source_aid, base_cmd, tid, ts_enc.into_bytes(), body) {
+                Some(v) => v,
+                None => return write_stub_json(out, out_len, br#"{"error":"fusion_receive_apply_failed"}"#),
+            }
+        };
+        String::from_utf8(resolved).unwrap_or_default()
+    } else {
+        return write_stub_json(out, out_len, br#"{"error":"unknown_command"}"#);
+    };
+
+    let payload_no_aid = match payload.split_once(';') {
+        Some((_, tail)) => tail,
+        None => payload.as_str(),
+    };
+    let mut decoded = parse_compressed_payload_to_json(payload_no_aid, 10_000);
+    if let serde_json::Value::Object(ref mut map) = decoded {
+        let meta = PacketMetaOut {
+            cmd,
+            base_cmd,
+            secure,
+            source_aid,
+            tid,
+            timestamp_raw,
+            crc16_ok,
+        };
+        map.insert("__packet_meta__".to_string(), serde_json::to_value(meta).unwrap_or(serde_json::Value::Null));
+    }
+    let out_json = serde_json::to_vec(&decoded).unwrap_or_else(|_| br#"{"error":"json_encode_failed"}"#.to_vec());
+    write_out_bytes(out, out_len, &out_json)
+}
+
+/// JSON ABI export for fusion relay path.
+#[no_mangle]
+pub unsafe extern "C" fn os_fusion_relay_json_v1(
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    os_fusion_run_json_v1(input, input_len, out, out_len)
+}
+
+/// Placeholder JSON ABI export for node ensure_id path.
+#[no_mangle]
+pub unsafe extern "C" fn os_node_ensure_id_json_v1(
+    _input: *const u8,
+    _input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    write_stub_json(out, out_len, br#"{"ok":false,"error":"os_node_ensure_id_json_v1_not_implemented"}"#)
+}
+
+/// Placeholder JSON ABI export for node transmit path.
+#[no_mangle]
+pub unsafe extern "C" fn os_node_transmit_json_v1(
+    _input: *const u8,
+    _input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    write_stub_json(out, out_len, br#"{"ok":false,"error":"os_node_transmit_json_v1_not_implemented"}"#)
+}
+
+/// Placeholder JSON ABI export for node dispatch path.
+#[no_mangle]
+pub unsafe extern "C" fn os_node_dispatch_json_v1(
+    _input: *const u8,
+    _input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    write_stub_json(out, out_len, br#"{"ok":false,"error":"os_node_dispatch_json_v1_not_implemented"}"#)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Batch pipeline ABI – single Rust call for N compress+fuse items
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Inner batch pipeline – returns None only on unrecoverable structural error.
+///
+/// Input layout (all multi-byte integers are big-endian unless noted):
+///   u64  compressor_handle  (BE)
+///   u64  ctx_id             (BE)
+///   u32  item_count         (BE)
+///   repeat(item_count) {
+///       u32  aid            (BE)
+///       u8   strategy       (1 = FULL, 0 = DIFF)
+///       u32  fact_len       (BE)
+///       bytes fact[fact_len]
+///   }
+///
+/// Output layout:
+///   u32  item_count   (BE)
+///   repeat(item_count) {
+///       u32  packet_len  (BE, 0 when that item failed)
+///       bytes packet[packet_len]
+///   }
+fn pipeline_batch_inner(raw: &[u8]) -> Option<Vec<u8>> {
+    if raw.len() < 20 {
+        return None;
+    }
+    let comp_handle = u64::from_be_bytes(raw[0..8].try_into().ok()?);
+    let ctx_id = u64::from_be_bytes(raw[8..16].try_into().ok()?);
+    let mut off = 16usize;
+    let item_count = read_u32_be(raw, &mut off)? as usize;
+
+    // ── Acquire compressor once (one mutex round-trip for all items) ──────
+    let compressor = {
+        let reg = compressor_registry().lock().ok()?;
+        Arc::clone(reg.get(&comp_handle)?)
+    };
+
+    // ── Acquire fusion state once and hold it for the entire batch ─────────
+    let fusion_arc = get_json_fusion_arc(ctx_id)?;
+    let mut fusion_state = fusion_arc.lock().ok()?;
+
+    // ── Process items ──────────────────────────────────────────────────────
+    let mut out: Vec<u8> = Vec::with_capacity(4 + item_count * 24);
+    push_u32_be(&mut out, item_count)?;
+
+    for _ in 0..item_count {
+        // Read per-item header
+        let aid = match read_u32_be(raw, &mut off) {
+            Some(v) => v,
+            None => { push_u32_be(&mut out, 0)?; break; }
+        };
+        let strategy_byte = match read_u8(raw, &mut off) {
+            Some(v) => v,
+            None => { push_u32_be(&mut out, 0)?; break; }
+        };
+        let strategy_full = strategy_byte != 0;
+        let fact_len = match read_u32_be(raw, &mut off) {
+            Some(v) => v as usize,
+            None => { push_u32_be(&mut out, 0)?; break; }
+        };
+        if off + fact_len > raw.len() {
+            push_u32_be(&mut out, 0)?;
+            // Skip remaining – structural error, stop
+            break;
+        }
+        let fact_bytes = &raw[off..off + fact_len];
+        off += fact_len;
+
+        // Compress fact (binary protocol, no JSON)
+        let compressed_str = match compress_fact_inner(&compressor, fact_bytes) {
+            Some(v) => match String::from_utf8(v) {
+                Ok(s) => s,
+                Err(_) => { push_u32_be(&mut out, 0)?; continue; }
+            },
+            None => { push_u32_be(&mut out, 0)?; continue; }
+        };
+
+        // Build raw_input string used by decompose + fusion
+        let raw_input = format!("{};{}", aid, compressed_str);
+
+        // Auto-decompose into (ts, sig, vals)
+        let (ts, sig, vals) = match auto_decompose_input_inner(&raw_input) {
+            Some(v) => v,
+            None => { push_u32_be(&mut out, 0)?; continue; }
+        };
+
+        // Apply fusion state (lock already held for whole batch)
+        let encoded = match apply_fusion_state(&mut fusion_state, aid, strategy_full, sig, vals) {
+            Some(v) => v,
+            None => { push_u32_be(&mut out, 0)?; continue; }
+        };
+
+        // Decode apply-blob and build packet
+        let (cmd, tid, flags, body_native) = match parse_apply_blob(&encoded) {
+            Some(v) => v,
+            None => { push_u32_be(&mut out, 0)?; continue; }
+        };
+        let ts_str = match String::from_utf8(ts) {
+            Ok(v) => v,
+            Err(_) => { push_u32_be(&mut out, 0)?; continue; }
+        };
+        let body = if (flags & 0x04) != 0 {
+            raw_input.into_bytes()
+        } else {
+            body_native
+        };
+        let packet = match finalize_packet(cmd, aid, tid, &ts_str, &body) {
+            Some(v) => v,
+            None => { push_u32_be(&mut out, 0)?; continue; }
+        };
+
+        push_u32_be(&mut out, packet.len())?;
+        out.extend_from_slice(&packet);
+    }
+
+    Some(out)
+}
+
+/// Batch pipeline: compress N facts + run fusion for each in one C ABI call.
+///
+/// Eliminates per-item Python↔Rust round-trips; acquires each registry lock
+/// once per batch and holds the fusion state mutex for the whole batch.
+///
+/// Return value:
+///   >0  bytes written to `out`
+///   <0  required output size (caller should retry with -ret bytes)
+///    0  structural error / invalid handles
+///
+/// # Safety
+/// `input` must point to `input_len` readable bytes.
+/// `out` must point to at least `out_len` writable bytes (may be null for size query).
+#[no_mangle]
+pub unsafe extern "C" fn os_pipeline_batch_v1(
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    if input.is_null() || input_len == 0 {
+        return 0;
+    }
+    let raw = std::slice::from_raw_parts(input, input_len);
+    let result = match pipeline_batch_inner(raw) {
+        Some(v) => v,
+        None => return 0,
+    };
+    let needed = result.len();
+    let needed_i32 = match i32::try_from(needed) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    if out.is_null() || out_len < needed {
+        return -needed_i32;
+    }
+    std::ptr::copy_nonoverlapping(result.as_ptr(), out, needed);
+    needed_i32
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Placeholder JSON ABIs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Placeholder JSON ABI export for standardize path.
+#[no_mangle]
+pub unsafe extern "C" fn os_standardize_json_v1(
+    _input: *const u8,
+    _input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    write_stub_json(out, out_len, br#"{}"#)
+}
+
+/// Placeholder JSON ABI export for handshake negotiate path.
+#[no_mangle]
+pub unsafe extern "C" fn os_handshake_negotiate_v1(
+    _input: *const u8,
+    _input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    write_stub_json(out, out_len, br#"{"ok":false,"error":"os_handshake_negotiate_v1_not_implemented"}"#)
+}
+
+/// Placeholder JSON ABI export for transporter send path.
+#[no_mangle]
+pub unsafe extern "C" fn os_transporter_send_v1(
+    _input: *const u8,
+    _input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    write_stub_json(out, out_len, br#"{"ok":false,"error":"os_transporter_send_v1_not_implemented"}"#)
+}
+
+/// Placeholder JSON ABI export for transporter listen path.
+#[no_mangle]
+pub unsafe extern "C" fn os_transporter_listen_v1(
+    _input: *const u8,
+    _input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    write_stub_json(out, out_len, br#"{"ok":false,"error":"os_transporter_listen_v1_not_implemented"}"#)
+}
+

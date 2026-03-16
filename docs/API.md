@@ -501,7 +501,7 @@ Dependency inspection and repair plugin.
 Use the `os_log` singleton:
 
 ```python
-from opensynaptic.utils.logger import os_log
+from opensynaptic.utils import os_log
 
 os_log.info('MODULE', 'EVENT', 'message', {'context': 'dict'})
 os_log.err('MODULE', 'EVENT', exception, {'context': 'dict'})

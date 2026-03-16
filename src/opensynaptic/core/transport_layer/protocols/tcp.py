@@ -1,6 +1,8 @@
 import socket
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.buffer import as_readonly_view
+from opensynaptic.utils import (
+    os_log,
+    as_readonly_view,
+)
 
 def send(payload, config):
     opts = config.get('transport_options', {}) if isinstance(config, dict) else {}

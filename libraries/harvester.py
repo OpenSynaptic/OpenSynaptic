@@ -1,8 +1,10 @@
 from pathlib import Path
 import json
-from opensynaptic.utils.paths import write_json
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils import (
+    write_json,
+    os_log,
+    LogMsg,
+)
 
 CURRENT_DIR = Path(__file__).resolve().parent
 UNITS_DIR = CURRENT_DIR / "Units"

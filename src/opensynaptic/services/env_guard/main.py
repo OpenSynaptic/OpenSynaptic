@@ -7,8 +7,10 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.errors import EnvironmentMissingError
+from opensynaptic.utils import (
+    os_log,
+    EnvironmentMissingError,
+)
 
 
 class EnvironmentGuardService:

@@ -1,7 +1,9 @@
 import json
 import time
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils import (
+    os_log,
+    LogMsg,
+)
 
 _SECTIONS = ('config', 'transport', 'pipeline', 'plugins', 'db', 'identity')
 

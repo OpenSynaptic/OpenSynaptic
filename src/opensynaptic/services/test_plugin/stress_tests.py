@@ -6,11 +6,12 @@ Run via:
 """
 import json
 import math
+import queue
 import sys
 import time
 import threading
 import statistics
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,7 +26,10 @@ if _ROOT and str(Path(_ROOT) / 'src') not in sys.path:
 if _ROOT and _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from opensynaptic.utils.c.native_loader import has_native_library
+from opensynaptic.utils import (
+    has_native_library,
+    read_json,
+)
 
 import os as _os
 
@@ -123,7 +127,10 @@ def get_full_load_config(
 def _process_worker_run_stress(kwargs: dict[str, Any]) -> dict[str, Any]:
     """Process entrypoint: run one threaded stress shard and return summary dict."""
     # Each child process keeps an independent node/core/runtime cache.
-    _, summary = run_stress(**kwargs)
+    runner = globals().get('run_stress')
+    if not callable(runner):
+        from opensynaptic.services.test_plugin.stress_tests import run_stress as runner
+    _, summary = runner(**kwargs)
     return summary
 
 
@@ -218,6 +225,7 @@ def _aggregate_process_summaries(
         'processes': int(processes),
         'threads_per_process': int(threads_per_process),
         'batch_size': int(first.get('batch_size', 1) or 1),
+        'runtime_toggles': dict(first.get('runtime_toggles') or {}),
     }
     if hp_series:
         out['header_probe'] = {
@@ -236,6 +244,13 @@ def _aggregate_process_summaries(
 def _make_node(config_path=None, core_name=None):
     from opensynaptic.core import get_core_manager
     manager = get_core_manager()
+    # Keep stress workers aligned with CLI node creation: config-backed core selection
+    # must use config_path (or ctx fallback) before resolving OpenSynaptic symbol.
+    if config_path:
+        try:
+            manager.set_config_path(config_path)
+        except Exception:
+            pass
     selected = str(core_name or '').strip().lower() or manager.get_active_core_name()
     node_cls = manager.get_symbol('OpenSynaptic', name=selected)
     return node_cls(config_path)
@@ -250,6 +265,78 @@ def _preflight(core_name=None):
     if requested and requested not in manager.available_cores():
         raise RuntimeError('unknown core [{}], available={}'.format(requested, manager.available_cores()))
     return {'requested_core': requested or 'auto'}
+
+
+def _resolve_stress_runtime_options(node=None, config_path=None) -> dict[str, Any]:
+    """Resolve internal stress-runtime toggles from Config.json.
+
+    This keeps CLI/function contracts stable while allowing layer-internal
+    implementation switches.
+    """
+    cfg = {}
+    if node is not None:
+        cfg = getattr(node, 'config', {}) or {}
+    if not isinstance(cfg, dict) or not cfg:
+        cfg = read_json(config_path) if config_path else {}
+
+    plugin_cfg = (((cfg.get('RESOURCES', {}) or {}).get('service_plugins', {}) or {}).get('test_plugin', {}) or {})
+    runtime_cfg = plugin_cfg.get('stress_runtime', {}) if isinstance(plugin_cfg, dict) else {}
+    if not isinstance(runtime_cfg, dict):
+        runtime_cfg = {}
+
+    raw_mode = str(runtime_cfg.get('collector_mode', 'legacy') or 'legacy').strip().lower()
+    mode_alias = {
+        'legacy': 'legacy',
+        'batched': 'batched',
+        'thread_local': 'batched',
+        'sharded': 'batched',
+    }
+    mode = mode_alias.get(raw_mode, 'legacy')
+    flush_every = max(1, int(runtime_cfg.get('collector_flush_every', 256) or 256))
+
+    raw_pipeline = str(runtime_cfg.get('pipeline_mode', 'legacy') or 'legacy').strip().lower()
+    pipeline_alias = {
+        'legacy': 'legacy',
+        # pre_std is now fully merged into the same batch-fused ABI path.
+        'pre_std': 'batch_fused',
+        'pre-std': 'batch_fused',
+        'batch_fused': 'batch_fused',
+        'batch-fused': 'batch_fused',
+        'fused': 'batch_fused',
+        'batch': 'batch_fused',
+    }
+    pipeline = pipeline_alias.get(raw_pipeline, 'legacy')
+
+    return {
+        'collector_mode': mode,
+        'collector_flush_every': flush_every,
+        'pipeline_mode': pipeline,
+    }
+
+
+def _drain_progress_queue(progress_queue, current_done, total):
+    if progress_queue is None:
+        return current_done
+    done = int(current_done)
+    while True:
+        try:
+            step = int(progress_queue.get_nowait() or 0)
+        except queue.Empty:
+            break
+        except Exception:
+            break
+        if step > 0:
+            done += step
+    return min(int(total), done)
+
+
+def _push_progress(progress_queue, step):
+    if progress_queue is None:
+        return
+    try:
+        progress_queue.put_nowait(int(step))
+    except Exception:
+        return
 
 
 class StressResult:
@@ -281,6 +368,26 @@ class StressResult:
             self.total += 1
             self.fail += 1
             self.errors.append(str(exc))
+
+    def merge_chunk(self, latencies, stage_lists, errors):
+        """Merge a thread-local chunk in one lock section.
+
+        Used by the optional batched collector to reduce hot lock contention.
+        """
+        ok_n = len(latencies)
+        fail_n = len(errors)
+        if ok_n == 0 and fail_n == 0:
+            return
+        with self._lock:
+            self.total += ok_n + fail_n
+            self.ok += ok_n
+            self.fail += fail_n
+            if ok_n > 0:
+                self.latencies.extend(latencies)
+                for key in self.stage_latencies:
+                    self.stage_latencies[key].extend(stage_lists.get(key, []))
+            if fail_n > 0:
+                self.errors.extend(errors)
 
     def summary(self) -> dict[str, Any]:
         def _stats(values):
@@ -618,7 +725,8 @@ def run_auto_profile(
 def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                core_name=None, expect_core=None, expect_codec_class=None,
                header_probe_rate=0.0, batch_size=1, processes=1,
-               threads_per_process=None) -> tuple['StressResult', dict[str, Any]]:
+               threads_per_process=None, progress_queue=None,
+               progress_step=0) -> tuple['StressResult', dict[str, Any]]:
     """
     Run a concurrent pipeline stress test.
 
@@ -647,6 +755,16 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
 
     # Hybrid mode: split work across multiple processes, each running threaded stress.
     if process_count > 1:
+        resolved_core_name = str(core_name or '').strip().lower() or None
+        if not resolved_core_name:
+            try:
+                from opensynaptic.core import get_core_manager
+                manager = get_core_manager()
+                if config_path:
+                    manager.set_config_path(config_path)
+                resolved_core_name = str(manager.get_active_core_name() or '').strip().lower() or None
+            except Exception:
+                resolved_core_name = None
         if progress:
             print('[stress] hybrid mode: processes={} threads_per_process={} batch_size={}'.format(
                 process_count, per_process_threads, max(1, int(batch_size or 1))), flush=True)
@@ -658,23 +776,25 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
 
         t_start = time.monotonic()
         child_summaries: list[dict[str, Any]] = []
-        completed = [0]
+        completed_tasks = 0
         progress_lock = threading.Lock()
 
-        def _tick_progress():
+        def _render_progress():
             if not progress:
                 return
             with progress_lock:
-                completed[0] += 1
-                print('\r' + _progress_line(completed[0], process_count, t_start), end='', flush=True)
+                print('\r' + _progress_line(completed_tasks, int(total), t_start), end='', flush=True)
 
-        _ppool = ProcessPoolExecutor(
-            max_workers=process_count,
-            initializer=_init_worker_ignore_sigint,
-        )
+        _ppool = ProcessPoolExecutor(max_workers=process_count, initializer=_init_worker_ignore_sigint)
+        _progress_manager = None
+        _progress_queue = None
         _interrupted = False
         _proc_futures: list[Any] = []
         try:
+            if progress:
+                import multiprocessing as _mp
+                _progress_manager = _mp.Manager()
+                _progress_queue = _progress_manager.Queue()
             for shard_total in shard_totals:
                 kwargs = {
                     'total': int(shard_total),
@@ -682,19 +802,31 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                     'sources': int(sources),
                     'config_path': config_path,
                     'progress': False,
-                    'core_name': core_name,
+                    'core_name': resolved_core_name,
                     'expect_core': expect_core,
                     'expect_codec_class': expect_codec_class,
                     'header_probe_rate': header_probe_rate,
                     'batch_size': batch_size,
                     'processes': 1,
                     'threads_per_process': None,
+                    'progress_queue': _progress_queue,
+                    'progress_step': max(1, int(batch_size or 1)),
                 }
                 _proc_futures.append(_ppool.submit(_process_worker_run_stress, kwargs))
 
-            for f in as_completed(_proc_futures):
-                child_summaries.append(f.result())
-                _tick_progress()
+            pending = set(_proc_futures)
+            while pending:
+                done, pending = wait(pending, timeout=0.10, return_when=FIRST_COMPLETED)
+                if _progress_queue is not None:
+                    completed_tasks = _drain_progress_queue(_progress_queue, completed_tasks, int(total))
+                if done:
+                    for fut in done:
+                        child_summaries.append(fut.result())
+                _render_progress()
+
+            if _progress_queue is not None:
+                completed_tasks = _drain_progress_queue(_progress_queue, completed_tasks, int(total))
+                _render_progress()
             # Normal completion – clean shutdown (wait for internal resources).
             _ppool.shutdown(wait=True)
         except KeyboardInterrupt:
@@ -704,6 +836,12 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                 f.cancel()
             # KI path – don't block; let OS reclaim resources.
             _ppool.shutdown(wait=False, cancel_futures=True)
+        finally:
+            if _progress_manager is not None:
+                try:
+                    _progress_manager.shutdown()
+                except Exception:
+                    pass
 
         elapsed = time.monotonic() - t_start
         if progress:
@@ -756,6 +894,54 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         ])
 
     result = StressResult()
+    runtime_opts = _resolve_stress_runtime_options(node=node, config_path=config_path)
+    collector_mode = str(runtime_opts.get('collector_mode', 'legacy'))
+    collector_flush_every = max(1, int(runtime_opts.get('collector_flush_every', 256) or 256))
+    pipeline_mode = str(runtime_opts.get('pipeline_mode', 'legacy'))
+
+    # ── Optional batch pipeline setup ─────────────────────────────────────
+    _pipeline_batch = None
+    _pipeline_batch_tls = threading.local()
+    _pipeline_batch_compressor = None
+    _pipeline_fusion_factory = None
+    pre_packed_facts: list[bytes] = []
+    if pipeline_mode == 'batch_fused':
+        try:
+            from opensynaptic.core.rscore.codec import RsPipelineBatch, has_pipeline_batch
+            if pipeline_mode == 'batch_fused' and has_pipeline_batch():
+                _compressor = getattr(getattr(node, 'engine', None), '_rs_solidity', None)
+                _fusion_ffi = getattr(getattr(node, 'fusion', None), '_ffi', None)
+                if _compressor is not None and _fusion_ffi is not None:
+                    _pipeline_batch_compressor = _compressor
+                    try:
+                        from opensynaptic.core.rscore.codec import RsOSVisualFusionEngine
+                        _pipeline_fusion_factory = RsOSVisualFusionEngine
+                        _pipeline_batch = RsPipelineBatch(_compressor, _pipeline_fusion_factory())
+                    except Exception:
+                        _pipeline_fusion_factory = None
+                        _pipeline_batch = RsPipelineBatch(_compressor, _fusion_ffi)
+                    if not _pipeline_batch.available:
+                        _pipeline_batch = None
+            # Pre-pack facts for each sensor set (bypass Rust stub standardizer)
+            # Build proper fact dicts directly – matches pycore standardize output shape
+            if sensor_sets:
+                for i, s_set in enumerate(sensor_sets):
+                    fact: dict[str, Any] = {
+                        'id': f'STRESS_{i % 8}',
+                        's': 'ONLINE',
+                        't': 0.0,
+                    }
+                    for j, s_data in enumerate(s_set, start=1):
+                        s_id, s_st, s_val, s_unit = s_data
+                        fact[f's{j}_id'] = str(s_id)
+                        fact[f's{j}_s'] = str(s_st)
+                        fact[f's{j}_v'] = float(s_val)
+                        fact[f's{j}_u'] = str(s_unit)
+                    pre_packed_facts.append(RsPipelineBatch.pack_fact(fact))
+        except Exception:
+            _pipeline_batch = None
+            pre_packed_facts = []
+            pipeline_mode = 'legacy'
     completed = [0]
     progress_lock = threading.Lock()
     progress_state = {'last_print_at': 0.0}
@@ -777,37 +963,121 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     header_probe_stats = {'attempted': 0, 'parsed': 0, 'crc16_ok': 0}
 
     batch = max(1, int(batch_size or 1))
+    # Pre-compute fixed assigned_id used in all pipeline calls
+    _aid = int(getattr(node, 'assigned_id', 42) or 42)
 
-    def _run_one(idx):
-        sensors = sensor_sets[idx % sources]
-        do_probe = bool(probe_every > 0 and (idx % probe_every == 0) and callable(parse_header_fn))
-        latency, stage_ms, exc, header_probe = _pipeline_task(
-            node,
-            idx,
-            sensors,
-            probe_header=do_probe,
-            parse_header_fn=parse_header_fn,
-        )
-        if exc is not None:
-            result.record_fail(exc)
-        else:
-            result.record_ok(latency, stage_ms)
-            if header_probe and header_probe.get('attempted'):
-                with progress_lock:
-                    header_probe_stats['attempted'] += 1
-                    if header_probe.get('parsed'):
-                        header_probe_stats['parsed'] += 1
-                    if header_probe.get('crc16_ok'):
-                        header_probe_stats['crc16_ok'] += 1
     def _task_range(start_idx, end_idx):
+        range_count = end_idx - start_idx
+
+        # ── batch_fused: one Rust call for the entire range ────────────────
+        if pipeline_mode == 'batch_fused' and _pipeline_batch is not None and pre_packed_facts:
+            local_batch = getattr(_pipeline_batch_tls, 'batch', None)
+            if local_batch is None:
+                local_batch = _pipeline_batch
+                if _pipeline_batch_compressor is not None and callable(_pipeline_fusion_factory):
+                    try:
+                        candidate = RsPipelineBatch(_pipeline_batch_compressor, _pipeline_fusion_factory())
+                        if candidate.available:
+                            local_batch = candidate
+                    except Exception:
+                        local_batch = _pipeline_batch
+                _pipeline_batch_tls.batch = local_batch
+            batch_items = [
+                (pre_packed_facts[idx % sources], _aid, True)
+                for idx in range(start_idx, end_idx)
+            ]
+            t_b0 = time.perf_counter_ns()
+            packets = local_batch.run_batch(batch_items)
+            t_b1 = time.perf_counter_ns()
+            avg_ms = ((t_b1 - t_b0) / max(1, range_count)) / 1_000_000.0
+            stage_avg = avg_ms / 3.0
+            b_latencies, b_stage, b_errors = [], {'standardize_ms': [], 'compress_ms': [], 'fuse_ms': []}, []
+            for pkt in packets:
+                if not pkt:
+                    b_errors.append('batch_pipeline_item_failed')
+                else:
+                    b_latencies.append(avg_ms)
+                    b_stage['standardize_ms'].append(stage_avg)
+                    b_stage['compress_ms'].append(stage_avg)
+                    b_stage['fuse_ms'].append(stage_avg)
+            result.merge_chunk(b_latencies, b_stage, b_errors)
+            _push_progress(progress_queue, range_count)
+            if progress:
+                with progress_lock:
+                    completed[0] += range_count
+                    now = time.monotonic()
+                    if (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10):
+                        print('\r' + _progress_line(completed[0], total, t_start), end='', flush=True)
+                        progress_state['last_print_at'] = now
+            return
+
+        # ── legacy / batched: per-item pipeline task ──────────────────────
+        local_latencies = []
+        local_stage = {'standardize_ms': [], 'compress_ms': [], 'fuse_ms': []}
+        local_errors = []
+        local_probe = {'attempted': 0, 'parsed': 0, 'crc16_ok': 0}
+
+        def _flush_local():
+            if collector_mode == 'legacy':
+                return
+            result.merge_chunk(local_latencies, local_stage, local_errors)
+            if local_probe['attempted'] > 0:
+                with progress_lock:
+                    header_probe_stats['attempted'] += local_probe['attempted']
+                    header_probe_stats['parsed'] += local_probe['parsed']
+                    header_probe_stats['crc16_ok'] += local_probe['crc16_ok']
+            local_latencies.clear()
+            local_errors.clear()
+            for key in local_stage:
+                local_stage[key].clear()
+            local_probe['attempted'] = 0
+            local_probe['parsed'] = 0
+            local_probe['crc16_ok'] = 0
+
         for idx in range(start_idx, end_idx):
-            _run_one(idx)
+            sensors = sensor_sets[idx % sources]
+            do_probe = bool(probe_every > 0 and (idx % probe_every == 0) and callable(parse_header_fn))
+            latency, stage_ms, exc, header_probe = _pipeline_task(
+                node, idx, sensors, probe_header=do_probe, parse_header_fn=parse_header_fn,
+            )
+
+            if collector_mode == 'legacy':
+                if exc is not None:
+                    result.record_fail(exc)
+                else:
+                    result.record_ok(latency, stage_ms)
+                    if header_probe and header_probe.get('attempted'):
+                        with progress_lock:
+                            header_probe_stats['attempted'] += 1
+                            if header_probe.get('parsed'):
+                                header_probe_stats['parsed'] += 1
+                            if header_probe.get('crc16_ok'):
+                                header_probe_stats['crc16_ok'] += 1
+            else:
+                if exc is not None:
+                    local_errors.append(str(exc))
+                else:
+                    local_latencies.append(float(latency or 0.0))
+                    local_stage['standardize_ms'].append(float(stage_ms.get('standardize_ms', 0.0)))
+                    local_stage['compress_ms'].append(float(stage_ms.get('compress_ms', 0.0)))
+                    local_stage['fuse_ms'].append(float(stage_ms.get('fuse_ms', 0.0)))
+                    if header_probe and header_probe.get('attempted'):
+                        local_probe['attempted'] += 1
+                        if header_probe.get('parsed'):
+                            local_probe['parsed'] += 1
+                        if header_probe.get('crc16_ok'):
+                            local_probe['crc16_ok'] += 1
+                if (idx - start_idx + 1) % collector_flush_every == 0:
+                    _flush_local()
+
+        _flush_local()
+
+        _push_progress(progress_queue, range_count)
         if progress:
             with progress_lock:
-                completed[0] += (end_idx - start_idx)
+                completed[0] += range_count
                 now = time.monotonic()
-                should_print = (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10)
-                if should_print:
+                if (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10):
                     print('\r' + _progress_line(completed[0], total, t_start), end='', flush=True)
                     progress_state['last_print_at'] = now
 
@@ -853,6 +1123,12 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     summary['processes'] = 1
     summary['threads_per_process'] = int(workers)
     summary['batch_size'] = batch
+    summary['runtime_toggles'] = {
+        'collector_mode': collector_mode,
+        'collector_flush_every': collector_flush_every,
+        'pipeline_mode': pipeline_mode,
+        'pipeline_batch_available': _pipeline_batch is not None and getattr(_pipeline_batch, 'available', False),
+    }
     if _interrupted:
         summary['interrupted'] = True
     if probe_every > 0:

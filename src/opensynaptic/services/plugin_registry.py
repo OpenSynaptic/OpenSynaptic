@@ -1,7 +1,7 @@
 import importlib
 import inspect
 
-from opensynaptic.utils.logger import os_log
+from opensynaptic.utils import os_log
 
 
 PLUGIN_SPECS = {
@@ -24,6 +24,11 @@ PLUGIN_SPECS = {
             'stress_workers': 8,
             'stress_total': 200,
             'stress_sources': 6,
+            'stress_runtime': {
+                'collector_mode': 'legacy',
+                'collector_flush_every': 256,
+                'pipeline_mode': 'legacy',
+            },
         },
     },
     'web_user': {

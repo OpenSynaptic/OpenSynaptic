@@ -191,7 +191,7 @@ Add `--interactive` to enter the live-refresh loop.
 
 ## Notes
 
-- CLI and TUI both route logging through `opensynaptic.utils.logger.os_log`.
+- CLI and TUI both route logging through `opensynaptic.utils.os_log`.
 - `TUIService` is mounted as a `ServiceManager` plugin under the name `"tui"`.
 - `inject` does **not** require a valid `assigned_id`; it falls back to `0` for the fuse stage.
 - `inject --sensors` takes a JSON array; on PowerShell use `--sensors-file <path>` to avoid quote-stripping issues.

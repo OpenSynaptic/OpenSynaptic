@@ -24,9 +24,15 @@ def main():
     _bootstrap_paths()
 
     from opensynaptic.core import get_core_manager
-    from opensynaptic.utils.c.native_loader import has_native_library, NativeLibraryUnavailable
-    from opensynaptic.utils.base62.base62 import Base62Codec
-    from opensynaptic.utils.security.security_core import crc8, crc16_ccitt, derive_session_key, xor_payload
+    from opensynaptic.utils import (
+        has_native_library,
+        NativeLibraryUnavailable,
+        Base62Codec,
+        crc8,
+        crc16_ccitt,
+        derive_session_key,
+        xor_payload,
+    )
 
     manager = get_core_manager()
     print('[core] discovered:', manager.discover_cores())

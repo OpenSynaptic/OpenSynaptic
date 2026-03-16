@@ -1,4 +1,13 @@
 from opensynaptic.core.coremanager import CoreManager, get_core_manager
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from opensynaptic.core.pycore.core import OpenSynaptic
+    from opensynaptic.core.pycore.handshake import CMD, OSHandshakeManager
+    from opensynaptic.core.pycore.solidity import OpenSynapticEngine
+    from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
+    from opensynaptic.core.pycore.transporter_manager import TransporterManager
+    from opensynaptic.core.pycore.unified_parser import OSVisualFusionEngine
 
 _PUBLIC_SYMBOLS = {
     'OpenSynaptic',

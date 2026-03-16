@@ -1,8 +1,10 @@
 import importlib
 from pathlib import Path
 
-from opensynaptic.utils.constants import LogMsg
-from opensynaptic.utils.logger import os_log
+from opensynaptic.utils import (
+    LogMsg,
+    os_log,
+)
 
 
 PKG_DIR = Path(__file__).resolve().parent

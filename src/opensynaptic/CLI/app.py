@@ -7,20 +7,23 @@ import sys
 import time
 from types import SimpleNamespace
 from opensynaptic.core import get_core_manager
-from opensynaptic.core.Receiver import main as receiver_main
 from opensynaptic.services.env_guard.main import EnvironmentGuardService
 from opensynaptic.services.plugin_registry import (
     ensure_and_mount_plugin,
     list_builtin_plugins,
     normalize_plugin_name,
 )
-from opensynaptic.utils.errors import EnvironmentMissingError
-from opensynaptic.utils.c.build_native import build_all as build_native_all
-from opensynaptic.utils.c.check_native_toolchain import build_guidance, get_toolchain_report
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg, CLI_HELP_TABLE
-from opensynaptic.utils.c.native_loader import NativeLibraryUnavailable
-from opensynaptic.utils.paths import ctx
+from opensynaptic.utils import (
+    build_native_all,
+    build_guidance,
+    get_toolchain_report,
+    EnvironmentMissingError,
+    os_log,
+    LogMsg,
+    CLI_HELP_TABLE,
+    NativeLibraryUnavailable,
+    ctx,
+)
 
 
 _ENV_GUARD_STANDALONE = None
@@ -421,6 +424,9 @@ def main(argv=None):
         return 0
     if cmd in ('receive', 'os-receive'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='receive')
+        # Import lazily so core.Receiver does not force early core symbol resolution
+        # before Config.json-driven backend selection has been applied.
+        from opensynaptic.core.Receiver import main as receiver_main
         receiver_main()
         return 0
     if cmd in ('native-check', 'os-native-check'):

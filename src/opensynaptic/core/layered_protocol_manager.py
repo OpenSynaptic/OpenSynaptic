@@ -1,8 +1,12 @@
 import importlib
 import os
-from opensynaptic.utils.constants import LogMsg
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.buffer import ensure_bytes, zero_copy_enabled, as_readonly_view
+from opensynaptic.utils import (
+    LogMsg,
+    os_log,
+    ensure_bytes,
+    zero_copy_enabled,
+    as_readonly_view,
+)
 
 class ProtocolAdapter:
 

@@ -1,7 +1,7 @@
 import threading
 import time
 from pathlib import Path
-from opensynaptic.utils.paths import read_json, write_json, ctx
+from opensynaptic.utils import read_json, write_json, ctx
 
 
 class IDAllocator:

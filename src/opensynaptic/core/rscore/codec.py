@@ -8,10 +8,14 @@ Provides:
   has_rs_native()    – probe whether os_rscore shared library is present
   rs_version()       – return the embedded version string from the DLL
 """
+import base64
 import ctypes
 import struct
+import threading
 
-from opensynaptic.utils.c.native_loader import load_native_library
+_JSON_CTX_COUNTER = 0
+
+from opensynaptic.utils import load_native_library
 
 _LIB_NAME = 'os_rscore'
 _lib_cache = None
@@ -21,10 +25,134 @@ _has_crc_helpers = False
 _has_auto_decompose = False
 _has_solidity_compressor = False
 _has_fusion_state = False
+_has_pipeline_batch = False
+
+ABI_CORE_SYMBOLS = (
+    'os_b62_encode_i64',
+    'os_b62_decode_i64',
+    'os_cmd_is_data',
+    'os_cmd_normalize_data',
+    'os_cmd_secure_variant',
+    'os_rscore_version',
+)
+
+ABI_CRC_SYMBOLS = (
+    'os_crc8',
+    'os_crc16_ccitt_pub',
+)
+
+ABI_HEADER_SYMBOLS = (
+    'os_parse_header_min',
+)
+
+ABI_AUTO_DECOMPOSE_SYMBOLS = (
+    'os_auto_decompose_input',
+)
+
+ABI_SOLIDITY_SYMBOLS = (
+    'os_compressor_create_v1',
+    'os_compressor_free_v1',
+    'os_compress_fact_v1',
+)
+
+ABI_FUSION_STATE_SYMBOLS = (
+    'os_fusion_state_create_v1',
+    'os_fusion_state_free_v1',
+    'os_fusion_state_seed_v1',
+    'os_fusion_state_apply_v1',
+    'os_fusion_state_receive_apply_v1',
+)
+
+ABI_FUSION_JSON_SYMBOLS = (
+    'os_fusion_run_json_v1',
+    'os_fusion_decompress_json_v1',
+    'os_fusion_relay_json_v1',
+)
+
+ABI_NODE_JSON_SYMBOLS = (
+    'os_node_ensure_id_json_v1',
+    'os_node_transmit_json_v1',
+    'os_node_dispatch_json_v1',
+)
+
+ABI_STANDARDIZE_JSON_SYMBOLS = (
+    'os_standardize_json_v1',
+)
+
+ABI_HANDSHAKE_JSON_SYMBOLS = (
+    'os_handshake_negotiate_v1',
+)
+
+ABI_TRANSPORT_JSON_SYMBOLS = (
+    'os_transporter_send_v1',
+    'os_transporter_listen_v1',
+)
+
+ABI_PIPELINE_BATCH_SYMBOLS = (
+    'os_pipeline_batch_v1',
+)
+
+
+def _missing_symbols(required_symbols):
+    lib = _lib()
+    missing = []
+    for symbol_name in required_symbols:
+        if getattr(lib, symbol_name, None) is None:
+            missing.append(symbol_name)
+    return missing
+
+
+def _require_symbols(required_symbols, feature_name):
+    missing = _missing_symbols(required_symbols)
+    if missing:
+        raise RuntimeError(
+            'os_rscore: {} ABI is unavailable, missing symbols={}'.format(feature_name, ','.join(missing))
+        )
+
+
+def rscore_abi_status() -> dict:
+    """Return a Rust ABI capability matrix for diagnostics and CI visibility."""
+    try:
+        _lib()
+    except Exception as e:
+        return {
+            'loaded': False,
+            'error': str(e),
+            'missing': {
+                'core': list(ABI_CORE_SYMBOLS),
+                'crc': list(ABI_CRC_SYMBOLS),
+                'header': list(ABI_HEADER_SYMBOLS),
+                'auto_decompose': list(ABI_AUTO_DECOMPOSE_SYMBOLS),
+                'solidity': list(ABI_SOLIDITY_SYMBOLS),
+                'fusion_state': list(ABI_FUSION_STATE_SYMBOLS),
+                'fusion_json': list(ABI_FUSION_JSON_SYMBOLS),
+                'node_json': list(ABI_NODE_JSON_SYMBOLS),
+                'standardize_json': list(ABI_STANDARDIZE_JSON_SYMBOLS),
+                'handshake_json': list(ABI_HANDSHAKE_JSON_SYMBOLS),
+                'transport_json': list(ABI_TRANSPORT_JSON_SYMBOLS),
+            },
+        }
+
+    return {
+        'loaded': True,
+        'missing': {
+            'core': _missing_symbols(ABI_CORE_SYMBOLS),
+            'crc': _missing_symbols(ABI_CRC_SYMBOLS),
+            'header': _missing_symbols(ABI_HEADER_SYMBOLS),
+            'auto_decompose': _missing_symbols(ABI_AUTO_DECOMPOSE_SYMBOLS),
+            'solidity': _missing_symbols(ABI_SOLIDITY_SYMBOLS),
+            'fusion_state': _missing_symbols(ABI_FUSION_STATE_SYMBOLS),
+            'fusion_json': _missing_symbols(ABI_FUSION_JSON_SYMBOLS),
+            'node_json': _missing_symbols(ABI_NODE_JSON_SYMBOLS),
+            'standardize_json': _missing_symbols(ABI_STANDARDIZE_JSON_SYMBOLS),
+            'handshake_json': _missing_symbols(ABI_HANDSHAKE_JSON_SYMBOLS),
+            'transport_json': _missing_symbols(ABI_TRANSPORT_JSON_SYMBOLS),
+        },
+    }
 
 
 def _lib():
-    global _lib_cache, _lib_configured, _has_header_parser, _has_crc_helpers, _has_auto_decompose, _has_solidity_compressor, _has_fusion_state
+    global _lib_cache, _lib_configured, _has_header_parser, _has_crc_helpers, _has_auto_decompose, _has_solidity_compressor, _has_fusion_state, _has_pipeline_batch
     if _lib_cache is None:
         _lib_cache = load_native_library(_LIB_NAME)
     if _lib_cache is None:
@@ -147,6 +275,19 @@ def _lib():
             _has_fusion_state = True
         else:
             _has_fusion_state = False
+        # Optional batch pipeline ABI (os_pipeline_batch_v1)
+        batch_fn = getattr(lib, 'os_pipeline_batch_v1', None)
+        if batch_fn is not None:
+            batch_fn.argtypes = [
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_size_t,
+            ]
+            batch_fn.restype = ctypes.c_int
+            _has_pipeline_batch = True
+        else:
+            _has_pipeline_batch = False
         lib.os_rscore_version.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
         lib.os_rscore_version.restype = ctypes.c_int
         _lib_configured = True
@@ -196,6 +337,151 @@ def has_fusion_state() -> bool:
     except Exception:
         return False
     return bool(_has_fusion_state)
+
+
+def has_pipeline_batch() -> bool:
+    """Return True when the loaded RSCore DLL exports os_pipeline_batch_v1."""
+    try:
+        _lib()
+    except Exception:
+        return False
+    return bool(_has_pipeline_batch)
+
+
+class RsPipelineBatch:
+    """Zero-overhead batch pipeline: compress + fuse N items in one Rust call.
+
+    Eliminates per-item Python↔Rust round-trips.  Requires the DLL to export
+    ``os_pipeline_batch_v1`` (check with :func:`has_pipeline_batch`).
+
+    Binary input protocol (all multi-byte integers big-endian):
+        u64 compressor_handle | u64 ctx_id | u32 item_count |
+        repeat(item_count){ u32 aid | u8 strategy | u32 fact_len | bytes fact }
+
+    Binary output protocol:
+        u32 item_count | repeat{ u32 packet_len | bytes packet }
+
+    Usage::
+
+        batch = RsPipelineBatch(node.engine._rs_solidity, node.fusion._ffi)
+        if batch.available:
+            packed_facts = [RsPipelineBatch.pack_fact(f) for f in facts]
+            packets = batch.run_batch([(pf, aid, True) for pf in packed_facts])
+    """
+
+    def __init__(self, compressor, fusion):
+        self._compressor_handle = int(getattr(compressor, '_handle', 0) or 0)
+        self._ctx_id = int(getattr(fusion, '_ctx_id', 0) or 0)
+        self._lib = _lib()
+        self._fn = getattr(self._lib, 'os_pipeline_batch_v1', None)
+        self.available = self._fn is not None and self._compressor_handle > 0
+        # Pre-allocate reusable output buffer (128 KB; grows automatically)
+        self._out_cap = 131072
+        self._out_arr = (ctypes.c_ubyte * self._out_cap)()
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def pack_fact(fact: dict) -> bytes:
+        """Serialize a fact dict to the binary format expected by os_compress_fact_v1.
+
+        Equivalent to ``RsSolidityCompressor._pack_fact()`` but callable without
+        a compressor instance – use for pre-computing items before a batch run.
+        """
+        blob = bytearray()
+
+        def _pack_str(val: str) -> None:
+            raw = str(val).encode('utf-8')
+            blob.extend(struct.pack('>I', len(raw)))
+            blob.extend(raw)
+
+        _pack_str(fact.get('id', ''))
+        _pack_str(fact.get('s', 'U'))
+        blob.extend(struct.pack('>d', float(fact.get('t', 0))))
+
+        sensors = []
+        i = 1
+        while True:
+            sid = fact.get(f's{i}_id')
+            if sid is None:
+                break
+            sensors.append((
+                str(sid),
+                str(fact.get(f's{i}_s', 'U')),
+                float(fact.get(f's{i}_v', 0.0)),
+                str(fact.get(f's{i}_u', '')),
+            ))
+            i += 1
+
+        blob.extend(struct.pack('>I', len(sensors)))
+        for sid, sst, val, unit in sensors:
+            _pack_str(sid)
+            _pack_str(sst)
+            blob.extend(struct.pack('>d', val))
+            _pack_str(unit)
+
+        # Optional fields: geohash, url, msg → all absent (None sentinel = 0xFFFFFFFF)
+        blob.extend(b'\xff\xff\xff\xff' * 3)
+        return bytes(blob)
+
+    def run_batch(self, items: list) -> list:
+        """Call os_pipeline_batch_v1 for a list of (packed_fact, aid, strategy_full).
+
+        Returns a list of ``bytes`` packets (b'' for any item that failed).
+        Never raises; failed items produce empty bytes.
+        """
+        if not self.available or not items:
+            return [b''] * len(items)
+
+        blob = bytearray()
+        # Handles: big-endian u64 (consistent with rest of binary protocol)
+        blob.extend(struct.pack('>QQ', self._compressor_handle, self._ctx_id))
+        blob.extend(struct.pack('>I', len(items)))
+        for packed_fact, aid, strategy_full in items:
+            blob.extend(struct.pack('>IBI', int(aid) & 0xFFFFFFFF, 1 if strategy_full else 0, len(packed_fact)))
+            blob.extend(packed_fact)
+
+        raw = bytes(blob)
+        in_arr_t = ctypes.c_ubyte * len(raw)
+        in_arr = in_arr_t.from_buffer_copy(raw)
+
+        # Shared buffer/cap state is process-wide in this object, so protect it.
+        with self._lock:
+            for _retry in range(2):
+                written = int(self._fn(
+                    in_arr, ctypes.c_size_t(len(raw)),
+                    self._out_arr, ctypes.c_size_t(self._out_cap),
+                ))
+                if written == 0:
+                    return [b''] * len(items)
+                if written < 0:
+                    new_cap = max(self._out_cap * 2, -written)
+                    self._out_cap = new_cap
+                    self._out_arr = (ctypes.c_ubyte * new_cap)()
+                    continue
+                # Parse output
+                out_bytes = bytes(self._out_arr[:written])
+                off = 0
+                if len(out_bytes) < 4:
+                    return [b''] * len(items)
+                count = struct.unpack_from('>I', out_bytes, off)[0]
+                off += 4
+                result = []
+                for _ in range(count):
+                    if off + 4 > len(out_bytes):
+                        result.append(b'')
+                        continue
+                    plen = struct.unpack_from('>I', out_bytes, off)[0]
+                    off += 4
+                    if plen > 0 and off + plen <= len(out_bytes):
+                        result.append(out_bytes[off:off + plen])
+                        off += plen
+                    else:
+                        result.append(b'')
+                while len(result) < len(items):
+                    result.append(b'')
+                return result
+
+        return [b''] * len(items)
 
 
 def auto_decompose_input(raw_input) -> tuple[str, str, list[bytes]] | None:
@@ -265,6 +551,8 @@ def rs_crc8(data, poly: int = 7, init: int = 0) -> int:
     Matches the C ``os_security`` ``crc8()`` output for the same parameters.
     Default: poly=7 (0x07), init=0.
     """
+    if not has_crc_helpers():
+        raise RuntimeError('os_rscore: crc8 helper is unavailable')
     lib = _lib()
     if isinstance(data, (bytes, bytearray)):
         raw = bytes(data)
@@ -286,6 +574,8 @@ def rs_crc16_ccitt(data, poly: int = 0x1021, init: int = 0xFFFF) -> int:
     Matches the C ``os_security`` ``crc16_ccitt()`` output for the same parameters.
     Default: poly=0x1021, init=0xFFFF.
     """
+    if not has_crc_helpers():
+        raise RuntimeError('os_rscore: crc16 helper is unavailable')
     lib = _lib()
     if isinstance(data, (bytes, bytearray)):
         raw = bytes(data)
@@ -356,14 +646,14 @@ def parse_packet_header(packet) -> dict | None:
         return None
 
     if not has_header_parser():
-        return None
+        return _header_fallback(raw)
 
     out = (ctypes.c_ulonglong * 9)()
     arr_t = ctypes.c_ubyte * len(raw)
     arr = arr_t.from_buffer_copy(raw)
     ok = _lib().os_parse_header_min(arr, ctypes.c_size_t(len(raw)), out, ctypes.c_size_t(9))
     if int(ok) != 1:
-        return None
+        return _header_fallback(raw)
     return {
         'cmd': int(out[0]),
         'base_cmd': int(out[1]),
@@ -704,5 +994,363 @@ class RsFusionState:
                 continue
             return bytes(bytearray(out_arr)[:written])
         raise RuntimeError('os_rscore: fusion state receive_apply output exceeded retry budget')
+
+
+class RsOpenSynapticStandardizer:
+    """Rust-only standardizer wrapper based on optional JSON ABI."""
+
+    def __init__(self, *args, **kwargs):
+        _require_symbols(ABI_STANDARDIZE_JSON_SYMBOLS, 'standardize_json')
+        self._lib = _lib()
+        self._fn = getattr(self._lib, 'os_standardize_json_v1', None)
+        self._ctx = {'args': list(args), 'kwargs': dict(kwargs)}
+        if self._fn is not None:
+            self._fn.argtypes = [
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_size_t,
+            ]
+            self._fn.restype = ctypes.c_int
+
+    def standardize(self, *args, **kwargs):
+        if self._fn is None:
+            raise RuntimeError('os_rscore: standardizer JSON ABI is unavailable')
+        import json
+
+        payload = json.dumps({'ctx': self._ctx, 'args': args, 'kwargs': kwargs}, ensure_ascii=True).encode('utf-8')
+        in_arr_t = ctypes.c_ubyte * len(payload)
+        in_arr = in_arr_t.from_buffer_copy(payload)
+        cap = max(2048, len(payload) * 8 + 256)
+        for _ in range(2):
+            out_arr_t = ctypes.c_ubyte * cap
+            out_arr = out_arr_t()
+            written = int(self._fn(in_arr, ctypes.c_size_t(len(payload)), out_arr, ctypes.c_size_t(cap)))
+            if written == 0:
+                raise RuntimeError('os_rscore: standardize failed')
+            if written < 0:
+                cap = max(cap * 2, -written)
+                continue
+            out_raw = bytes(bytearray(out_arr)[:written])
+            return json.loads(out_raw.decode('utf-8'))
+        raise RuntimeError('os_rscore: standardize output exceeded retry budget')
+
+
+class RsOSHandshakeManager:
+    """Rust-only handshake wrapper with CMD helper bindings."""
+
+    def __init__(self, *args, **kwargs):
+        _require_symbols(ABI_CORE_SYMBOLS, 'core')
+        self._lib = _lib()
+        self._rs_cmd_is_data = cmd_is_data
+        self._rs_cmd_normalize = cmd_normalize_data
+        self._rs_cmd_secure = cmd_secure_variant
+        self._negotiate_fn = getattr(self._lib, 'os_handshake_negotiate_v1', None)
+
+    def negotiate(self, *args, **kwargs):
+        if self._negotiate_fn is None:
+            raise RuntimeError('os_rscore: handshake negotiate ABI is unavailable')
+        raise RuntimeError('os_rscore: handshake negotiate ABI requires explicit Rust payload wiring')
+
+    def is_secure_data_cmd(self, cmd):
+        return int(cmd) != int(cmd_normalize_data(int(cmd) & 0xFF))
+
+    def normalize_data_cmd(self, cmd):
+        return int(cmd_normalize_data(int(cmd) & 0xFF))
+
+    def secure_variant_cmd(self, cmd):
+        return int(cmd_secure_variant(int(cmd) & 0xFF))
+
+
+class RsTransporterManager:
+    """Rust-only transporter wrapper based on optional send/listen ABI."""
+
+    def __init__(self, *args, **kwargs):
+        _require_symbols(ABI_TRANSPORT_JSON_SYMBOLS, 'transport_json')
+        self._lib = _lib()
+        self._ctx = {'args': list(args), 'kwargs': dict(kwargs)}
+        self._send_fn = getattr(self._lib, 'os_transporter_send_v1', None)
+        self._listen_fn = getattr(self._lib, 'os_transporter_listen_v1', None)
+
+    def send(self, payload, config):
+        if self._send_fn is None:
+            raise RuntimeError('os_rscore: transporter send ABI is unavailable')
+        raise RuntimeError('os_rscore: transporter send ABI requires explicit Rust payload wiring')
+
+    def listen(self, config, callback):
+        if self._listen_fn is None:
+            raise RuntimeError('os_rscore: transporter listen ABI is unavailable')
+        raise RuntimeError('os_rscore: transporter listen ABI requires explicit Rust callback wiring')
+
+
+def _normalize_packet_bytes(packet) -> bytes:
+    if isinstance(packet, bytes):
+        return packet
+    if isinstance(packet, memoryview):
+        return packet.tobytes()
+    if isinstance(packet, bytearray):
+        return bytes(packet)
+    if isinstance(packet, str):
+        return packet.encode('utf-8', errors='ignore')
+    return bytes(packet)
+
+
+def _header_fallback(packet: bytes) -> dict:
+    meta = {'crc16_ok': False, 'source_aid': 0}
+    if len(packet) < 5:
+        return meta
+    try:
+        recv = struct.unpack_from('>H', packet, len(packet) - 2)[0]
+        calc = rs_crc16_ccitt(packet[:-2])
+        meta['crc16_ok'] = (int(calc) == int(recv))
+    except Exception:
+        meta['crc16_ok'] = False
+    try:
+        r_cnt = int(packet[1])
+        tid_pos = 2 + r_cnt * 4
+        if r_cnt > 0 and tid_pos >= 6 and len(packet) > tid_pos:
+            meta['source_aid'] = int.from_bytes(packet[tid_pos - 4:tid_pos], 'big')
+    except Exception:
+        pass
+    return meta
+
+
+class RsOSVisualFusionEngine:
+    """Rust-only fusion wrapper."""
+
+    def __init__(self, *args, **kwargs):
+        global _JSON_CTX_COUNTER
+        _JSON_CTX_COUNTER += 1
+        _require_symbols(ABI_FUSION_JSON_SYMBOLS, 'fusion_json')
+        self._lib = _lib()
+        self._rs_parse_header = parse_packet_header if has_header_parser() else None
+        self._rs_auto_decompose = auto_decompose_input if has_auto_decompose() else None
+        self._rs_crc8_fn = rs_crc8 if has_crc_helpers() else None
+        self._rs_crc16_fn = rs_crc16_ccitt if has_crc_helpers() else None
+        self._rs_fusion_state = RsFusionState() if has_fusion_state() else None
+        self._rs_seeded_aids = set()
+        self._ctx_id = int(_JSON_CTX_COUNTER)
+        self.local_id = 0xFFFFFFFE
+        self.local_id_str = str(self.local_id)
+        self._single_route_ids = (self.local_id,)
+        self._run_json_fn = getattr(self._lib, 'os_fusion_run_json_v1', None)
+        self._dec_json_fn = getattr(self._lib, 'os_fusion_decompress_json_v1', None)
+        self._relay_json_fn = getattr(self._lib, 'os_fusion_relay_json_v1', None)
+
+        for fn in (self._run_json_fn, self._dec_json_fn, self._relay_json_fn):
+            if fn is not None:
+                fn.argtypes = [
+                    ctypes.POINTER(ctypes.c_ubyte),
+                    ctypes.c_size_t,
+                    ctypes.POINTER(ctypes.c_ubyte),
+                    ctypes.c_size_t,
+                ]
+                fn.restype = ctypes.c_int
+
+    def _resolve_src_aid(self, raw_input) -> int:
+        try:
+            if isinstance(raw_input, (bytes, bytearray, memoryview)):
+                s = bytes(raw_input).decode('utf-8', errors='ignore')
+            else:
+                s = str(raw_input)
+            semi = s.find(';')
+            if semi > 0:
+                prefix = s[:semi].strip()
+                if prefix.isdigit():
+                    return int(prefix)
+        except Exception:
+            pass
+        return 0
+
+    def _route_ids_for(self, src_aid: int):
+        return (int(src_aid),)
+
+    def _seed_fusion_state_if_needed(self, src_aid: int):
+        return None
+
+    def run_engine(self, *args, **kwargs):
+        if self._run_json_fn is None:
+            raise RuntimeError('os_rscore: fusion run JSON ABI is unavailable')
+        import json
+
+        raw_input = args[0] if args else kwargs.get('raw_input', '')
+        if isinstance(raw_input, memoryview):
+            raw_input = raw_input.tobytes().decode('utf-8', errors='ignore')
+        elif isinstance(raw_input, (bytes, bytearray)):
+            raw_input = bytes(raw_input).decode('utf-8', errors='ignore')
+        else:
+            raw_input = str(raw_input)
+
+        strategy = str(kwargs.get('strategy', 'DIFF')).upper()
+        payload = json.dumps(
+            {
+                'ctx_id': int(self._ctx_id),
+                'raw_input': raw_input,
+                'strategy': strategy,
+                'src_aid': int(self.local_id),
+            },
+            ensure_ascii=True,
+        ).encode('utf-8')
+        return _run_json_abi(self._run_json_fn, payload)
+
+    def decompress(self, packet, *args, **kwargs):
+        if self._dec_json_fn is None:
+            raise RuntimeError('os_rscore: fusion decompress JSON ABI is unavailable')
+        import json
+
+        raw = _normalize_packet_bytes(packet)
+        payload = json.dumps(
+            {
+                'ctx_id': int(self._ctx_id),
+                'packet_b64': base64.b64encode(raw).decode('ascii'),
+            },
+            ensure_ascii=True,
+        ).encode('utf-8')
+        out_raw = _run_json_abi(self._dec_json_fn, payload)
+        decoded = json.loads(out_raw.decode('utf-8'))
+        if isinstance(decoded, dict):
+            meta = decoded.get('__packet_meta__', {}) if isinstance(decoded.get('__packet_meta__', {}), dict) else {}
+            if int(meta.get('base_cmd', meta.get('cmd', 0)) or 0) == 63:
+                try:
+                    self._rs_seeded_aids.add(int(meta.get('source_aid', 0)))
+                except Exception:
+                    pass
+        return decoded
+
+    def relay(self, *args, **kwargs):
+        if self._relay_json_fn is None:
+            raise RuntimeError('os_rscore: fusion relay JSON ABI is unavailable')
+        import json
+
+        raw_input = args[0] if args else kwargs.get('raw_input', '')
+        if isinstance(raw_input, memoryview):
+            raw_input = raw_input.tobytes().decode('utf-8', errors='ignore')
+        elif isinstance(raw_input, (bytes, bytearray)):
+            raw_input = bytes(raw_input).decode('utf-8', errors='ignore')
+        else:
+            raw_input = str(raw_input)
+        payload = json.dumps({'ctx_id': int(self._ctx_id), 'raw_input': raw_input, 'strategy': 'DIFF'}, ensure_ascii=True).encode('utf-8')
+        return _run_json_abi(self._relay_json_fn, payload)
+
+    def _set_local_id(self, local_id):
+        self.local_id = int(local_id or 0)
+        self.local_id_str = str(self.local_id)
+        self._single_route_ids = (self.local_id,)
+
+
+class RsOpenSynaptic:
+    """Rust-only node wrapper based on optional JSON ABI."""
+
+    def __init__(self, *args, **kwargs):
+        _require_symbols(ABI_NODE_JSON_SYMBOLS, 'node_json')
+        self._lib = _lib()
+        self._ctx = {'args': list(args), 'kwargs': dict(kwargs)}
+        self._ensure_id_fn = getattr(self._lib, 'os_node_ensure_id_json_v1', None)
+        self._transmit_fn = getattr(self._lib, 'os_node_transmit_json_v1', None)
+        self._dispatch_fn = getattr(self._lib, 'os_node_dispatch_json_v1', None)
+
+        for fn in (self._ensure_id_fn, self._transmit_fn, self._dispatch_fn):
+            if fn is not None:
+                fn.argtypes = [
+                    ctypes.POINTER(ctypes.c_ubyte),
+                    ctypes.c_size_t,
+                    ctypes.POINTER(ctypes.c_ubyte),
+                    ctypes.c_size_t,
+                ]
+                fn.restype = ctypes.c_int
+
+        # Rust component facades used as fallback when node_json ABI returns a stub payload.
+        self.assigned_id = kwargs.get('assigned_id') if isinstance(kwargs, dict) else None
+        self.device_id = kwargs.get('device_id') if isinstance(kwargs, dict) else None
+        cfg = args[0] if args else kwargs.get('config_path')
+        self._std = RsOpenSynapticStandardizer(cfg) if cfg is not None else RsOpenSynapticStandardizer()
+        self._eng = None
+        self._fus = None
+        try:
+            from opensynaptic.core.rscore.solidity import OpenSynapticEngine as _RsEngine
+            from opensynaptic.core.rscore.unified_parser import OSVisualFusionEngine as _RsFusion
+
+            self._eng = _RsEngine(cfg)
+            self._fus = _RsFusion(cfg)
+        except Exception:
+            self._eng = None
+            self._fus = None
+
+    def ensure_id(self, *args, **kwargs):
+        if self._ensure_id_fn is None:
+            raise RuntimeError('os_rscore: node ensure_id JSON ABI is unavailable')
+        import json
+
+        payload = json.dumps({'ctx': self._ctx, 'args': args, 'kwargs': kwargs}, ensure_ascii=True).encode('utf-8')
+        out_raw = _run_json_abi(self._ensure_id_fn, payload)
+        return json.loads(out_raw.decode('utf-8'))
+
+    def transmit(self, *args, **kwargs):
+        if self._transmit_fn is None:
+            raise RuntimeError('os_rscore: node transmit JSON ABI is unavailable')
+        import json
+
+        payload = json.dumps({'ctx': self._ctx, 'args': args, 'kwargs': kwargs}, ensure_ascii=True).encode('utf-8')
+        out_raw = _run_json_abi(self._transmit_fn, payload)
+        out = json.loads(out_raw.decode('utf-8'))
+        if isinstance(out, dict) and 'packet_b64' in out:
+            packet = base64.b64decode(out.get('packet_b64', ''))
+            aid = int(out.get('aid', 0))
+            strategy = str(out.get('strategy', 'FULL_PACKET'))
+            return (packet, aid, strategy)
+
+        # Fallback to component composition when node_json is present but not fully implemented.
+        sensors = kwargs.get('sensors')
+        if sensors is None and args:
+            sensors = args[0]
+        device_id = kwargs.get('device_id') or self.device_id or 'UNKNOWN'
+        device_status = kwargs.get('device_status', 'ONLINE')
+        aid = kwargs.get('assigned_id', self.assigned_id)
+        if aid in (None, '', 0, '0'):
+            aid = 0xFFFFFFFE
+
+        if self._eng is None or self._fus is None:
+            raise RuntimeError('os_rscore: node transmit ABI unavailable and component fallback is not ready')
+
+        fact = {'id': str(device_id), 's': str(device_status), 't': kwargs.get('t', 0)}
+        idx = 1
+        for row in (sensors or []):
+            if not isinstance(row, (list, tuple)) or len(row) < 4:
+                continue
+            sid, sst, sval, sunit = row[0], row[1], row[2], row[3]
+            fact[f's{idx}_id'] = str(sid)
+            fact[f's{idx}_s'] = str(sst)
+            fact[f's{idx}_v'] = float(sval)
+            fact[f's{idx}_u'] = str(sunit)
+            idx += 1
+        compressed = self._eng.compress(fact)
+        packet = self._fus.run_engine('{};{}'.format(int(aid), compressed), strategy='FULL')
+        return (packet, int(aid), 'FULL_PACKET')
+
+    def dispatch(self, *args, **kwargs):
+        if self._dispatch_fn is None:
+            raise RuntimeError('os_rscore: node dispatch JSON ABI is unavailable')
+        import json
+
+        payload = json.dumps({'ctx': self._ctx, 'args': args, 'kwargs': kwargs}, ensure_ascii=True).encode('utf-8')
+        out_raw = _run_json_abi(self._dispatch_fn, payload)
+        return json.loads(out_raw.decode('utf-8'))
+
+
+def _run_json_abi(fn, payload: bytes) -> bytes:
+    in_arr_t = ctypes.c_ubyte * len(payload)
+    in_arr = in_arr_t.from_buffer_copy(payload)
+    cap = max(2048, len(payload) * 8 + 256)
+    for _ in range(2):
+        out_arr_t = ctypes.c_ubyte * cap
+        out_arr = out_arr_t()
+        written = int(fn(in_arr, ctypes.c_size_t(len(payload)), out_arr, ctypes.c_size_t(cap)))
+        if written == 0:
+            raise RuntimeError('os_rscore: JSON ABI call failed')
+        if written < 0:
+            cap = max(cap * 2, -written)
+            continue
+        return bytes(bytearray(out_arr)[:written])
+    raise RuntimeError('os_rscore: JSON ABI output exceeded retry budget')
 
 

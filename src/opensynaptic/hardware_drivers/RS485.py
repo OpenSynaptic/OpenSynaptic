@@ -2,8 +2,10 @@ try:
     import serial
 except Exception:
     serial = None
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils import (
+    os_log,
+    LogMsg,
+)
 
 class RS485_Driver:
 

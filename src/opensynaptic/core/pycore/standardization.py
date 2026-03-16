@@ -3,8 +3,12 @@ import time
 import math
 from typing import List, Optional
 from pathlib import Path
-from opensynaptic.utils.paths import read_json, write_json, ctx
-from opensynaptic.utils.logger import os_log
+from opensynaptic.utils import (
+    read_json,
+    write_json,
+    ctx,
+    os_log,
+)
 BASE_DIR = Path(__file__).resolve().parent
 LIB_DIR = None
 

@@ -5,14 +5,21 @@ from .standardization import OpenSynapticStandardizer
 from .solidity import OpenSynapticEngine
 from .unified_parser import OSVisualFusionEngine
 from .handshake import OSHandshakeManager, CMD
-from opensynaptic.utils.paths import read_json, write_json, ctx
 from .transporter_manager import TransporterManager
 from opensynaptic.services import ServiceManager
 from opensynaptic.services.plugin_registry import sync_all_plugin_defaults
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
-from opensynaptic.utils.c.native_loader import NativeLibraryUnavailable
-from opensynaptic.utils.buffer import ensure_bytes, payload_len, zero_copy_enabled, as_readonly_view
+from opensynaptic.utils import (
+    read_json,
+    write_json,
+    ctx,
+    os_log,
+    LogMsg,
+    NativeLibraryUnavailable,
+    ensure_bytes,
+    payload_len,
+    zero_copy_enabled,
+    as_readonly_view,
+)
 try:
     from opensynaptic.services.db_engine import DatabaseManager
 except Exception:

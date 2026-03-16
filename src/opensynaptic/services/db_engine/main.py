@@ -3,7 +3,7 @@ import time
 import uuid
 from typing import Any
 from opensynaptic.services.db_engine.drivers import create_driver
-from opensynaptic.utils.logger import os_log
+from opensynaptic.utils import os_log
 
 class DatabaseManager:
     """Thread-safe SQL export manager for normalized OpenSynaptic facts."""

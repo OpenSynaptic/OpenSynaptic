@@ -16,8 +16,10 @@ import unittest
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.constants import LogMsg
+from opensynaptic.utils import (
+    os_log,
+    LogMsg,
+)
 
 
 class TestPlugin:
@@ -41,6 +43,11 @@ class TestPlugin:
             'stress_workers': 8,
             'stress_total': 200,
             'stress_sources': 6,
+            'stress_runtime': {
+                'collector_mode': 'legacy',
+                'collector_flush_every': 256,
+                'pipeline_mode': 'legacy',
+            },
         }
 
     def auto_load(self):
@@ -294,6 +301,25 @@ class TestPlugin:
                 values.append(max(1, int(part)))
             return values if values else list(fallback)
 
+        def _print_stress_brief(summary):
+            if not isinstance(summary, dict):
+                return
+            mode = str(summary.get('execution_mode', 'thread'))
+            core = str(summary.get('core_backend', 'unknown'))
+            pps = float(summary.get('throughput_pps', 0.0) or 0.0)
+            p95 = float(summary.get('p95_latency_ms', 0.0) or 0.0)
+            avg = float(summary.get('avg_latency_ms', 0.0) or 0.0)
+            fail = int(summary.get('fail', 0) or 0)
+            proc = int(summary.get('processes', 1) or 1)
+            tpp = int(summary.get('threads_per_process', 1) or 1)
+            bsz = int(summary.get('batch_size', 1) or 1)
+            print(
+                '[stress:brief] core={} mode={} p={} tpp={} b={} pps={:.1f} avg_ms={:.4f} p95_ms={:.4f} fail={}'.format(
+                    core, mode, proc, tpp, bsz, pps, avg, p95, fail
+                ),
+                flush=True,
+            )
+
         def _component(argv):
             import argparse
             p = argparse.ArgumentParser(prog='test_plugin component')
@@ -414,6 +440,7 @@ class TestPlugin:
                     print('saved:', str(out_path))
                 os_log.log_with_const('info', LogMsg.PLUGIN_TEST_RESULT,
                                       plugin='test_plugin', suite='stress', ok=summary.get('ok', 0), fail=fail)
+                _print_stress_brief(summary)
                 print(json.dumps(summary, indent=2, ensure_ascii=False))
                 return 0 if fail == 0 else 1
             except KeyboardInterrupt:
@@ -660,6 +687,7 @@ class TestPlugin:
                     threads_hint=ns.threads_hint,
                     batch_hint=ns.batch_hint,
                 )
+                _print_stress_brief(summary)
                 report['stress'] = summary
                 report['overall_fail'] = (report.get('component', {}).get('fail', 0) or 0) + fail
             except KeyboardInterrupt:

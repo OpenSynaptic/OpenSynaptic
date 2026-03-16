@@ -1,5 +1,7 @@
-from opensynaptic.utils.logger import os_log
-from opensynaptic.utils.buffer import ensure_bytes
+from opensynaptic.utils import (
+    os_log,
+    ensure_bytes,
+)
 
 def send(payload, config):
     try:

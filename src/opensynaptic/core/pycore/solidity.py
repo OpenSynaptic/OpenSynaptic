@@ -1,8 +1,11 @@
 import base64, time, struct
 from pathlib import Path
-from opensynaptic.utils.paths import read_json, ctx
-from opensynaptic.utils.base62.base62 import Base62Codec
-from opensynaptic.utils.logger import os_log
+from opensynaptic.utils import (
+    read_json,
+    ctx,
+    Base62Codec,
+    os_log,
+)
 
 class OpenSynapticEngine:
 

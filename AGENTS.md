@@ -21,6 +21,7 @@ sensors list
 | Class | File | Role |
 |---|---|---|
 | `OpenSynaptic` | `src/opensynaptic/core/pycore/core.py` | Orchestrator – compose all subsystems |
+| `CoreManager` | `src/opensynaptic/core/coremanager.py` | Discovers/lazy-loads core plugins (`pycore` / `rscore`) and resolves facade symbols |
 | `OpenSynapticStandardizer` | `src/opensynaptic/core/pycore/standardization.py` | Sensor → UCUM fact normalisation |
 | `OpenSynapticEngine` | `src/opensynaptic/core/pycore/solidity.py` | Base62 compress / decompress |
 | `OSVisualFusionEngine` | `src/opensynaptic/core/pycore/unified_parser.py` | Binary packet encode/decode, template learning |
@@ -44,7 +45,9 @@ Critical keys:
 - `RESOURCES.application_config / transport_config / physical_config` – per-layer driver options passed into `send()` as `application_options` / `transport_options` / `physical_options`
 - `RESOURCES.registry` – path to device registry dir (default `data/device_registry/`)
 - `engine_settings.precision` – Base62 decimal precision (default 4)
+- `engine_settings.core_backend` – active core plugin (`pycore` / `rscore`), with env override support via `OPENSYNAPTIC_CORE`
 - `engine_settings.active_standardization / active_compression / active_collapse` – pipeline stage toggles
+- `engine_settings.zero_copy_transport` – enables memoryview passthrough send path (`true` by default; set `false` for legacy byte materialization fallback)
 - `RESOURCES.service_plugins.<plugin_name>` – plugin runtime defaults auto-synced from `services/plugin_registry.py`
 
 ---
@@ -68,6 +71,7 @@ Critical keys:
 - Enable protocols in the **layer-specific** status map (`application_status`, `transport_status`, `physical_status`).
 - Application auto-discovery is constrained to `TransporterService.APP_LAYER_DRIVERS`; adding a new app driver requires adding its key there.
 - Transport/physical discovery iterates manager candidate tuples (`_CANDIDATES` in each manager); adding a new protocol requires updating candidates + status/config entries.
+- Current transport candidate keys are `udp`, `tcp`, `quic`, `iwip`, `uip` (`src/opensynaptic/core/transport_layer/manager.py`); keep config keys exactly lowercase.
 
 ---
 
@@ -78,7 +82,7 @@ Registry files live at:
 data/device_registry/{id[0:2]}/{id[2:4]}/{aid}.json
 ```
 where shard segments are derived from `str(aid).zfill(10)`.  
-Helper: `from opensynaptic.utils.paths import get_registry_path; get_registry_path(aid)`
+Helper: `from opensynaptic.utils import get_registry_path; get_registry_path(aid)`
 
 ---
 
@@ -93,7 +97,7 @@ Helper: `from opensynaptic.utils.paths import get_registry_path; get_registry_pa
 
 ## Logging Convention
 
-Use the `os_log` singleton (`from opensynaptic.utils.logger import os_log`):
+Use the `os_log` singleton (`from opensynaptic.utils import os_log`):
 
 ```python
 os_log.err("MODULE_ID", "EVENT_ID", exception, {"context": "dict"})
@@ -125,6 +129,24 @@ python -u src/main.py plugin-test --suite stress --workers 8 --total 200
 python -u src/main.py plugin-test --suite all --workers 8 --total 200
 ```
 
+**Run backend comparison / high-load profiling flows:**
+```bash
+python -u src/main.py plugin-test --suite compare --total 10000 --workers 8 --processes 2 --threads-per-process 4 --runs 2 --warmup 1
+python -u src/main.py plugin-test --suite stress --auto-profile --profile-total 50000 --profile-runs 1 --final-runs 1 --profile-processes 1,2,4,8 --profile-threads 4,8,16 --profile-batches 32,64,128
+```
+
+**Build/check/switch Rust core backend:**
+```bash
+python -u src/main.py rscore-build
+python -u src/main.py rscore-check
+python -u src/main.py core --set rscore --persist
+```
+
+**Run zero-copy closeout harness:**
+```bash
+python -u scripts/zero_copy_closeout.py --runs 3 --total 100000 --config Config.json
+```
+
 **Check/build native bindings** (required for Base62 + security code paths):
 ```bash
 python -u src/main.py native-check
@@ -152,7 +174,8 @@ node.dispatch(packet, medium="UDP")
 - **`config_path` always passed as absolute path** – all subsystems receive it from `OpenSynaptic.__init__` to avoid CWD-relative path bugs.
 - Import core symbols from `opensynaptic.core` only; `src/opensynaptic/core/__init__.py` is the public facade and `get_core_manager()` selects the active core plugin (`pycore`).
 - `plugins/` is outside `src/`; `core.py` adds the project root to `sys.path` if the import fails.
-- `OSContext` (`ctx`) is a module-level singleton imported at `from opensynaptic.utils.paths import ctx`; it is instantiated at import time.
+- `OSContext` (`ctx`) is a module-level singleton imported at `from opensynaptic.utils import ctx`; it is instantiated at import time.
+- Core selection precedence is `OPENSYNAPTIC_CORE` env var → `engine_settings.core_backend` in `Config.json` → `pycore` default (`src/opensynaptic/core/coremanager.py`).
 - `4294967295` / `MAX_UINT32` is treated as "unassigned" everywhere – never use it as a real device ID.
 - Transporter keys in all status maps are **lowercase** (`"tcp"`, not `"TCP"`).
 - `TransporterManager._migrate_resource_maps()` keeps `transporters_status` as a merged mirror of the three layer maps.
