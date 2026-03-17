@@ -1,0 +1,283 @@
+{
+  "ok": true,
+  "service": "env_guard",
+  "auto_install": false,
+  "status_json_path": "E:\\OpenSynaptic\\OpenSynaptic\\data\\env_guard\\status.json",
+  "resource_library_json_path": "E:\\OpenSynaptic\\OpenSynaptic\\data\\env_guard\\resources.json",
+  "resource_summary": {
+    "kinds": [
+      "compiler",
+      "native_library"
+    ],
+    "entries_total": 2
+  },
+  "issues_total": 6,
+  "attempts_total": 0,
+  "issues": [
+    {
+      "ts": 1773560853.887,
+      "eid": "PRECHECK_ENV_MISSING",
+      "mid": "NATIVE",
+      "category": "environment_missing",
+      "error_type": "EnvironmentMissingError",
+      "environment": {
+        "type": "EnvironmentMissingError",
+        "code": "OS_ENV_MISSING",
+        "message": "No compiler detected. Install cl/gcc/clang or set OPENSYNAPTIC_CC to an executable path.",
+        "missing_kind": "compiler",
+        "resource": "toolchain",
+        "install_urls": [
+          "https://visualstudio.microsoft.com/visual-cpp-build-tools/",
+          "https://www.mingw-w64.org/",
+          "https://clang.llvm.org/"
+        ],
+        "install_commands": [],
+        "details": {
+          "selected": null,
+          "available": [],
+          "entries": {
+            "cl": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "gcc": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "clang": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "ts": 1773560882.996,
+      "eid": "PRECHECK_ENV_MISSING",
+      "mid": "NATIVE",
+      "category": "environment_missing",
+      "error_type": "EnvironmentMissingError",
+      "environment": {
+        "type": "EnvironmentMissingError",
+        "code": "OS_ENV_MISSING",
+        "message": "No compiler detected. Install cl/gcc/clang or set OPENSYNAPTIC_CC to an executable path.",
+        "missing_kind": "compiler",
+        "resource": "toolchain",
+        "install_urls": [
+          "https://visualstudio.microsoft.com/visual-cpp-build-tools/",
+          "https://www.mingw-w64.org/",
+          "https://clang.llvm.org/"
+        ],
+        "install_commands": [],
+        "details": {
+          "selected": null,
+          "available": [],
+          "entries": {
+            "cl": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "gcc": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "clang": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "ts": 1773562951.914,
+      "eid": "PRECHECK_ENV_MISSING",
+      "mid": "NATIVE",
+      "category": "environment_missing",
+      "error_type": "EnvironmentMissingError",
+      "environment": {
+        "type": "EnvironmentMissingError",
+        "code": "OS_ENV_MISSING",
+        "message": "No compiler detected. Install cl/gcc/clang or set OPENSYNAPTIC_CC to an executable path.",
+        "missing_kind": "compiler",
+        "resource": "toolchain",
+        "install_urls": [
+          "https://visualstudio.microsoft.com/visual-cpp-build-tools/",
+          "https://www.mingw-w64.org/",
+          "https://clang.llvm.org/"
+        ],
+        "install_commands": [],
+        "details": {
+          "selected": null,
+          "available": [],
+          "entries": {
+            "cl": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "gcc": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "clang": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "ts": 1773563146.936,
+      "eid": "PRECHECK_ENV_MISSING",
+      "mid": "NATIVE",
+      "category": "environment_missing",
+      "error_type": "EnvironmentMissingError",
+      "environment": {
+        "type": "EnvironmentMissingError",
+        "code": "OS_ENV_MISSING",
+        "message": "No compiler detected. Install cl/gcc/clang or set OPENSYNAPTIC_CC to an executable path.",
+        "missing_kind": "compiler",
+        "resource": "toolchain",
+        "install_urls": [
+          "https://visualstudio.microsoft.com/visual-cpp-build-tools/",
+          "https://www.mingw-w64.org/",
+          "https://clang.llvm.org/"
+        ],
+        "install_commands": [],
+        "details": {
+          "selected": null,
+          "available": [],
+          "entries": {
+            "cl": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "gcc": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "clang": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "ts": 1773563774.094,
+      "eid": "PRECHECK_ENV_MISSING",
+      "mid": "NATIVE",
+      "category": "environment_missing",
+      "error_type": "EnvironmentMissingError",
+      "environment": {
+        "type": "EnvironmentMissingError",
+        "code": "OS_ENV_MISSING",
+        "message": "No compiler detected. Install cl/gcc/clang or set OPENSYNAPTIC_CC to an executable path.",
+        "missing_kind": "compiler",
+        "resource": "toolchain",
+        "install_urls": [
+          "https://visualstudio.microsoft.com/visual-cpp-build-tools/",
+          "https://www.mingw-w64.org/",
+          "https://clang.llvm.org/"
+        ],
+        "install_commands": [],
+        "details": {
+          "selected": null,
+          "available": [],
+          "entries": {
+            "cl": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "gcc": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "clang": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "ts": 1773563965.21,
+      "eid": "PRECHECK_ENV_MISSING",
+      "mid": "NATIVE",
+      "category": "environment_missing",
+      "error_type": "EnvironmentMissingError",
+      "environment": {
+        "type": "EnvironmentMissingError",
+        "code": "OS_ENV_MISSING",
+        "message": "No compiler detected. Install cl/gcc/clang or set OPENSYNAPTIC_CC to an executable path.",
+        "missing_kind": "compiler",
+        "resource": "toolchain",
+        "install_urls": [
+          "https://visualstudio.microsoft.com/visual-cpp-build-tools/",
+          "https://www.mingw-w64.org/",
+          "https://clang.llvm.org/"
+        ],
+        "install_commands": [],
+        "details": {
+          "selected": null,
+          "available": [],
+          "entries": {
+            "cl": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "gcc": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            },
+            "clang": {
+              "executable": null,
+              "env_hint": null,
+              "available": false,
+              "version": ""
+            }
+          }
+        }
+      }
+    }
+  ],
+  "attempts": []
+}

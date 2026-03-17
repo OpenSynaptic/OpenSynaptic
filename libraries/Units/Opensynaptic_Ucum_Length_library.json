@@ -1,0 +1,72 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"6",
+        "standard_name": "OpenSynaptic_Ucum_Length",
+        "class_name": "Length",
+        "class_id": "0x01",
+        "version": "1.1.0",
+        "base_unit": "m"
+    },
+    "units": {
+        "m": {
+            "name": "meter",
+            "ucum_code": "m",
+            "tid": "0x0100",
+            "physical_attribute": "length",
+            "standard_unit_name": "meter",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "in": {
+            "name": "inch",
+            "ucum_code": "[in_i]",
+            "tid": "0x0101",
+            "physical_attribute": "length",
+            "standard_unit_name": "meter",
+            "to_standard_factor": 0.0254,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "ft": {
+            "name": "foot",
+            "ucum_code": "[ft_i]",
+            "tid": "0x0102",
+            "physical_attribute": "length",
+            "standard_unit_name": "meter",
+            "to_standard_factor": 0.3048,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "nmi": {
+            "name": "nautical mile",
+            "ucum_code": "[nmi_i]",
+            "tid": "0x0103",
+            "physical_attribute": "length",
+            "standard_unit_name": "meter",
+            "to_standard_factor": 1852.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "AU": {
+            "name": "astronomical unit",
+            "ucum_code": "AU",
+            "tid": "0x0104",
+            "physical_attribute": "length",
+            "standard_unit_name": "meter",
+            "to_standard_factor": 149597870700.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "ang": {
+            "name": "angstrom",
+            "ucum_code": "Ang",
+            "tid": "0x0105",
+            "physical_attribute": "length",
+            "standard_unit_name": "meter",
+            "to_standard_factor": 1e-10,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        }
+    }
+}

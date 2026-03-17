@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0", "Cython>=3.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opensynaptic"
+version = "0.1.0"
+description = "2-N-2 high-performance protocol stack"
+authors = [{name = "Your Name"}]
+dependencies = [
+    "numpy",
+    "toml",
+]
+
+[project.optional-dependencies]
+sql-mysql = ["mysql-connector-python>=9.0.0"]
+sql-postgresql = ["psycopg[binary]>=3.2.0"]
+transport-quic = ["aioquic>=1.2.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"opensynaptic.utils" = ["*.c", "bin/*.dll", "bin/*.so", "bin/*.dylib"]
+
+[project.scripts]
+os-node = "opensynaptic.main:main"
+os-cli = "opensynaptic.main:cli_entry"
+os-tui = "opensynaptic.main:tui_main"

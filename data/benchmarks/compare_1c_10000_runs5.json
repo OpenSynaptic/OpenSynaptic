@@ -1,0 +1,370 @@
+{
+  "pycore": {
+    "runs": 5,
+    "total": 10000,
+    "ok": 50000,
+    "fail": 0,
+    "throughput_pps_avg": 23432.56,
+    "avg_latency_ms_avg": 0.0358,
+    "p95_latency_ms_avg": 0.0567,
+    "max_latency_ms_worst": 33.4762,
+    "codec_backend": "c",
+    "core_backend": "pycore",
+    "samples": [
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0366,
+        "p95_latency_ms": 0.0586,
+        "min_latency_ms": 0.0147,
+        "max_latency_ms": 33.2175,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.004,
+            "p95": 0.0103,
+            "min": 0.0022,
+            "max": 0.1005
+          },
+          "compress_ms": {
+            "avg": 0.0046,
+            "p95": 0.0101,
+            "min": 0.0028,
+            "max": 0.1118
+          },
+          "fuse_ms": {
+            "avg": 0.0277,
+            "p95": 0.0425,
+            "min": 0.0087,
+            "max": 33.1347
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.438,
+        "throughput_pps": 22839.5,
+        "core_backend": "pycore",
+        "codec_backend": "c"
+      },
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0403,
+        "p95_latency_ms": 0.0619,
+        "min_latency_ms": 0.0146,
+        "max_latency_ms": 31.0429,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0043,
+            "p95": 0.0106,
+            "min": 0.0022,
+            "max": 0.1047
+          },
+          "compress_ms": {
+            "avg": 0.0048,
+            "p95": 0.0104,
+            "min": 0.0028,
+            "max": 0.0828
+          },
+          "fuse_ms": {
+            "avg": 0.031,
+            "p95": 0.0451,
+            "min": 0.0089,
+            "max": 30.9454
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.479,
+        "throughput_pps": 20862.5,
+        "core_backend": "pycore",
+        "codec_backend": "c"
+      },
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0344,
+        "p95_latency_ms": 0.0546,
+        "min_latency_ms": 0.0149,
+        "max_latency_ms": 32.9138,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0036,
+            "p95": 0.01,
+            "min": 0.0022,
+            "max": 0.0452
+          },
+          "compress_ms": {
+            "avg": 0.0042,
+            "p95": 0.0097,
+            "min": 0.0028,
+            "max": 0.0825
+          },
+          "fuse_ms": {
+            "avg": 0.0264,
+            "p95": 0.0391,
+            "min": 0.0089,
+            "max": 32.8163
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.412,
+        "throughput_pps": 24270.1,
+        "core_backend": "pycore",
+        "codec_backend": "c"
+      },
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0322,
+        "p95_latency_ms": 0.0469,
+        "min_latency_ms": 0.0145,
+        "max_latency_ms": 33.4762,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0032,
+            "p95": 0.005,
+            "min": 0.0023,
+            "max": 0.0497
+          },
+          "compress_ms": {
+            "avg": 0.0038,
+            "p95": 0.006,
+            "min": 0.0027,
+            "max": 0.0759
+          },
+          "fuse_ms": {
+            "avg": 0.0251,
+            "p95": 0.0327,
+            "min": 0.0086,
+            "max": 33.3862
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.387,
+        "throughput_pps": 25870.1,
+        "core_backend": "pycore",
+        "codec_backend": "c"
+      },
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0357,
+        "p95_latency_ms": 0.0616,
+        "min_latency_ms": 0.0148,
+        "max_latency_ms": 27.8693,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0039,
+            "p95": 0.0104,
+            "min": 0.0022,
+            "max": 0.0612
+          },
+          "compress_ms": {
+            "avg": 0.0046,
+            "p95": 0.0104,
+            "min": 0.0028,
+            "max": 0.2035
+          },
+          "fuse_ms": {
+            "avg": 0.027,
+            "p95": 0.0444,
+            "min": 0.0088,
+            "max": 27.7687
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.429,
+        "throughput_pps": 23320.6,
+        "core_backend": "pycore",
+        "codec_backend": "c"
+      }
+    ]
+  },
+  "rscore": {
+    "runs": 5,
+    "total": 10000,
+    "ok": 50000,
+    "fail": 0,
+    "throughput_pps_avg": 24877.9,
+    "avg_latency_ms_avg": 0.0336,
+    "p95_latency_ms_avg": 0.0517,
+    "max_latency_ms_worst": 45.5223,
+    "codec_backend": "rust",
+    "core_backend": "rscore",
+    "samples": [
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0353,
+        "p95_latency_ms": 0.0549,
+        "min_latency_ms": 0.0141,
+        "max_latency_ms": 44.4083,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0036,
+            "p95": 0.01,
+            "min": 0.0022,
+            "max": 0.0732
+          },
+          "compress_ms": {
+            "avg": 0.0059,
+            "p95": 0.0098,
+            "min": 0.0027,
+            "max": 16.1261
+          },
+          "fuse_ms": {
+            "avg": 0.0255,
+            "p95": 0.0395,
+            "min": 0.0084,
+            "max": 28.2678
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.422,
+        "throughput_pps": 23719.3,
+        "core_backend": "rscore",
+        "codec_backend": "rust"
+      },
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0332,
+        "p95_latency_ms": 0.053,
+        "min_latency_ms": 0.0146,
+        "max_latency_ms": 30.3223,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0036,
+            "p95": 0.0095,
+            "min": 0.0023,
+            "max": 0.1067
+          },
+          "compress_ms": {
+            "avg": 0.0042,
+            "p95": 0.0095,
+            "min": 0.0027,
+            "max": 0.0767
+          },
+          "fuse_ms": {
+            "avg": 0.0252,
+            "p95": 0.0377,
+            "min": 0.0085,
+            "max": 30.2322
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.399,
+        "throughput_pps": 25079.4,
+        "core_backend": "rscore",
+        "codec_backend": "rust"
+      },
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0313,
+        "p95_latency_ms": 0.045,
+        "min_latency_ms": 0.0145,
+        "max_latency_ms": 35.6976,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0032,
+            "p95": 0.0051,
+            "min": 0.0022,
+            "max": 0.0529
+          },
+          "compress_ms": {
+            "avg": 0.0038,
+            "p95": 0.0058,
+            "min": 0.0027,
+            "max": 0.0854
+          },
+          "fuse_ms": {
+            "avg": 0.0241,
+            "p95": 0.032,
+            "min": 0.0087,
+            "max": 35.5958
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.376,
+        "throughput_pps": 26596.0,
+        "core_backend": "rscore",
+        "codec_backend": "rust"
+      },
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0346,
+        "p95_latency_ms": 0.0522,
+        "min_latency_ms": 0.0139,
+        "max_latency_ms": 45.5223,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0034,
+            "p95": 0.0065,
+            "min": 0.0022,
+            "max": 0.5232
+          },
+          "compress_ms": {
+            "avg": 0.0041,
+            "p95": 0.0074,
+            "min": 0.0028,
+            "max": 0.124
+          },
+          "fuse_ms": {
+            "avg": 0.0268,
+            "p95": 0.0365,
+            "min": 0.0083,
+            "max": 45.427
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.412,
+        "throughput_pps": 24300.5,
+        "core_backend": "rscore",
+        "codec_backend": "rust"
+      },
+      {
+        "total": 10000,
+        "ok": 10000,
+        "fail": 0,
+        "avg_latency_ms": 0.0337,
+        "p95_latency_ms": 0.0536,
+        "min_latency_ms": 0.0144,
+        "max_latency_ms": 29.6346,
+        "stage_timing_ms": {
+          "standardize_ms": {
+            "avg": 0.0036,
+            "p95": 0.0096,
+            "min": 0.0022,
+            "max": 0.1239
+          },
+          "compress_ms": {
+            "avg": 0.0042,
+            "p95": 0.0096,
+            "min": 0.0027,
+            "max": 0.0825
+          },
+          "fuse_ms": {
+            "avg": 0.0257,
+            "p95": 0.0381,
+            "min": 0.0084,
+            "max": 29.5454
+          }
+        },
+        "error_samples": [],
+        "elapsed_s": 0.405,
+        "throughput_pps": 24694.3,
+        "core_backend": "rscore",
+        "codec_backend": "rust"
+      }
+    ]
+  }
+}
