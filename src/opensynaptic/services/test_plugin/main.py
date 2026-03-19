@@ -20,6 +20,12 @@ from opensynaptic.utils import (
     os_log,
     LogMsg,
 )
+from opensynaptic.services.test_plugin.metrics import (
+    aggregate_header_probe,
+    aggregate_run_series,
+    summary_latency_values,
+    series_max,
+)
 
 
 class TestPlugin:
@@ -287,6 +293,60 @@ class TestPlugin:
     def get_cli_commands(self):
         """Expose test sub-commands to ServiceManager.dispatch_plugin_cli()."""
 
+        def _add_stress_common_args(parser, *, include_core_backend=True):
+            parser.add_argument('--total', type=int, default=200)
+            parser.add_argument('--workers', type=int, default=8)
+            parser.add_argument('--sources', type=int, default=6)
+            parser.add_argument('--no-progress', action='store_true', default=False)
+            if include_core_backend:
+                parser.add_argument('--core-backend', dest='core_backend', default=None,
+                                   choices=['pycore', 'rscore'],
+                                   help='Core plugin to use (pycore/rscore)')
+            parser.add_argument('--require-rust', action='store_true', default=False,
+                               help='Fail if core-backend=rscore but os_rscore DLL is unavailable')
+            parser.add_argument('--header-probe-rate', type=float, default=0.0,
+                               help='Optional packet-header probe sample rate [0.0-1.0]')
+            parser.add_argument('--batch-size', type=int, default=1,
+                               help='Tasks per future (higher values reduce scheduler overhead)')
+            parser.add_argument('--processes', type=int, default=1,
+                               help='Number of processes (1 = thread-only mode)')
+            parser.add_argument('--threads-per-process', type=int, default=None,
+                               help='Thread count inside each process (default: --workers)')
+
+        def _log_and_output(suite_name, ok, fail, payload):
+            os_log.log_with_const('info', LogMsg.PLUGIN_TEST_RESULT,
+                                  plugin='test_plugin', suite=suite_name, ok=ok, fail=fail)
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            return 0 if fail == 0 else 1
+
+        def _write_json_out(path_value, payload, label='saved:'):
+            if not path_value:
+                return None
+            out_path = Path(path_value).expanduser()
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
+            print('{} {}'.format(label, str(out_path)))
+            return out_path
+
+        def _stress_kwargs(ns, *, backend=None, progress_override=None, require_rust_override=None):
+            selected_backend = backend if backend is not None else ns.core_backend
+            if require_rust_override is None:
+                required = bool(ns.require_rust)
+            else:
+                required = bool(require_rust_override)
+            return {
+                'total': ns.total,
+                'workers': ns.workers,
+                'sources': ns.sources,
+                'progress': (not ns.no_progress) if progress_override is None else bool(progress_override),
+                'core_backend': selected_backend,
+                'require_rust': required,
+                'header_probe_rate': ns.header_probe_rate,
+                'batch_size': ns.batch_size,
+                'processes': ns.processes,
+                'threads_per_process': ns.threads_per_process,
+            }
+
         def _parse_int_csv(raw, fallback):
             if raw is None:
                 return list(fallback)
@@ -307,15 +367,25 @@ class TestPlugin:
             mode = str(summary.get('execution_mode', 'thread'))
             core = str(summary.get('core_backend', 'unknown'))
             pps = float(summary.get('throughput_pps', 0.0) or 0.0)
-            p95 = float(summary.get('p95_latency_ms', 0.0) or 0.0)
-            avg = float(summary.get('avg_latency_ms', 0.0) or 0.0)
+            lat_values = summary_latency_values(summary)
             fail = int(summary.get('fail', 0) or 0)
             proc = int(summary.get('processes', 1) or 1)
             tpp = int(summary.get('threads_per_process', 1) or 1)
             bsz = int(summary.get('batch_size', 1) or 1)
             print(
-                '[stress:brief] core={} mode={} p={} tpp={} b={} pps={:.1f} avg_ms={:.4f} p95_ms={:.4f} fail={}'.format(
-                    core, mode, proc, tpp, bsz, pps, avg, p95, fail
+                '[stress:brief] core={} mode={} p={} tpp={} b={} pps={:.1f} avg_ms={:.4f} p95_ms={:.4f} p99_ms={:.4f} p99_9_ms={:.4f} p99_99_ms={:.4f} fail={}'.format(
+                    core,
+                    mode,
+                    proc,
+                    tpp,
+                    bsz,
+                    pps,
+                    lat_values['avg_latency_ms'],
+                    lat_values['p95_latency_ms'],
+                    lat_values['p99_latency_ms'],
+                    lat_values['p99_9_latency_ms'],
+                    lat_values['p99_99_latency_ms'],
+                    fail,
                 ),
                 flush=True,
             )
@@ -351,24 +421,9 @@ class TestPlugin:
 
         def _stress(argv):
             import argparse
+
             p = argparse.ArgumentParser(prog='test_plugin stress')
-            p.add_argument('--total', type=int, default=200)
-            p.add_argument('--workers', type=int, default=8)
-            p.add_argument('--sources', type=int, default=6)
-            p.add_argument('--no-progress', action='store_true', default=False)
-            p.add_argument('--core-backend', dest='core_backend', default=None,
-                           choices=['pycore', 'rscore'],
-                           help='Core plugin to use (pycore/rscore)')
-            p.add_argument('--require-rust', action='store_true', default=False,
-                           help='Fail if core-backend=rscore but os_rscore DLL is unavailable')
-            p.add_argument('--header-probe-rate', type=float, default=0.0,
-                           help='Optional packet-header probe sample rate [0.0-1.0]')
-            p.add_argument('--batch-size', type=int, default=1,
-                           help='Tasks per future (higher values reduce scheduler overhead)')
-            p.add_argument('--processes', type=int, default=1,
-                           help='Number of processes (1 = thread-only mode)')
-            p.add_argument('--threads-per-process', type=int, default=None,
-                           help='Thread count inside each process (default: --workers)')
+            _add_stress_common_args(p)
             p.add_argument('--auto-profile', action='store_true', default=False,
                            help='Scan candidate concurrency combos first, then run final stress with best config')
             p.add_argument('--profile-total', type=int, default=100000,
@@ -409,11 +464,7 @@ class TestPlugin:
                         batch_size=ns.batch_size,
                         progress=not ns.no_progress,
                     )
-                    if ns.json_out:
-                        out_path = Path(ns.json_out).expanduser()
-                        out_path.parent.mkdir(parents=True, exist_ok=True)
-                        out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
-                        print('saved:', str(out_path))
+                    _write_json_out(ns.json_out, report)
                     final_agg = (report.get('final') or {}).get('aggregate') or {}
                     os_log.log_with_const(
                         'info', LogMsg.PLUGIN_TEST_RESULT,
@@ -424,25 +475,11 @@ class TestPlugin:
                     return 0 if int(final_agg.get('fail', 0) or 0) == 0 else 1
 
                 summary, fail = self.run_stress(
-                    total=ns.total, workers=ns.workers,
-                    sources=ns.sources, progress=not ns.no_progress,
-                    core_backend=ns.core_backend,
-                    require_rust=ns.require_rust,
-                    header_probe_rate=ns.header_probe_rate,
-                    batch_size=ns.batch_size,
-                    processes=ns.processes,
-                    threads_per_process=ns.threads_per_process,
+                    **_stress_kwargs(ns),
                 )
-                if ns.json_out:
-                    out_path = Path(ns.json_out).expanduser()
-                    out_path.parent.mkdir(parents=True, exist_ok=True)
-                    out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding='utf-8')
-                    print('saved:', str(out_path))
-                os_log.log_with_const('info', LogMsg.PLUGIN_TEST_RESULT,
-                                      plugin='test_plugin', suite='stress', ok=summary.get('ok', 0), fail=fail)
+                _write_json_out(ns.json_out, summary)
                 _print_stress_brief(summary)
-                print(json.dumps(summary, indent=2, ensure_ascii=False))
-                return 0 if fail == 0 else 1
+                return _log_and_output('stress', summary.get('ok', 0), fail, summary)
             except KeyboardInterrupt:
                 print('\n[stress] aborted by user', file=sys.stderr, flush=True)
                 return 130
@@ -450,18 +487,8 @@ class TestPlugin:
         def _all(argv):
             import argparse
             p = argparse.ArgumentParser(prog='test_plugin all')
-            p.add_argument('--total', type=int, default=200)
-            p.add_argument('--workers', type=int, default=8)
-            p.add_argument('--sources', type=int, default=6)
             p.add_argument('--verbosity', type=int, default=1)
-            p.add_argument('--no-progress', action='store_true', default=False)
-            p.add_argument('--core-backend', dest='core_backend', default=None,
-                           choices=['pycore', 'rscore'])
-            p.add_argument('--require-rust', action='store_true', default=False)
-            p.add_argument('--header-probe-rate', type=float, default=0.0)
-            p.add_argument('--batch-size', type=int, default=1)
-            p.add_argument('--processes', type=int, default=1)
-            p.add_argument('--threads-per-process', type=int, default=None)
+            _add_stress_common_args(p, include_core_backend=False)
             ns = p.parse_args(argv)
             try:
                 report = self.run_all(
@@ -486,28 +513,15 @@ class TestPlugin:
         def _compare(argv):
             """Run stress tests on both backends and print aggregated comparison."""
             import argparse
-            from pathlib import Path
+
             p = argparse.ArgumentParser(prog='test_plugin compare')
-            p.add_argument('--total', type=int, default=200)
-            p.add_argument('--workers', type=int, default=8)
-            p.add_argument('--sources', type=int, default=6)
-            p.add_argument('--no-progress', action='store_true', default=False)
             p.add_argument('--runs', type=int, default=1,
                            help='Number of measured runs per backend (default: 1)')
             p.add_argument('--warmup', type=int, default=0,
                            help='Warmup runs per backend before measured runs')
             p.add_argument('--json-out', dest='json_out', default=None,
                            help='Optional output path to save comparison JSON')
-            p.add_argument('--require-rust', action='store_true', default=False,
-                           help='Fail compare if rscore run cannot use os_rscore DLL')
-            p.add_argument('--header-probe-rate', type=float, default=0.0,
-                           help='Optional packet-header probe sample rate [0.0-1.0]')
-            p.add_argument('--batch-size', type=int, default=1,
-                           help='Tasks per future (higher values reduce scheduler overhead)')
-            p.add_argument('--processes', type=int, default=1,
-                           help='Number of processes (1 = thread-only mode)')
-            p.add_argument('--threads-per-process', type=int, default=None,
-                           help='Thread count inside each process (default: --workers)')
+            _add_stress_common_args(p)
             ns = p.parse_args(argv)
 
             runs = max(1, int(ns.runs))
@@ -517,32 +531,20 @@ class TestPlugin:
                 series = []
                 for idx in range(warmup):
                     print('[warmup][{}] {}/{}'.format(backend, idx + 1, warmup), flush=True)
-                    self.run_stress(
-                        total=ns.total,
-                        workers=ns.workers,
-                        sources=ns.sources,
-                        progress=False,
-                        core_backend=backend,
-                        require_rust=(backend == 'rscore' and ns.require_rust),
-                        header_probe_rate=ns.header_probe_rate,
-                        batch_size=ns.batch_size,
-                        processes=ns.processes,
-                        threads_per_process=ns.threads_per_process,
-                    )
+                    self.run_stress(**_stress_kwargs(
+                        ns,
+                        backend=backend,
+                        progress_override=False,
+                        require_rust_override=(backend == 'rscore' and bool(ns.require_rust)),
+                    ))
                 for idx in range(runs):
                     print('[run][{}] {}/{}'.format(backend, idx + 1, runs), flush=True)
-                    summary, fail = self.run_stress(
-                        total=ns.total,
-                        workers=ns.workers,
-                        sources=ns.sources,
-                        progress=not ns.no_progress,
-                        core_backend=backend,
-                        require_rust=(backend == 'rscore' and ns.require_rust),
-                        header_probe_rate=ns.header_probe_rate,
-                        batch_size=ns.batch_size,
-                        processes=ns.processes,
-                        threads_per_process=ns.threads_per_process,
-                    )
+                    summary, fail = self.run_stress(**_stress_kwargs(
+                        ns,
+                        backend=backend,
+                        progress_override=not ns.no_progress,
+                        require_rust_override=(backend == 'rscore' and bool(ns.require_rust)),
+                    ))
                     summary['fail'] = fail
                     series.append(summary)
                 return series
@@ -551,33 +553,19 @@ class TestPlugin:
                 if not series:
                     return {'error': 'no-runs'}
 
-                def _avg(key):
-                    vals = [float(it.get(key, 0.0) or 0.0) for it in series]
-                    return round(sum(vals) / len(vals), 4)
-
-                def _max(key):
-                    vals = [float(it.get(key, 0.0) or 0.0) for it in series]
-                    return round(max(vals), 4) if vals else 0.0
-
-                fail_total = int(sum(int(it.get('fail', 0) or 0) for it in series))
                 first = series[0]
-                hp = [it.get('header_probe') for it in series if isinstance(it.get('header_probe'), dict)]
-                hp_attempted = int(sum(int(x.get('attempted', 0) or 0) for x in hp)) if hp else 0
-                hp_parsed = int(sum(int(x.get('parsed', 0) or 0) for x in hp)) if hp else 0
-                return {
-                    'runs': len(series),
+                hp = aggregate_header_probe(series)
+                out = aggregate_run_series(series, suffix='_avg')
+                out.update({
                     'total': int(first.get('total', 0) or 0),
-                    'ok': int(sum(int(it.get('ok', 0) or 0) for it in series)),
-                    'fail': fail_total,
-                    'throughput_pps_avg': _avg('throughput_pps'),
-                    'avg_latency_ms_avg': _avg('avg_latency_ms'),
-                    'p95_latency_ms_avg': _avg('p95_latency_ms'),
-                    'max_latency_ms_worst': _max('max_latency_ms'),
                     'codec_class': first.get('codec_class', 'unknown'),
-                    'header_probe_parse_hit_rate': round(hp_parsed / hp_attempted, 4) if hp_attempted > 0 else 0.0,
+                    'header_probe_parse_hit_rate': hp['parse_hit_rate'],
                     'core_backend': first.get('core_backend', 'unknown'),
                     'samples': series,
-                }
+                })
+                # Ensure compare output keeps the exact worst-latency key semantics.
+                out['max_latency_ms_worst'] = series_max(series, 'max_latency_ms')
+                return out
 
             results = {}
             try:
@@ -607,6 +595,9 @@ class TestPlugin:
                 ('throughput_pps_avg', 'Throughput avg (pps)'),
                 ('avg_latency_ms_avg', 'Avg latency avg (ms)'),
                 ('p95_latency_ms_avg', 'P95 latency avg (ms)'),
+                ('p99_latency_ms_avg', 'P99 latency avg (ms)'),
+                ('p99_9_latency_ms_avg', 'P99.9 latency avg (ms)'),
+                ('p99_99_latency_ms_avg', 'P99.99 latency avg (ms)'),
                 ('max_latency_ms_worst', 'Worst max latency (ms)'),
                 ('codec_class',     'Codec class'),
                 ('header_probe_parse_hit_rate', 'Header parse hit rate'),
@@ -630,11 +621,7 @@ class TestPlugin:
             except Exception:
                 pass
 
-            if ns.json_out:
-                out_path = Path(ns.json_out).expanduser()
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding='utf-8')
-                print('saved:', str(out_path))
+            _write_json_out(ns.json_out, results)
 
             print(json.dumps(results, indent=2, ensure_ascii=False))
             any_fail = any(v.get('fail', 0) > 0 or 'error' in v for v in results.values())
@@ -666,6 +653,8 @@ class TestPlugin:
             ns = p.parse_args(argv)
 
             report: dict = {'mode': 'full_load'}
+            component_fail = 0
+            stress_fail = 0
 
             try:
                 # Optional parallel component pre-flight
@@ -674,6 +663,7 @@ class TestPlugin:
                     c_ok, c_fail, _ = self.run_component_parallel(verbosity=ns.verbosity)
                     report['component'] = {'ok': c_ok, 'fail': c_fail}
                     print('component ok={} fail={}'.format(c_ok, c_fail), flush=True)
+                    component_fail = c_fail
 
                 print('\n=== Full-Load Stress ===', flush=True)
                 summary, fail = self.run_full_load(
@@ -689,31 +679,21 @@ class TestPlugin:
                 )
                 _print_stress_brief(summary)
                 report['stress'] = summary
-                report['overall_fail'] = (report.get('component', {}).get('fail', 0) or 0) + fail
+                stress_fail = fail
+                report['overall_fail'] = component_fail + stress_fail
             except KeyboardInterrupt:
                 print('\n[full_load] aborted by user – printing partial report…',
                       file=sys.stderr, flush=True)
                 report.setdefault('stress', {})
                 report['interrupted'] = True
-                report['overall_fail'] = report.get('component', {}).get('fail', 0) or 0
+                report['overall_fail'] = component_fail
                 if ns.json_out:
-                    out_path = Path(ns.json_out).expanduser()
-                    out_path.parent.mkdir(parents=True, exist_ok=True)
-                    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
-                    print('saved (partial):', str(out_path))
+                    _write_json_out(ns.json_out, report, label='saved (partial):')
                 print(json.dumps(report, indent=2, ensure_ascii=False))
                 return 130
 
-            if ns.json_out:
-                out_path = Path(ns.json_out).expanduser()
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
-                print('saved:', str(out_path))
-            os_log.log_with_const('info', LogMsg.PLUGIN_TEST_RESULT,
-                                  plugin='test_plugin', suite='full_load',
-                                  ok=summary.get('ok', 0), fail=report['overall_fail'])
-            print(json.dumps(report, indent=2, ensure_ascii=False))
-            return 0 if report['overall_fail'] == 0 else 1
+            _write_json_out(ns.json_out, report)
+            return _log_and_output('full_load', summary.get('ok', 0), report['overall_fail'], report)
 
         return {
             'component': _component,

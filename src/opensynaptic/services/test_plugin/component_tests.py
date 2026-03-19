@@ -958,7 +958,10 @@ class TestFullLoadConfig(unittest.TestCase):
 class TestStressAutoProfile(unittest.TestCase):
 
     @staticmethod
-    def _mk_summary(throughput, fail=0, avg=1.0, p95=1.5, ok=20, total=20, max_lat=2.0):
+    def _mk_summary(throughput, fail=0, avg=1.0, p95=1.5, p99=None, p99_9=None, p99_99=None, ok=20, total=20, max_lat=2.0):
+        p99 = p95 if p99 is None else p99
+        p99_9 = p95 if p99_9 is None else p99_9
+        p99_99 = p95 if p99_99 is None else p99_99
         return {
             'total': total,
             'ok': ok,
@@ -966,8 +969,55 @@ class TestStressAutoProfile(unittest.TestCase):
             'throughput_pps': throughput,
             'avg_latency_ms': avg,
             'p95_latency_ms': p95,
+            'p99_latency_ms': p99,
+            'p99_9_latency_ms': p99_9,
+            'p99_99_latency_ms': p99_99,
             'max_latency_ms': max_lat,
         }
+
+    def test_aggregate_series_includes_tail_latency_means(self):
+        from opensynaptic.services.test_plugin import stress_tests
+
+        aggregate = stress_tests._aggregate_series([
+            self._mk_summary(100.0, p95=1.1, p99=1.4, p99_9=1.8, p99_99=2.2),
+            self._mk_summary(120.0, p95=1.3, p99=1.7, p99_9=2.0, p99_99=2.5),
+        ])
+
+        self.assertIn('p99_latency_ms_mean', aggregate)
+        self.assertIn('p99_9_latency_ms_mean', aggregate)
+        self.assertIn('p99_99_latency_ms_mean', aggregate)
+        self.assertEqual(aggregate['p99_latency_ms_mean'], 1.55)
+        self.assertEqual(aggregate['p99_9_latency_ms_mean'], 1.9)
+        self.assertEqual(aggregate['p99_99_latency_ms_mean'], 2.35)
+
+    def test_metrics_helpers_handle_latency_fallback_and_header_probe_rollup(self):
+        from opensynaptic.services.test_plugin.metrics import (
+            aggregate_header_probe,
+            summary_latency_values,
+        )
+
+        summary = {
+            'avg_latency_ms': 1.0,
+            'p95_latency_ms': 2.0,
+            # p99/p99_9/p99_99 intentionally omitted to validate fallback.
+        }
+        lat = summary_latency_values(summary)
+        self.assertEqual(lat['avg_latency_ms'], 1.0)
+        self.assertEqual(lat['p95_latency_ms'], 2.0)
+        self.assertEqual(lat['p99_latency_ms'], 2.0)
+        self.assertEqual(lat['p99_9_latency_ms'], 2.0)
+        self.assertEqual(lat['p99_99_latency_ms'], 2.0)
+
+        hp = aggregate_header_probe([
+            {'header_probe': {'attempted': 10, 'parsed': 8, 'crc16_ok': 7}},
+            {'header_probe': {'attempted': 5, 'parsed': 4, 'crc16_ok': 4}},
+            {'header_probe': None},
+        ])
+        self.assertEqual(hp['attempted'], 15)
+        self.assertEqual(hp['parsed'], 12)
+        self.assertEqual(hp['crc16_ok'], 11)
+        self.assertEqual(hp['parse_hit_rate'], 0.8)
+        self.assertEqual(hp['crc16_ok_rate'], 0.7333)
 
     def test_auto_profile_selects_highest_throughput_when_all_zero_fail(self):
         from opensynaptic.services.test_plugin import stress_tests

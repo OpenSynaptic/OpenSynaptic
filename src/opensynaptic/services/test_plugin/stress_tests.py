@@ -10,7 +10,6 @@ import queue
 import sys
 import time
 import threading
-import statistics
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 from typing import Any, cast
@@ -29,6 +28,16 @@ if _ROOT and _ROOT not in sys.path:
 from opensynaptic.utils import (
     has_native_library,
     read_json,
+)
+from opensynaptic.services.test_plugin.metrics import (
+    PERCENTILE_KEYS,
+    aggregate_header_probe,
+    aggregate_run_series,
+    empty_stage_stats,
+    round4,
+    stats_from_values,
+    weighted_avg,
+    weighted_series_value,
 )
 
 import os as _os
@@ -134,18 +143,6 @@ def _process_worker_run_stress(kwargs: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _weighted_avg(pairs):
-    num = 0.0
-    den = 0.0
-    for value, weight in pairs:
-        w = max(0.0, float(weight or 0.0))
-        if w <= 0:
-            continue
-        den += w
-        num += float(value or 0.0) * w
-    return (num / den) if den > 0 else 0.0
-
-
 def _aggregate_process_summaries(
     summaries: list[dict[str, Any]],
     elapsed_s: float,
@@ -155,7 +152,7 @@ def _aggregate_process_summaries(
 ) -> dict[str, Any]:
     """Merge child-process stress summaries into one report.
 
-    p95 values are merged as weighted averages of child p95s (approximation).
+    Tail percentiles are merged as weighted averages of child summaries (approximation).
     """
     if not summaries:
         return {
@@ -164,13 +161,12 @@ def _aggregate_process_summaries(
             'fail': 0,
             'avg_latency_ms': 0.0,
             'p95_latency_ms': 0.0,
+            'p99_latency_ms': 0.0,
+            'p99_9_latency_ms': 0.0,
+            'p99_99_latency_ms': 0.0,
             'min_latency_ms': 0.0,
             'max_latency_ms': 0.0,
-            'stage_timing_ms': {
-                'standardize_ms': {'avg': 0.0, 'p95': 0.0, 'min': 0.0, 'max': 0.0},
-                'compress_ms': {'avg': 0.0, 'p95': 0.0, 'min': 0.0, 'max': 0.0},
-                'fuse_ms': {'avg': 0.0, 'p95': 0.0, 'min': 0.0, 'max': 0.0},
-            },
+            'stage_timing_ms': empty_stage_stats(),
             'error_samples': [],
             'elapsed_s': round(float(elapsed_s or 0.0), 3),
             'throughput_pps': 0.0,
@@ -188,31 +184,38 @@ def _aggregate_process_summaries(
     stage_keys = ('standardize_ms', 'compress_ms', 'fuse_ms')
     stage_stats = {}
     for key in stage_keys:
-        avg_val = _weighted_avg((s.get('stage_timing_ms', {}).get(key, {}).get('avg', 0.0), w) for s, w in zip(summaries, weights))
-        p95_val = _weighted_avg((s.get('stage_timing_ms', {}).get(key, {}).get('p95', 0.0), w) for s, w in zip(summaries, weights))
+        stage_entry = {
+            'avg': round4(weighted_avg((s.get('stage_timing_ms', {}).get(key, {}).get('avg', 0.0), w) for s, w in zip(summaries, weights))),
+        }
+        for pct_key, fallback_key, _ in PERCENTILE_KEYS:
+            fallback = fallback_key or pct_key
+            stage_entry[pct_key] = round4(
+                weighted_avg(
+                    (s.get('stage_timing_ms', {}).get(key, {}).get(pct_key, s.get('stage_timing_ms', {}).get(key, {}).get(fallback, 0.0)), w)
+                    for s, w in zip(summaries, weights)
+                )
+            )
         mins = [float(s.get('stage_timing_ms', {}).get(key, {}).get('min', 0.0) or 0.0) for s in summaries]
         maxs = [float(s.get('stage_timing_ms', {}).get(key, {}).get('max', 0.0) or 0.0) for s in summaries]
-        stage_stats[key] = {
-            'avg': round(avg_val, 4),
-            'p95': round(p95_val, 4),
-            'min': round(min(mins) if mins else 0.0, 4),
-            'max': round(max(maxs) if maxs else 0.0, 4),
-        }
+        stage_entry['min'] = round4(min(mins) if mins else 0.0)
+        stage_entry['max'] = round4(max(maxs) if maxs else 0.0)
+        stage_stats[key] = stage_entry
 
     hp_series = [s.get('header_probe') for s in summaries if isinstance(s.get('header_probe'), dict)]
-    hp_attempted = int(sum(int(h.get('attempted', 0) or 0) for h in hp_series)) if hp_series else 0
-    hp_parsed = int(sum(int(h.get('parsed', 0) or 0) for h in hp_series)) if hp_series else 0
-    hp_crc16 = int(sum(int(h.get('crc16_ok', 0) or 0) for h in hp_series)) if hp_series else 0
+    hp_stats = aggregate_header_probe(cast(list[dict[str, Any]], hp_series)) if hp_series else {}
 
     first = summaries[0]
     out = {
         'total': total,
         'ok': ok,
         'fail': fail,
-        'avg_latency_ms': round(_weighted_avg((s.get('avg_latency_ms', 0.0), w) for s, w in zip(summaries, weights)), 4),
-        'p95_latency_ms': round(_weighted_avg((s.get('p95_latency_ms', 0.0), w) for s, w in zip(summaries, weights)), 4),
-        'min_latency_ms': round(min(float(s.get('min_latency_ms', 0.0) or 0.0) for s in summaries), 4),
-        'max_latency_ms': round(max(float(s.get('max_latency_ms', 0.0) or 0.0) for s in summaries), 4),
+        'avg_latency_ms': round4(weighted_series_value(summaries, weights, 'avg_latency_ms')),
+        'p95_latency_ms': round4(weighted_series_value(summaries, weights, 'p95_latency_ms')),
+        'p99_latency_ms': round4(weighted_series_value(summaries, weights, 'p99_latency_ms', fallback_key='p95_latency_ms')),
+        'p99_9_latency_ms': round4(weighted_series_value(summaries, weights, 'p99_9_latency_ms', fallback_key='p95_latency_ms')),
+        'p99_99_latency_ms': round4(weighted_series_value(summaries, weights, 'p99_99_latency_ms', fallback_key='p95_latency_ms')),
+        'min_latency_ms': round4(min(float(s.get('min_latency_ms', 0.0) or 0.0) for s in summaries)),
+        'max_latency_ms': round4(max(float(s.get('max_latency_ms', 0.0) or 0.0) for s in summaries)),
         'stage_timing_ms': stage_stats,
         'error_samples': [e for s in summaries for e in (s.get('error_samples') or [])][:5],
         'elapsed_s': round(float(elapsed_s or 0.0), 3),
@@ -232,11 +235,11 @@ def _aggregate_process_summaries(
             'enabled': True,
             'rate': float(hp_series[0].get('rate', 0.0) or 0.0),
             'parser_available': all(bool(h.get('parser_available', False)) for h in hp_series),
-            'attempted': hp_attempted,
-            'parsed': hp_parsed,
-            'crc16_ok': hp_crc16,
-            'parse_hit_rate': round(hp_parsed / hp_attempted, 4) if hp_attempted > 0 else 0.0,
-            'crc16_ok_rate': round(hp_crc16 / hp_attempted, 4) if hp_attempted > 0 else 0.0,
+            'attempted': int(hp_stats.get('attempted', 0) or 0),
+            'parsed': int(hp_stats.get('parsed', 0) or 0),
+            'crc16_ok': int(hp_stats.get('crc16_ok', 0) or 0),
+            'parse_hit_rate': float(hp_stats.get('parse_hit_rate', 0.0) or 0.0),
+            'crc16_ok_rate': float(hp_stats.get('crc16_ok_rate', 0.0) or 0.0),
         }
     return out
 
@@ -390,26 +393,17 @@ class StressResult:
                 self.errors.extend(errors)
 
     def summary(self) -> dict[str, Any]:
-        def _stats(values):
-            if not values:
-                return {'avg': 0.0, 'p95': 0.0, 'min': 0.0, 'max': 0.0}
-            seq = sorted(values)
-            idx = min(len(seq) - 1, int(len(seq) * 0.95))
-            return {
-                'avg': round(sum(values) / len(values), 4),
-                'p95': round(seq[idx], 4),
-                'min': round(seq[0], 4),
-                'max': round(seq[-1], 4),
-            }
-
-        stage_stats = {k: _stats(v) for k, v in self.stage_latencies.items()}
-        total_stats = _stats(self.latencies)
+        stage_stats = {k: stats_from_values(v) for k, v in self.stage_latencies.items()}
+        total_stats = stats_from_values(self.latencies)
         return {
             'total': self.total,
             'ok': self.ok,
             'fail': self.fail,
             'avg_latency_ms': total_stats['avg'],
             'p95_latency_ms': total_stats['p95'],
+            'p99_latency_ms': total_stats['p99'],
+            'p99_9_latency_ms': total_stats['p99_9'],
+            'p99_99_latency_ms': total_stats['p99_99'],
             'min_latency_ms': total_stats['min'],
             'max_latency_ms': total_stats['max'],
             'stage_timing_ms': stage_stats,
@@ -498,10 +492,6 @@ def _progress_line(done, total, started_at, width=28):
     )
 
 
-def _round4(value: Any) -> float:
-    return round(float(value or 0.0), 4)
-
-
 def _make_candidate_matrix(
     workers: int,
     batch_size: int,
@@ -541,35 +531,7 @@ def _score_candidate(summary: dict[str, Any]) -> tuple[int, float, float, float]
 
 
 def _aggregate_series(series: list[dict[str, Any]]) -> dict[str, Any]:
-    if not series:
-        return {
-            'runs': 0,
-            'ok': 0,
-            'fail': 0,
-            'throughput_pps_mean': 0.0,
-            'throughput_pps_var': 0.0,
-            'throughput_pps_worst': 0.0,
-            'avg_latency_ms_mean': 0.0,
-            'p95_latency_ms_mean': 0.0,
-            'max_latency_ms_worst': 0.0,
-        }
-
-    tpps = [float(it.get('throughput_pps', 0.0) or 0.0) for it in series]
-    avg_lat = [float(it.get('avg_latency_ms', 0.0) or 0.0) for it in series]
-    p95_lat = [float(it.get('p95_latency_ms', 0.0) or 0.0) for it in series]
-    max_lat = [float(it.get('max_latency_ms', 0.0) or 0.0) for it in series]
-
-    return {
-        'runs': len(series),
-        'ok': int(sum(int(it.get('ok', 0) or 0) for it in series)),
-        'fail': int(sum(int(it.get('fail', 0) or 0) for it in series)),
-        'throughput_pps_mean': _round4(statistics.mean(tpps)),
-        'throughput_pps_var': _round4(statistics.pvariance(tpps) if len(tpps) > 1 else 0.0),
-        'throughput_pps_worst': _round4(min(tpps) if tpps else 0.0),
-        'avg_latency_ms_mean': _round4(statistics.mean(avg_lat) if avg_lat else 0.0),
-        'p95_latency_ms_mean': _round4(statistics.mean(p95_lat) if p95_lat else 0.0),
-        'max_latency_ms_worst': _round4(max(max_lat) if max_lat else 0.0),
-    }
+    return aggregate_run_series(series, suffix='_mean', include_variance=True, include_worst=True)
 
 
 def run_auto_profile(
@@ -640,6 +602,9 @@ def run_auto_profile(
             representative['throughput_pps'] = aggregate['throughput_pps_mean']
             representative['avg_latency_ms'] = aggregate['avg_latency_ms_mean']
             representative['p95_latency_ms'] = aggregate['p95_latency_ms_mean']
+            representative['p99_latency_ms'] = aggregate['p99_latency_ms_mean']
+            representative['p99_9_latency_ms'] = aggregate['p99_9_latency_ms_mean']
+            representative['p99_99_latency_ms'] = aggregate['p99_99_latency_ms_mean']
             representative['fail'] = aggregate['fail']
             candidates.append({
                 'config': dict(combo),
@@ -965,6 +930,18 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     batch = max(1, int(batch_size or 1))
     # Pre-compute fixed assigned_id used in all pipeline calls
     _aid = int(getattr(node, 'assigned_id', 42) or 42)
+    legacy_mode = (collector_mode == 'legacy')
+
+    def _commit_progress(step_count):
+        _push_progress(progress_queue, step_count)
+        if not progress:
+            return
+        with progress_lock:
+            completed[0] += step_count
+            now = time.monotonic()
+            if (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10):
+                print('\r' + _progress_line(completed[0], total, t_start), end='', flush=True)
+                progress_state['last_print_at'] = now
 
     def _task_range(start_idx, end_idx):
         range_count = end_idx - start_idx
@@ -1001,14 +978,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                     b_stage['compress_ms'].append(stage_avg)
                     b_stage['fuse_ms'].append(stage_avg)
             result.merge_chunk(b_latencies, b_stage, b_errors)
-            _push_progress(progress_queue, range_count)
-            if progress:
-                with progress_lock:
-                    completed[0] += range_count
-                    now = time.monotonic()
-                    if (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10):
-                        print('\r' + _progress_line(completed[0], total, t_start), end='', flush=True)
-                        progress_state['last_print_at'] = now
+            _commit_progress(range_count)
             return
 
         # ── legacy / batched: per-item pipeline task ──────────────────────
@@ -1018,7 +988,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         local_probe = {'attempted': 0, 'parsed': 0, 'crc16_ok': 0}
 
         def _flush_local():
-            if collector_mode == 'legacy':
+            if legacy_mode:
                 return
             result.merge_chunk(local_latencies, local_stage, local_errors)
             if local_probe['attempted'] > 0:
@@ -1041,7 +1011,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                 node, idx, sensors, probe_header=do_probe, parse_header_fn=parse_header_fn,
             )
 
-            if collector_mode == 'legacy':
+            if legacy_mode:
                 if exc is not None:
                     result.record_fail(exc)
                 else:
@@ -1071,15 +1041,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                     _flush_local()
 
         _flush_local()
-
-        _push_progress(progress_queue, range_count)
-        if progress:
-            with progress_lock:
-                completed[0] += range_count
-                now = time.monotonic()
-                if (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10):
-                    print('\r' + _progress_line(completed[0], total, t_start), end='', flush=True)
-                    progress_state['last_print_at'] = now
+        _commit_progress(range_count)
 
     t_start = time.monotonic()
     _tpool = ThreadPoolExecutor(max_workers=workers)

@@ -145,6 +145,12 @@ class OpenSynaptic:
     def _load_json(self, path):
         return read_json(path)
 
+    def _to_wire_payload(self, payload, config=None, force_zero_copy=False):
+        if force_zero_copy:
+            return as_readonly_view(payload)
+        active_cfg = config if isinstance(config, dict) else self.config
+        return as_readonly_view(payload) if zero_copy_enabled(active_cfg) else ensure_bytes(payload)
+
     def ensure_id(self, server_ip, server_port, device_meta=None, timeout=5.0):
         if not self._is_id_missing():
             os_log.log_with_const('info', LogMsg.ID_ASSIGNED, addr=self.device_id, assigned=self.assigned_id)
@@ -207,7 +213,7 @@ class OpenSynaptic:
 
     def dispatch_with_reply(self, packet, server_ip=None, server_port=None, timeout=3.0):
         host, port = self._resolve_server_endpoint(server_ip, server_port)
-        wire_packet = as_readonly_view(packet)
+        wire_packet = self._to_wire_payload(packet, force_zero_copy=True)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(timeout)
             sock.sendto(wire_packet, (host, port))
@@ -275,7 +281,7 @@ class OpenSynaptic:
             driver = self.active_transporters.get(target_key)
         if driver and hasattr(driver, 'send'):
             try:
-                wire_packet = as_readonly_view(packet) if zero_copy_enabled(self.config) else ensure_bytes(packet)
+                wire_packet = self._to_wire_payload(packet, config=self.config)
                 result = driver.send(wire_packet, self.config)
                 if not result:
                     os_log.err('MAIN', 'SEND_FAIL', f'Driver [{target_medium}] rejected send', {'len': payload_len(wire_packet)})

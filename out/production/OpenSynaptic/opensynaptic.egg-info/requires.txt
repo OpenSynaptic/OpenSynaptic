@@ -1,0 +1,11 @@
+numpy
+toml
+
+[sql-mysql]
+mysql-connector-python>=9.0.0
+
+[sql-postgresql]
+psycopg[binary]>=3.2.0
+
+[transport-quic]
+aioquic>=1.2.0

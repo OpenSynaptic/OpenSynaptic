@@ -6,7 +6,7 @@ from opensynaptic.utils import read_json, write_json, ctx
 
 class IDAllocator:
     def __init__(self, base_dir: str = None, start_id: int = 1, end_id: int = 4294967295,
-                 persist_file: str = "data/id_allocation.json"):
+                 persist_file: str = "data/id_allocation.json", max_released: int = 10000):
         self.base_dir = base_dir or ctx.root
         self.start_id = start_id
         self.end_id = end_id
@@ -16,6 +16,7 @@ class IDAllocator:
         self._allocated = {}
         self._released = set()
         self._next_candidate = start_id
+        self._max_released = max(256, int(max_released or 10000))
 
         self._load()
 
@@ -27,7 +28,16 @@ class IDAllocator:
         for k, v in data.get("allocated", {}).items():
             self._allocated[int(k)] = v
         self._released = set(data.get("released", []))
+        if len(self._released) > self._max_released:
+            keep = sorted(self._released)[:self._max_released]
+            self._released = set(keep)
         self._next_candidate = data.get("next_candidate", self.start_id)
+
+    def _trim_released_nolock(self):
+        if len(self._released) <= self._max_released:
+            return
+        keep = sorted(self._released)[:self._max_released]
+        self._released = set(keep)
 
     def _save(self):
         p = Path(self.persist_path)
@@ -86,6 +96,7 @@ class IDAllocator:
             if id_val in self._allocated:
                 del self._allocated[id_val]
                 self._released.add(id_val)
+                self._trim_released_nolock()
                 self._save()
                 return True
             return False

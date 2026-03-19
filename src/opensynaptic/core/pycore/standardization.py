@@ -1,7 +1,6 @@
 import sys
 import time
 import math
-from typing import List, Optional
 from pathlib import Path
 from opensynaptic.utils import (
     read_json,
@@ -11,6 +10,7 @@ from opensynaptic.utils import (
 )
 BASE_DIR = Path(__file__).resolve().parent
 LIB_DIR = None
+_UNIT_ALIAS_MAP = {'cel': 'Cel', 'hour': 'h', 'celsius': 'degree_celsius'}
 
 class OpenSynapticStandardizer:
 
@@ -53,6 +53,8 @@ class OpenSynapticStandardizer:
         cache_data = self._load_json(self.cache_path)
         self.registry = cache_data.get('cached_units', {})
         self._is_dirty = False
+        self._units_by_key = {}
+        self._units_by_ucum = {}
         p_data_candidates = [Path(lib_dir) / 'Prefixes.json', Path(lib_dir) / 'prefixes.json']
         p_data = {}
         for cand in p_data_candidates:
@@ -62,6 +64,38 @@ class OpenSynapticStandardizer:
         raw_pre = {**p_data.get('decimal_prefixes', {}), **p_data.get('binary_prefixes', {})}
         self.sorted_prefixes = sorted(raw_pre.keys(), key=len, reverse=True)
         self.prefixes = raw_pre
+        self._build_unit_indices()
+
+    def _build_unit_indices(self):
+        units_path = Path(self.lib_units_dir)
+        if not units_path.is_dir():
+            return
+        for f in units_path.glob('*.json'):
+            data = self._load_json(str(f))
+            units = data.get('units', {}) if isinstance(data, dict) else {}
+            if not isinstance(units, dict):
+                continue
+            for u_key, u_info in units.items():
+                if u_key not in self._units_by_key:
+                    self._units_by_key[u_key] = u_info
+                if isinstance(u_info, dict):
+                    ucum_code = u_info.get('ucum_code')
+                    if isinstance(ucum_code, str) and ucum_code not in self._units_by_ucum:
+                        self._units_by_ucum[ucum_code] = u_info
+
+    def _scan_units_fallback(self, target):
+        units_path = Path(self.lib_units_dir)
+        for f in units_path.glob('*.json'):
+            data = self._load_json(str(f))
+            units = data.get('units', {})
+            if target in units:
+                return units[target]
+            if target.lower() in units:
+                return units[target.lower()]
+            for _, u_info in units.items():
+                if u_info.get('ucum_code') == target:
+                    return u_info
+        return None
 
     def _load_json(self, path):
         return read_json(path)
@@ -75,20 +109,18 @@ class OpenSynapticStandardizer:
 
     def _deep_search_in_atoms(self, unit_str):
         target = unit_str.strip()
-        alias_map = {'cel': 'Cel', 'hour': 'h', 'celsius': 'degree_celsius'}
-        target = alias_map.get(target.lower(), target)
-        units_path = Path(self.lib_units_dir)
-        for f in units_path.glob('*.json'):
-            data = self._load_json(str(f))
-            units = data.get('units', {})
-            if target in units:
-                return units[target]
-            if target.lower() in units:
-                return units[target.lower()]
-            for u_key, u_info in units.items():
-                if u_info.get('ucum_code') == target:
-                    return u_info
-        return None
+        target = _UNIT_ALIAS_MAP.get(target.lower(), target)
+        hit = self._units_by_key.get(target)
+        if hit is not None:
+            return hit
+        hit = self._units_by_key.get(target.lower())
+        if hit is not None:
+            return hit
+        hit = self._units_by_ucum.get(target)
+        if hit is not None:
+            return hit
+        # Keep legacy scan as a compatibility fallback.
+        return self._scan_units_fallback(target)
 
     def _resolve_unit_law(self, unit_str):
         if not unit_str or unit_str == 'Unknown':

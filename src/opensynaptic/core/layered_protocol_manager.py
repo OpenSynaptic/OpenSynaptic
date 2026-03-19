@@ -121,15 +121,22 @@ class LayeredProtocolManager:
         if not adapter:
             return False
         try:
-            merged = {}
-            merged.update(config or {} if isinstance(config, dict) else self.config)
-            if options_key:
-                merged[options_key] = self._protocol_conf(str(name).lower())
-            wire_payload = as_readonly_view(payload) if zero_copy_enabled(merged) else ensure_bytes(payload)
+            merged = self._build_merged_config(name, config=config, options_key=options_key)
+            wire_payload = self._to_wire_payload(payload, merged)
             return adapter.send(wire_payload, merged)
         except Exception as exc:
             os_log.err(self.layer_tag, 'SEND', exc, {'protocol': name})
             return False
+
+    def _build_merged_config(self, name, config=None, options_key=None):
+        merged = {}
+        merged.update(config or {} if isinstance(config, dict) else self.config)
+        if options_key:
+            merged[options_key] = self._protocol_conf(str(name).lower())
+        return merged
+
+    def _to_wire_payload(self, payload, merged_config):
+        return as_readonly_view(payload) if zero_copy_enabled(merged_config) else ensure_bytes(payload)
 
     def _load_module(self, name):
         try:

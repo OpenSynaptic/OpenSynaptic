@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: opensynaptic
+Version: 0.1.0
+Summary: 2-N-2 high-performance protocol stack
+Author: Your Name
+Requires-Dist: numpy
+Requires-Dist: toml
+Provides-Extra: sql-mysql
+Requires-Dist: mysql-connector-python>=9.0.0; extra == "sql-mysql"
+Provides-Extra: sql-postgresql
+Requires-Dist: psycopg[binary]>=3.2.0; extra == "sql-postgresql"
+Provides-Extra: transport-quic
+Requires-Dist: aioquic>=1.2.0; extra == "transport-quic"

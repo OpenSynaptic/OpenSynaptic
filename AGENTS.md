@@ -63,15 +63,22 @@ Critical keys:
 
 ## Transporter Plugin System
 
-- Transporters are tiered now:
-  - Application: `src/opensynaptic/services/transporters/drivers/` (managed by `TransporterService`)
-  - Transport: `src/opensynaptic/core/transport_layer/protocols/` (managed by `TransportLayerManager`)
-  - Physical: `src/opensynaptic/core/physical_layer/protocols/` (managed by `PhysicalLayerManager`)
-- Drivers still implement `send(payload: bytes, config: dict) -> bool` (optional `listen(config, callback)`).
-- Enable protocols in the **layer-specific** status map (`application_status`, `transport_status`, `physical_status`).
-- Application auto-discovery is constrained to `TransporterService.APP_LAYER_DRIVERS`; adding a new app driver requires adding its key there.
-- Transport/physical discovery iterates manager candidate tuples (`_CANDIDATES` in each manager); adding a new protocol requires updating candidates + status/config entries.
-- Current transport candidate keys are `udp`, `tcp`, `quic`, `iwip`, `uip` (`src/opensynaptic/core/transport_layer/manager.py`); keep config keys exactly lowercase.
+Transporters are tiered across three layers, each using `LayeredProtocolManager`:
+
+- **Application (L7)**: `src/opensynaptic/services/transporters/drivers/` → managed by `TransporterService`
+  - Auto-discovery constrained to `TransporterService.APP_LAYER_DRIVERS` (currently `{'mqtt'}`)
+  - To add a new app driver: add key to `APP_LAYER_DRIVERS`, create driver module, enable in `application_status` + configure in `application_config`
+- **Transport (L4)**: `src/opensynaptic/core/transport_layer/protocols/` → managed by `TransportLayerManager`
+  - Candidates: `udp`, `tcp`, `quic`, `iwip`, `uip` (tuple in `manager.py:_CANDIDATES`)
+- **Physical (PHY)**: `src/opensynaptic/core/physical_layer/protocols/` → managed by `PhysicalLayerManager`
+  - Candidates: `uart`, `rs485`, `can`, `lora` (tuple in `manager.py:_CANDIDATES`)
+
+**Common patterns:**
+- All drivers implement `send(payload: bytes, config: dict) -> bool` (optional `listen(config, callback)`)
+- Enable/disable via **layer-specific** status maps: `application_status`, `transport_status`, `physical_status`
+- Per-layer config in `application_config`, `transport_config`, `physical_config`
+- Adding a new T/L4/PHY protocol: update `_CANDIDATES` tuple + add to status/config entries in `Config.json`
+- All transporter keys must be **lowercase** in status/config maps; `TransporterManager._migrate_resource_maps()` keeps the legacy `transporters_status` as a merged mirror
 
 ---
 
@@ -171,6 +178,12 @@ node.dispatch(packet, medium="UDP")
 
 ## Key Conventions
 
+**CLI Entry Points** (`pyproject.toml:[project.scripts]`):
+- `os-node` – Interactive CLI with fallback to `run` daemon after idle timeout (managed by `src/opensynaptic/main.py:main()`)
+- `os-cli` – Inline command execution; no REPL (calls `src/opensynaptic/CLI:main()` directly)
+- `os-tui` – TUI dashboard (aliases to `os-cli tui`)
+
+**Core & Configuration:**
 - **`config_path` always passed as absolute path** – all subsystems receive it from `OpenSynaptic.__init__` to avoid CWD-relative path bugs.
 - Import core symbols from `opensynaptic.core` only; `src/opensynaptic/core/__init__.py` is the public facade and `get_core_manager()` selects the active core plugin (`pycore`).
 - `plugins/` is outside `src/`; `core.py` adds the project root to `sys.path` if the import fails.
