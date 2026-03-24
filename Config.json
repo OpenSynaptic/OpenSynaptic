@@ -30,7 +30,7 @@
             "mqtt": false
         },
         "transport_status": {
-            "udp": false,
+            "udp": true,
             "tcp": false,
             "quic": false,
             "iwip": false,
@@ -80,7 +80,7 @@
         },
         "transporters_status": {
             "mqtt": false,
-            "udp": false,
+            "udp": true,
             "tcp": false,
             "quic": false,
             "iwip": false,
@@ -106,7 +106,7 @@
                 "stress_runtime": {
                     "collector_mode": "batched",
                     "collector_flush_every": 256,
-                          "pipeline_mode": "batch_fused"
+                    "pipeline_mode": "batch_fused"
                 }
             },
             "web_user": {
@@ -146,12 +146,44 @@
         "allow_nonlinear_prefix": false,
         "time_precision": 4,
         "epoch_base": 0,
-        "use_ms": true
+        "use_ms": true,
+        "transmit_batch": {
+            "enabled": true,
+            "max_items": 16,
+            "window_ms": 1.0,
+            "adaptive": {
+                "enabled": true,
+                "history_size": 256,
+                "tune_every_batches": 32,
+                "target_tail_ms": 30.0,
+                "window_ms_min": 0.5,
+                "window_ms_max": 6.0,
+                "max_items_min": 4,
+                "max_items_max": 64
+            }
+        }
     },
     "security_settings": {
         "time_sync_threshold": 1000000,
         "drop_on_crc16_failure": true,
-        "secure_session_expire_seconds": 86400
+        "secure_session_expire_seconds": 86400,
+        "secure_session_store": "data/secure_sessions.json",
+        "id_lease": {
+            "persist_file": "data/id_allocation.json",
+            "offline_hold_days": 30,
+            "base_lease_seconds": 2592000,
+            "min_lease_seconds": 0,
+            "rate_window_seconds": 3600,
+            "high_rate_threshold_per_hour": 60.0,
+            "ultra_rate_threshold_per_hour": 180.0,
+            "ultra_rate_sustain_seconds": 600,
+            "high_rate_min_factor": 0.2,
+            "adaptive_enabled": true,
+            "ultra_force_release": true,
+            "metrics_emit_interval_seconds": 5,
+            "metrics_flush_seconds": 10,
+            "metrics": {}
+        }
     },
     "payload_switches": {
         "DeviceId": true,

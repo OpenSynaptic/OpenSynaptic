@@ -52,7 +52,7 @@ def add_quiet_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def add_run_args(parser: argparse.ArgumentParser) -> None:
-    """Add ``--once``, ``--interval``, and ``--duration`` to *parser*."""
+    """Add ``--once``, ``--interval``, ``--duration``, and ``--stats-interval`` to *parser*."""
     parser.add_argument(
         '--once',
         action='store_true',
@@ -70,5 +70,12 @@ def add_run_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=0.0,
         help='Total run duration in seconds; 0 = unlimited',
+    )
+    parser.add_argument(
+        '--stats-interval',
+        dest='stats_interval',
+        type=float,
+        default=None,
+        help='Periodic run stats interval in seconds (heartbeat logging)',
     )
 

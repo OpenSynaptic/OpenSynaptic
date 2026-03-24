@@ -1,44 +1,90 @@
-# OpenSynaptic Documentation Index
+# OpenSynaptic Docs Hub
 
-This folder contains architecture, API, schema, and implementation references for OpenSynaptic.
-
----
-
-## Start Here
-
-1. [`../README.md`](../README.md) - project overview and quickstart
-2. [`ARCHITECTURE.md`](ARCHITECTURE.md) - end-to-end runtime architecture and data flow
-3. [`CONFIG_SCHEMA.md`](CONFIG_SCHEMA.md) - `Config.json` key reference
-4. [`API.md`](API.md) - public API surface
+This is the canonical navigation hub for project documentation.
+If you only open one docs file first, use this one.
 
 ---
 
-## Runtime and Core References
+## Core References
 
-- [`CORE_API.md`](CORE_API.md) - core facade and backend loader reference
-- [`PYCORE_INTERNALS.md`](PYCORE_INTERNALS.md) - Python core internals and method contracts
-- [`RSCORE_API.md`](RSCORE_API.md) - Rust backend API reference
-- [`PYCORE_RUST_API.md`](PYCORE_RUST_API.md) - Python/Rust interoperability details
-
----
-
-## Extensibility and Operations
-
-- [`TRANSPORTER_PLUGIN.md`](TRANSPORTER_PLUGIN.md) - transporter and plugin extension guide
-- [`ZERO_COPY_CLOSEOUT.md`](ZERO_COPY_CLOSEOUT.md) - zero-copy transport rollout notes
+- `../README.md` - project overview, installation, CLI quick reference
+- `ARCHITECTURE.md` - system architecture and processing pipeline
+- `CONFIG_SCHEMA.md` - `Config.json` schema and runtime keys
+- `API.md` - public API contracts and examples
+- `CORE_API.md` - core facade, backend discovery, and symbol resolution
 
 ---
 
-## Release Documents
+## Backend and Runtime Internals
 
-- [`../CHANGELOG.md`](../CHANGELOG.md) - cumulative release history
-- [`releases/v0.2.0.md`](releases/v0.2.0.md) - current release draft
+- `internal/PYCORE_INTERNALS.md` - Python core internals
+- `RSCORE_API.md` - Rust backend API behavior
+- `PYCORE_RUST_API.md` - Python and Rust boundary details
+- `internal/ZERO_COPY_CLOSEOUT.md` - zero-copy transport rollout and constraints
 
 ---
 
-## Reading Path by Role
+## Plugins, Transporters, and Operations
 
-- Platform integrator: `README.md` -> `ARCHITECTURE.md` -> `CONFIG_SCHEMA.md`
-- Plugin/driver developer: `TRANSPORTER_PLUGIN.md` -> `API.md` -> `PYCORE_INTERNALS.md`
-- Runtime maintainer: `CORE_API.md` -> `RSCORE_API.md` -> `ZERO_COPY_CLOSEOUT.md`
+- `TRANSPORTER_PLUGIN.md` - transporter extension model and contract
+- `ID_LEASE_SYSTEM.md` - ID lifecycle and lease policy behavior
+- `ID_LEASE_CONFIG_REFERENCE.md` - lease tuning and config presets
+
+---
+
+## Release and Change Documents
+
+- `../CHANGELOG.md` - full project changelog
+- `releases/v0.1.1.md`
+- `releases/v0.2.0.md`
+- `releases/v1.1.0.md`
+- `releases/v0.3.0_announcement.md`
+- `releases/announcement-summary-v0.3.0.md`
+- `reports/releases/v0.2.0-v0.3.0-comparison.md`
+- `guides/upgrade/v0.3.0.md`
+- `guides/drivers/quick-reference.md`
+
+---
+
+## Reading Paths
+
+### New team member
+
+1. `../README.md`
+2. `ARCHITECTURE.md`
+3. `CONFIG_SCHEMA.md`
+
+### Backend maintainer
+
+1. `CORE_API.md`
+2. `internal/PYCORE_INTERNALS.md`
+3. `PYCORE_RUST_API.md`
+4. `RSCORE_API.md`
+
+### Integrations and drivers
+
+1. `TRANSPORTER_PLUGIN.md`
+2. `API.md`
+3. `guides/drivers/quick-reference.md`
+
+### Operations and deployment
+
+1. `ID_LEASE_SYSTEM.md`
+2. `ID_LEASE_CONFIG_REFERENCE.md`
+3. `guides/upgrade/v0.3.0.md`
+
+---
+
+## Documentation Maintenance Rules
+
+- Keep English as the canonical language for actively maintained docs.
+- Keep topic docs in `docs/`; keep release snapshots in `docs/releases/`.
+- Keep non-publish process and status documents in `docs/internal/`.
+- Avoid duplicate feature explanations across multiple files.
+- Prefer linking to one canonical doc instead of copy-pasting sections.
+- Keep command examples executable and tagged as `powershell`.
+
+For repository-wide navigation, see `INDEX.md`.
+
+Maintainer-only records are grouped under `internal/` (see `internal/README.md`).
 

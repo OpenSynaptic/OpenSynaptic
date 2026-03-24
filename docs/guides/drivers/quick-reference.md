@@ -2,7 +2,6 @@
 
 Canonical path for driver usage guidance and bidirectional communication notes.
 
-For the historical root-level file, see `DRIVER_QUICK_REFERENCE.md`.
 
 ---
 

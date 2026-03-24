@@ -1,5 +1,6 @@
 import socket
 import time
+import threading
 from pathlib import Path
 from .standardization import OpenSynapticStandardizer
 from .solidity import OpenSynapticEngine
@@ -15,11 +16,9 @@ from opensynaptic.utils import (
     os_log,
     LogMsg,
     NativeLibraryUnavailable,
-    ensure_bytes,
     payload_len,
-    zero_copy_enabled,
-    as_readonly_view,
 )
+from opensynaptic.utils.buffer import to_wire_payload
 try:
     from opensynaptic.services.db_engine import DatabaseManager
 except Exception:
@@ -47,6 +46,13 @@ class OpenSynaptic:
         self.settings = self.config.get('OpenSynaptic_Setting', {})
         self.res_conf = self.config.get('RESOURCES', {})
         self.security_settings = self.config.get('security_settings', {})
+        self._config_lock = threading.Lock()
+        self._lease_metrics_last_flush = 0
+        self._lease_metrics_flush_interval = 10
+        self._registry_sync_lock = threading.Lock()
+        self._registry_last_sync = {}
+        engine_cfg = self.config.get('engine_settings', {}) if isinstance(self.config.get('engine_settings', {}), dict) else {}
+        self._registry_sync_interval_seconds = max(0.0, float(engine_cfg.get('registry_sync_interval_seconds', 1.0) or 1.0))
         self.assigned_id = self.config.get('assigned_id', None)
         self.device_id = self.config.get('device_id', 'UNKNOWN')
         self.standardizer = OpenSynapticStandardizer(self.config_path)
@@ -62,10 +68,42 @@ class OpenSynaptic:
         self._sync_assigned_id_to_fusion()
         start_id = int(self.config.get('Server_Core', {}).get('Start_ID', 1))
         end_id = int(self.config.get('Server_Core', {}).get('End_ID', 4294967295))
-        self.id_allocator = IDAllocator(base_dir=self.base_dir, start_id=start_id, end_id=end_id)
+
+        lease_cfg, lease_changed = self._resolve_id_lease_config()
+        self._lease_metrics_flush_interval = max(1, int(lease_cfg.get('metrics_flush_seconds', 10) or 10))
+        self.id_allocator = IDAllocator(
+            base_dir=self.base_dir,
+            start_id=start_id,
+            end_id=end_id,
+            persist_file=str(lease_cfg.get('persist_file', 'data/id_allocation.json')),
+            lease_policy={
+                'offline_hold_days': lease_cfg.get('offline_hold_days', 30),
+                'base_lease_seconds': lease_cfg.get('base_lease_seconds', 2592000),
+                'min_lease_seconds': lease_cfg.get('min_lease_seconds', 0),
+                'rate_window_seconds': lease_cfg.get('rate_window_seconds', 3600),
+                'high_rate_threshold_per_hour': lease_cfg.get('high_rate_threshold_per_hour', 60.0),
+                'ultra_rate_threshold_per_hour': lease_cfg.get('ultra_rate_threshold_per_hour', 180.0),
+                'ultra_rate_sustain_seconds': lease_cfg.get('ultra_rate_sustain_seconds', 600),
+                'high_rate_min_factor': lease_cfg.get('high_rate_min_factor', 0.2),
+                'adaptive_enabled': lease_cfg.get('adaptive_enabled', True),
+                'ultra_force_release': lease_cfg.get('ultra_force_release', True),
+                'metrics_emit_interval_seconds': lease_cfg.get('metrics_emit_interval_seconds', 5),
+            },
+            metrics_sink=self._on_id_lease_metrics,
+        )
+
         registry_dir = getattr(ctx, 'registry_dir', None) or str(Path(self.base_dir) / 'data' / 'device_registry')
         Path(registry_dir).mkdir(parents=True, exist_ok=True)
-        self.protocol = OSHandshakeManager(target_sync_count=3, registry_dir=registry_dir, expire_seconds=int(self.security_settings.get('secure_session_expire_seconds', 86400)))
+
+        secure_store_path = str(self.security_settings.get('secure_session_store', 'data/secure_sessions.json') or 'data/secure_sessions.json')
+        if not Path(secure_store_path).is_absolute():
+            secure_store_path = str(Path(self.base_dir) / secure_store_path)
+        self.protocol = OSHandshakeManager(
+            target_sync_count=3,
+            registry_dir=registry_dir,
+            expire_seconds=int(self.security_settings.get('secure_session_expire_seconds', 86400)),
+            secure_store_path=secure_store_path,
+        )
         self.protocol.min_valid_timestamp = int(self.security_settings.get('time_sync_threshold', self.protocol.min_valid_timestamp))
         self.protocol.id_allocator = self.id_allocator
         self.protocol.parser = self.fusion
@@ -87,7 +125,8 @@ class OpenSynaptic:
             self.active_transporters = self.transporter_manager.active_transporters
         except Exception as e:
             os_log.err('TM', 'INIT', e, {})
-        id_display = self.assigned_id if self.assigned_id else 'UNASSIGNED'
+        if lease_changed:
+            self._save_config()
         os_log.log_with_const('info', LogMsg.READY, root=self.base_dir)
         if DatabaseManager:
             try:
@@ -98,37 +137,35 @@ class OpenSynaptic:
             except Exception as e:
                 os_log.err('DB', 'INIT', e, {})
 
+    def _normalize_assigned_id(self, aid):
+        if aid is None or aid == '' or aid == 'UNKNOWN':
+            return 0
+        if isinstance(aid, int):
+            return 0 if aid == self.MAX_UINT32 else aid
+        if isinstance(aid, str) and aid.isdigit():
+            value = int(aid)
+            return 0 if value == self.MAX_UINT32 else value
+        if isinstance(aid, str) and aid:
+            return self.fusion._decode_b62(aid)
+        return 0
+
+    def _apply_fusion_local_id(self, value):
+        set_local_id = getattr(self.fusion, '_set_local_id', None)
+        if callable(set_local_id):
+            set_local_id(value)
+        else:
+            self.fusion.local_id = value
+            self.fusion.local_id_str = str(value)
+
     def _sync_assigned_id_to_fusion(self):
         try:
-            aid = self.assigned_id
-            set_local_id = getattr(self.fusion, '_set_local_id', None)
-            def _apply_local_id(value):
-                if callable(set_local_id):
-                    set_local_id(value)
-                else:
-                    self.fusion.local_id = value
-                    self.fusion.local_id_str = str(value)
-            if aid is None or aid == '' or aid == 'UNKNOWN' or (aid == self.MAX_UINT32) or (isinstance(aid, str) and aid.isdigit() and (int(aid) == self.MAX_UINT32)):
-                _apply_local_id(0)
-            elif isinstance(aid, int):
-                _apply_local_id(aid)
-            elif isinstance(aid, str) and aid.isdigit():
-                _apply_local_id(int(aid))
-            elif isinstance(aid, str) and aid:
-                _apply_local_id(self.fusion._decode_b62(aid))
-            else:
-                _apply_local_id(0)
+            self._apply_fusion_local_id(self._normalize_assigned_id(self.assigned_id))
         except Exception as e:
             os_log.err('FUS', 'SYNC', e, {})
-            if hasattr(self.fusion, '_set_local_id'):
-                self.fusion._set_local_id(0)
-            else:
-                self.fusion.local_id = 0
-                self.fusion.local_id_str = '0'
+            self._apply_fusion_local_id(0)
 
     def _is_id_missing(self):
-        aid = self.assigned_id
-        return aid is None or aid == 0 or aid == '' or (aid == '0') or (aid == 'UNKNOWN') or (aid == self.MAX_UINT32) or (isinstance(aid, str) and aid.isdigit() and (int(aid) == self.MAX_UINT32))
+        return self._normalize_assigned_id(self.assigned_id) == 0
 
     def _resolve_server_endpoint(self, server_ip=None, server_port=None):
         client_cfg = self.config.get('Client_Core', {})
@@ -142,19 +179,70 @@ class OpenSynaptic:
         except Exception as e:
             os_log.err('CFG', 'WRITE', e, {'path': self.config_path})
 
+    def _resolve_id_lease_config(self):
+        sec = self.config.setdefault('security_settings', {})
+        lease_cfg = sec.setdefault('id_lease', {})
+        defaults = {
+            'persist_file': 'data/id_allocation.json',
+            'offline_hold_days': 30,
+            'base_lease_seconds': 30 * 86400,
+            'min_lease_seconds': 0,
+            'rate_window_seconds': 3600,
+            'high_rate_threshold_per_hour': 60.0,
+            'ultra_rate_threshold_per_hour': 180.0,
+            'ultra_rate_sustain_seconds': 600,
+            'high_rate_min_factor': 0.2,
+            'adaptive_enabled': True,
+            'ultra_force_release': True,
+            'metrics_emit_interval_seconds': 5,
+            'metrics_flush_seconds': 10,
+            'metrics': {},
+        }
+        changed = False
+        for key, value in defaults.items():
+            if key not in lease_cfg:
+                lease_cfg[key] = value
+                changed = True
+        return lease_cfg, changed
+
+    def _on_id_lease_metrics(self, metrics):
+        if not isinstance(metrics, dict):
+            return
+        now_ts = int(time.time())
+        with self._config_lock:
+            sec = self.config.setdefault('security_settings', {})
+            lease_cfg = sec.setdefault('id_lease', {})
+            lease_cfg['metrics'] = dict(metrics)
+            lease_cfg['metrics_updated_at'] = now_ts
+            if now_ts - int(self._lease_metrics_last_flush or 0) >= self._lease_metrics_flush_interval:
+                self._save_config()
+                self._lease_metrics_last_flush = now_ts
+
     def _load_json(self, path):
         return read_json(path)
 
-    def ensure_id(self, server_ip, server_port, device_meta=None, timeout=5.0):
-        if not self._is_id_missing():
-            os_log.log_with_const('info', LogMsg.ID_ASSIGNED, addr=self.device_id, assigned=self.assigned_id)
-            return True
-        os_log.log_with_const('info', LogMsg.ID_REQUEST_TIMEOUT, timeout=0)
+    def _to_wire_payload(self, payload, config=None, force_zero_copy=False):
+        active_cfg = config if isinstance(config, dict) else self.config
+        return to_wire_payload(payload, active_cfg, force_zero_copy=force_zero_copy)
+
+    def _maybe_sync_registry(self, src_aid, reg, force=False):
+        if not reg or (not reg.get('dirty')):
+            return
+        now = time.time()
+        key = str(src_aid)
+        with self._registry_sync_lock:
+            last = float(self._registry_last_sync.get(key, 0.0) or 0.0)
+            if (not force) and (now - last < self._registry_sync_interval_seconds):
+                return
+            self._registry_last_sync[key] = now
+        self.fusion._sync_to_disk(src_aid)
+
+    def _run_udp_exchange(self, host, port, timeout, request_fn):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(timeout)
 
         def send_fn(data):
-            sock.sendto(data, (server_ip, server_port))
+            sock.sendto(data, (host, port))
 
         def recv_fn(timeout=1.0):
             sock.settimeout(timeout)
@@ -163,12 +251,27 @@ class OpenSynaptic:
                 return data
             except socket.timeout:
                 return None
-        meta = device_meta or {}
-        meta['device_id'] = self.device_id
+
         try:
-            new_id = self.protocol.request_id_via_transport(transport_send_fn=send_fn, transport_recv_fn=recv_fn, device_meta=meta, timeout=timeout)
+            return request_fn(send_fn, recv_fn)
         finally:
             sock.close()
+
+    def ensure_id(self, server_ip, server_port, device_meta=None, timeout=5.0):
+        if not self._is_id_missing():
+            os_log.log_with_const('info', LogMsg.ID_ASSIGNED, addr=self.device_id, assigned=self.assigned_id)
+            return True
+        os_log.log_with_const('info', LogMsg.ID_REQUEST_TIMEOUT, timeout=0)
+        meta = device_meta or {}
+        meta['device_id'] = self.device_id
+        def _request(send_fn, recv_fn):
+            return self.protocol.request_id_via_transport(
+                transport_send_fn=send_fn,
+                transport_recv_fn=recv_fn,
+                device_meta=meta,
+                timeout=timeout,
+            )
+        new_id = self._run_udp_exchange(server_ip, server_port, timeout, _request)
         if new_id:
             os_log.log_with_const('info', LogMsg.ID_ASSIGNED, addr=self.device_id, assigned=new_id)
             self.assigned_id = new_id
@@ -183,23 +286,13 @@ class OpenSynaptic:
 
     def ensure_time(self, server_ip=None, server_port=None, timeout=3.0):
         host, port = self._resolve_server_endpoint(server_ip, server_port)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(timeout)
-
-        def send_fn(data):
-            sock.sendto(data, (host, port))
-
-        def recv_fn(timeout=1.0):
-            sock.settimeout(timeout)
-            try:
-                data, _ = sock.recvfrom(4096)
-                return data
-            except socket.timeout:
-                return None
-        try:
-            server_time = self.protocol.request_time_via_transport(transport_send_fn=send_fn, transport_recv_fn=recv_fn, timeout=timeout)
-        finally:
-            sock.close()
+        def _request(send_fn, recv_fn):
+            return self.protocol.request_time_via_transport(
+                transport_send_fn=send_fn,
+                transport_recv_fn=recv_fn,
+                timeout=timeout,
+            )
+        server_time = self._run_udp_exchange(host, port, timeout, _request)
         if server_time:
             self.protocol.note_server_time(server_time)
             os_log.log_with_const('info', LogMsg.TIME_SYNCED, server_time=server_time, host=host, port=port)
@@ -207,7 +300,7 @@ class OpenSynaptic:
 
     def dispatch_with_reply(self, packet, server_ip=None, server_port=None, timeout=3.0):
         host, port = self._resolve_server_endpoint(server_ip, server_port)
-        wire_packet = as_readonly_view(packet)
+        wire_packet = self._to_wire_payload(packet, force_zero_copy=True)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(timeout)
             sock.sendto(wire_packet, (host, port))
@@ -252,9 +345,23 @@ class OpenSynaptic:
         self.protocol.commit_success(src_aid)
         if binary_packet and self.protocol.normalize_data_cmd(binary_packet[0]) == CMD.DATA_FULL and (not self.protocol.is_secure_data_cmd(binary_packet[0])):
             self.protocol.note_local_plaintext_sent(src_aid, ts_raw)
-        if reg.get('dirty'):
-            self.fusion._sync_to_disk(src_aid)
+        self._maybe_sync_registry(src_aid, reg)
         return (binary_packet, src_aid, strategy_label)
+
+    def transmit_fast(self, sensors=None, device_id=None, device_status='ONLINE', **kwargs):
+        # pycore keeps the same semantics as transmit; rscore can override with fused FFI.
+        return self.transmit(sensors=sensors, device_id=device_id, device_status=device_status, **kwargs)
+
+    def transmit_batch(self, batch_items, **kwargs):
+        out = []
+        for item in (batch_items or []):
+            if isinstance(item, dict):
+                merged = dict(kwargs)
+                merged.update(item)
+                out.append(self.transmit_fast(**merged))
+            else:
+                out.append(self.transmit_fast(sensors=item, **kwargs))
+        return out
 
     def receive(self, raw_bytes):
         return self.fusion.decompress(raw_bytes)
@@ -275,7 +382,7 @@ class OpenSynaptic:
             driver = self.active_transporters.get(target_key)
         if driver and hasattr(driver, 'send'):
             try:
-                wire_packet = as_readonly_view(packet) if zero_copy_enabled(self.config) else ensure_bytes(packet)
+                wire_packet = self._to_wire_payload(packet, config=self.config)
                 result = driver.send(wire_packet, self.config)
                 if not result:
                     os_log.err('MAIN', 'SEND_FAIL', f'Driver [{target_medium}] rejected send', {'len': payload_len(wire_packet)})

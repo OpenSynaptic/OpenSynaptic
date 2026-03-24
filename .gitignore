@@ -47,3 +47,11 @@ Thumbs.db
 # Project specific
 config.local.json
 *.bak
+
+# Native/build artifacts
+src/opensynaptic/utils/c/bin/*.tmp.lib
+src/opensynaptic/utils/c/bin/*.bak.dll
+
+# Build mirrors
+out/production/
+

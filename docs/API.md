@@ -1,9 +1,9 @@
 # OpenSynaptic API Reference
 
-All public classes and methods exposed by the `opensynaptic` package.
+API and service contracts currently implemented in the repository.
 
 > **Deep-dive references:**
-> - [`PYCORE_INTERNALS.md`](PYCORE_INTERNALS.md) — complete method-level reference for every class in `pycore/` including data contracts, wire formats, and security internals
+> - [`internal/PYCORE_INTERNALS.md`](internal/PYCORE_INTERNALS.md) — complete method-level reference for every class in `pycore/` including data contracts, wire formats, and security internals
 > - [`RSCORE_API.md`](RSCORE_API.md) — Rust core (`rscore/`) API design specification
 > - [`CONFIG_SCHEMA.md`](CONFIG_SCHEMA.md) — `Config.json` schema reference
 > - [`TRANSPORTER_PLUGIN.md`](TRANSPORTER_PLUGIN.md) — how to add new transporter drivers
@@ -22,14 +22,14 @@ OpenSynaptic(config_path: str | None = None)
 
 | Parameter | Type | Description |
 |---|---|---|
-| `config_path` | `str \| None` | Absolute path to `Config.json`. If `None`, `OSContext` auto-detects the root by walking up from `__file__` until `Config.json` is found. |
+| `config_path` | `str \| None` | Optional path to `Config.json` (absolute or relative). If `None`, `OSContext` auto-detects the project root and loads the default config. |
 
 **Key attributes after init:**
 
 | Attribute | Type | Description |
 |---|---|---|
 | `config` | `dict` | Loaded `Config.json` contents |
-| `config_path` | `str` | Resolved absolute path to `Config.json` |
+| `config_path` | `str` | Active config path used by the instance |
 | `base_dir` | `str` | Project root directory |
 | `assigned_id` | `int \| None` | Current device ID (`4294967295` = unassigned) |
 | `device_id` | `str` | Human-readable device identifier |
@@ -95,15 +95,29 @@ Decode a raw binary packet back to a fact dict (calls `fusion.decompress`).
 
 Full protocol-layer dispatch: parse CMD byte, route to handshake manager.
 
-#### `dispatch_with_reply(packet, server_ip=None, server_port=None, timeout=3.0) → bytes | None`
+#### `dispatch_with_reply(packet, server_ip=None, server_port=None, timeout=3.0) -> bytes | None`
 
 Send a packet via UDP and wait for a single reply.
+
+#### `transmit_fast(sensors=None, device_id=None, device_status='ONLINE', **kwargs) -> tuple[bytes, int, str]`
+
+Fast-path alias of `transmit()` in `pycore` (same semantics; `rscore` may override with fused FFI behavior).
+
+#### `transmit_batch(batch_items, **kwargs) -> list[tuple[bytes, int, str]]`
+
+Batch wrapper over `transmit_fast()`.
+
+#### `relay(packet) -> bytes`
+
+Pass-through relay helper that re-encodes via fusion logic.
+
+### Internal Helpers (not part of stable public API)
 
 #### `_save_config()`
 
 Persist the current in-memory `self.config` dict back to `Config.json`.
 
-#### `_is_id_missing() → bool`
+#### `_is_id_missing() -> bool`
 
 Returns `True` if `assigned_id` is absent, zero, or equal to `MAX_UINT32` (`4294967295`).
 
@@ -162,7 +176,7 @@ Binary packet encoder/decoder with template learning for DIFF compression.
 OSVisualFusionEngine(config_path: str | None = None)
 ```
 
-### `run_engine(raw_input_str, strategy='FULL') → bytes`
+### `run_engine(raw_input_str, strategy='DIFF') → bytes`
 
 Encode a `"<aid>;<b62_payload>"` string into a binary packet.
 
@@ -212,7 +226,7 @@ Returns the decoded `SensorFact` dict with an extra `__packet_meta__` key:
 
 | Method | Description |
 |---|---|
-| `set_local_id(id)` | Update local device ID (used internally after ID assignment) |
+| `_set_local_id(id)` | Internal helper to update local device ID (used by core sync flow) |
 | `relay(packet)` | Pass-through re-encode (relay node use case) |
 
 ---
@@ -224,7 +238,7 @@ CMD byte dispatch, device session management, ID and time negotiation.
 ### Constructor
 
 ```python
-OSHandshakeManager(target_sync_count=3, registry_dir=None, expire_seconds=86400)
+OSHandshakeManager(target_sync_count=3, registry_dir=None, expire_seconds=86400, secure_store_path=None)
 ```
 
 | Parameter | Type | Default | Description |
@@ -232,6 +246,7 @@ OSHandshakeManager(target_sync_count=3, registry_dir=None, expire_seconds=86400)
 | `target_sync_count` | `int` | `3` | Successful sends required before switching to DIFF strategy |
 | `registry_dir` | `str \| None` | `None` | Device registry root directory |
 | `expire_seconds` | `int` | `86400` | Session and sync-status entry TTL in seconds |
+| `secure_store_path` | `str \| None` | `None` | Optional secure session persistence path |
 
 ### CMD Byte Constants (`CMD` class)
 
@@ -267,21 +282,21 @@ OSHandshakeManager(target_sync_count=3, registry_dir=None, expire_seconds=86400)
 
 | Method | Returns | Description |
 |---|---|---|
-| `note_local_plaintext_sent(aid, ts_raw, addr)` | `dict` | Derive pending session key from (aid, ts_raw) |
-| `establish_remote_plaintext(aid, ts_raw, addr)` | `dict` | Server-side key derivation + mark `dict_ready=True` |
-| `confirm_secure_dict(aid, ts_raw, addr)` | `bool` | Promote pending key to active key |
-| `mark_secure_channel(aid, addr)` | `dict` | Set `decrypt_confirmed=True`, state→`"SECURE"` |
+| `note_local_plaintext_sent(aid, timestamp_raw, addr=None)` | `dict` | Derive pending session key from `(aid, timestamp_raw)` |
+| `establish_remote_plaintext(aid, timestamp_raw, addr=None)` | `dict` | Server-side key derivation + set `dict_ready=True` |
+| `confirm_secure_dict(aid, timestamp_raw=None, addr=None)` | `bool` | Promote pending key to active key |
+| `mark_secure_channel(aid, addr=None)` | `dict` | Set `decrypt_confirmed=True`, state -> `"SECURE"` |
 | `has_secure_dict(aid)` | `bool` | True if `dict_ready` flag is set |
 | `should_encrypt_outbound(aid)` | `bool` | True if session has both `dict_ready` and `key` |
-| `get_session_key(aid)` | `bytes \| None` | Return 32-byte XOR session key |
+| `get_session_key(aid)` | `bytes | None` | Return XOR session key bytes |
 | `note_server_time(ts)` | `None` | Record server timestamp for clock correction |
 
 ### Control Packet Builders
 
 | Method | Returns | Description |
 |---|---|---|
-| `build_id_request(meta)` | `bytes` | `[0x01][seq:2][json_meta]` |
-| `build_id_pool_request(count, meta)` | `bytes` | `[0x03][seq:2][count:2][json_meta]` |
+| `build_id_request(device_meta=None)` | `bytes` | `[0x01][seq:2][json_meta]` |
+| `build_id_pool_request(count=10, meta=None)` | `bytes` | `[0x03][seq:2][count:2][json_meta]` |
 | `build_ping()` | `bytes` | `[0x09][seq:2]` |
 | `build_time_request()` | `bytes` | `[0x0B][seq:2]` |
 
@@ -289,10 +304,10 @@ OSHandshakeManager(target_sync_count=3, registry_dir=None, expire_seconds=86400)
 
 | Method | Returns | Description |
 |---|---|---|
-| `request_id_via_transport(send_fn, recv_fn, device_meta, timeout)` | `int \| None` | Client-side ID request handshake |
-| `request_id_pool_via_transport(send_fn, recv_fn, count, meta, timeout)` | `list[int]` | Client-side bulk ID request |
-| `request_time_via_transport(send_fn, recv_fn, timeout)` | `int \| None` | Client-side time sync handshake |
-| `classify_and_dispatch(raw_bytes, addr)` | `dict` | Parse CMD byte and route to handler |
+| `request_id_via_transport(transport_send_fn, transport_recv_fn, device_meta=None, timeout=5.0)` | `int | None` | Client-side ID request handshake |
+| `request_id_pool_via_transport(transport_send_fn, transport_recv_fn, count=10, meta=None, timeout=5.0)` | `list[int]` | Client-side bulk ID request |
+| `request_time_via_transport(transport_send_fn, transport_recv_fn, timeout=3.0)` | `int | None` | Client-side time sync handshake |
+| `classify_and_dispatch(raw_bytes, addr=None)` | `dict` | Parse CMD byte and route to handler |
 
 ---
 
@@ -304,7 +319,8 @@ Thread-safe `uint32` ID pool with JSON persistence.
 
 ```python
 IDAllocator(base_dir=None, start_id=1, end_id=4294967295,
-            persist_file="data/id_allocation.json")
+            persist_file="data/id_allocation.json", max_released=10000,
+            lease_policy=None, metrics_sink=None)
 ```
 
 ### Methods
@@ -313,11 +329,11 @@ IDAllocator(base_dir=None, start_id=1, end_id=4294967295,
 |---|---|---|
 | `allocate_id(meta=None)` | `int` | Allocate the next available ID |
 | `allocate_pool(count, meta=None)` | `list[int]` | Allocate `count` IDs at once |
-| `release_id(id_val)` | `bool` | Return an ID to the free pool |
+| `release_id(id_val, immediate=False)` | `bool` | Mark ID offline and reclaim immediately or after lease |
 | `release_pool(ids)` | `int` | Bulk release; returns count released |
 | `is_allocated(id_val)` | `bool` | Check if ID is in use |
 | `get_meta(id_val)` | `dict` | Retrieve metadata stored at allocation time |
-| `stats()` | `dict` | `{total_allocated, total_released, next_candidate, range}` |
+| `stats()` | `dict` | Includes allocator totals plus `lease_policy` and `lease_metrics` |
 
 ---
 
@@ -338,13 +354,13 @@ TransporterManager(master: OpenSynaptic)
 | `auto_load()` | `dict` | Discover and activate all enabled transporters |
 | `get_driver(medium)` | `driver \| None` | Return the driver for a medium key |
 | `refresh_protocol(medium)` | `driver \| None` | Invalidate cache and reload one driver |
-| `runtime_tick()` | `None` | Periodic heartbeat; reloads stale drivers |
+| `runtime_tick()` | `bool` | Periodic heartbeat; reloads stale drivers |
 
 ---
 
 ## `CoreManager` — `core/coremanager.py`
 
-Discovers and lazy-loads core plugins (currently `pycore`) and resolves the public `opensynaptic.core` symbols.
+Discovers and lazy-loads core plugins (for example `pycore` and `rscore`) and resolves the public `opensynaptic.core` symbols.
 
 ### Constructor
 
@@ -441,7 +457,7 @@ TUIService(node: OpenSynaptic)
 
 ## `TestPlugin` — `services/test_plugin/main.py`
 
-ServiceManager-mountable test runner exposing component and stress test suites.
+ServiceManager-mountable test runner exposing component, stress, integration, and comparison suites.
 
 ### Constructor
 
@@ -454,9 +470,10 @@ TestPlugin(node: OpenSynaptic | None = None)
 | Method | Returns | Description |
 |---|---|---|
 | `run_component(verbosity=1)` | `(ok, fail, result)` | Run all `unittest.TestCase` component tests |
-| `run_stress(total=200, workers=8, sources=6, progress=True)` | `(summary_dict, fail_count)` | Run concurrent pipeline stress test |
-| `run_all(stress_total=200, stress_workers=8, stress_sources=6, verbosity=1, progress=True)` | `dict` | Both suites; returns combined report |
-| `get_cli_commands()` | `dict` | Returns `{"component": fn, "stress": fn, "all": fn}` |
+| `run_stress(total=200, workers=8, sources=6, progress=True, core_backend=None, require_rust=False, header_probe_rate=0.0, batch_size=1, processes=1, threads_per_process=None, chain_mode='core')` | `(summary_dict, fail_count)` | Run concurrent pipeline stress test |
+| `run_all(stress_total=200, stress_workers=8, stress_sources=6, verbosity=1, progress=True, core_backend=None, require_rust=False, header_probe_rate=0.0, batch_size=1, processes=1, threads_per_process=None, chain_mode='core')` | `dict` | Run component + stress and return combined report |
+| `run_integration()` | `(ok, fail, result)` | Run integration test suite |
+| `get_cli_commands()` | `dict` | Returns handlers including `component`, `stress`, `all`, `compare`, `full_load`, `integration`, `audit` |
 
 ---
 
@@ -510,4 +527,3 @@ os_log.log_with_const('info', LogMsg.READY, root='/path/to/root')
 
 All message templates live in `utils/constants.py:MESSAGES`.  
 Add a `LogMsg` enum member before using it with `log_with_const`.
-

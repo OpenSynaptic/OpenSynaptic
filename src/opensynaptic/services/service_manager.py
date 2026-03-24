@@ -12,8 +12,11 @@ class ServiceManager:
         self.config_index = {}
         self._lock = threading.RLock()
 
+    def _normalize_name(self, name):
+        return str(name or '').strip().lower()
+
     def mount(self, name, service, config=None, mode=None):
-        key = str(name or '').strip().lower()
+        key = self._normalize_name(name)
         if not key:
             raise ValueError('service name is required')
         with self._lock:
@@ -23,11 +26,11 @@ class ServiceManager:
         return service
 
     def get(self, name, default=None):
-        key = str(name or '').strip().lower()
+        key = self._normalize_name(name)
         return self.mount_index.get(key, default)
 
     def load(self, name):
-        key = str(name or '').strip().lower()
+        key = self._normalize_name(name)
         svc = self.mount_index.get(key)
         if not svc:
             return None
@@ -80,7 +83,7 @@ class ServiceManager:
 
     def dispatch_plugin_cli(self, plugin_name, argv):
         """Route *argv* to the named plugin's CLI handler. Returns exit code (int)."""
-        key = str(plugin_name or '').strip().lower()
+        key = self._normalize_name(plugin_name)
         svc = self.mount_index.get(key)
         if svc is None:
             os_log.err('SVC', 'PLUGIN_CMD', ValueError(f'Plugin not mounted: {key}'), {'name': key})

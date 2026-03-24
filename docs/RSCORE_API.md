@@ -1,7 +1,7 @@
 # RSCore API Design — OpenSynaptic Rust Core
 
 **Purpose:** Define the complete Rust API for `rscore/` — a native Rust reimplementation of `pycore/`.  
-**Source of truth:** `docs/PYCORE_INTERNALS.md`  
+**Source of truth:** `docs/internal/PYCORE_INTERNALS.md`
 **Target crate path:** `src/opensynaptic/core/rscore/`  
 **Language:** Rust (edition 2021)  
 **FFI surface:** Python-callable via `pyo3`; also usable as a standalone `no_std`-compatible library.

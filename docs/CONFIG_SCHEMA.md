@@ -226,7 +226,22 @@ Pipeline behaviour and precision controls.
     "time_precision":          4,
     "epoch_base":              0,
     "use_ms":                  true,
-    "zero_copy_transport":     true
+    "zero_copy_transport":     true,
+    "transmit_batch": {
+        "enabled": true,
+        "max_items": 16,
+        "window_ms": 1.0,
+        "adaptive": {
+            "enabled": true,
+            "history_size": 256,
+            "tune_every_batches": 32,
+            "target_tail_ms": 30.0,
+            "window_ms_min": 0.5,
+            "window_ms_max": 6.0,
+            "max_items_min": 4,
+            "max_items_max": 64
+        }
+    }
 }
 ```
 
@@ -246,6 +261,24 @@ Pipeline behaviour and precision controls.
 | `epoch_base` | int | `0` | Epoch offset (seconds) subtracted from UNIX timestamps before compression |
 | `use_ms` | bool | `true` | Store timestamps in milliseconds |
 | `zero_copy_transport` | bool | `true` | Use `memoryview` pass-through in the send path instead of materializing to `bytes`. Set to `false` for legacy rollback. |
+| `transmit_batch.enabled` | bool | `true` | Enable batch aggregation in `transmit_fast()` / `transmit_batch()` for rscore core |
+| `transmit_batch.max_items` | int | `16` | Flush batch immediately when queue reaches this many items |
+| `transmit_batch.window_ms` | float | `1.0` | Time window before forced batch flush (milliseconds) |
+
+### `engine_settings.transmit_batch.adaptive`
+
+Adaptive tuner for long-tail control (`p99.99`) based on recent `compress_ms + fuse_ms` batch tails.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `true` | Enable automatic tuning of `max_items` / `window_ms` |
+| `history_size` | int | `256` | Number of recent batches kept for tail estimation |
+| `tune_every_batches` | int | `32` | Run one tuning step after this many flushed batches |
+| `target_tail_ms` | float | `30.0` | Target fused tail (`compress_ms + fuse_ms`) in ms |
+| `window_ms_min` | float | `0.5` | Lower bound for adaptive window |
+| `window_ms_max` | float | `6.0` | Upper bound for adaptive window |
+| `max_items_min` | int | `4` | Lower bound for adaptive batch size |
+| `max_items_max` | int | `64` | Upper bound for adaptive batch size |
 
 ---
 

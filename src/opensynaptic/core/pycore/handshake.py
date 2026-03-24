@@ -2,9 +2,11 @@ import json
 import struct
 import time
 import threading
+from pathlib import Path
 from opensynaptic.utils import (
     get_registry_path,
     read_json,
+    write_json,
     os_log,
     LogMsg,
     derive_session_key,
@@ -38,7 +40,7 @@ class CMD:
 
 class OSHandshakeManager:
 
-    def __init__(self, target_sync_count=3, registry_dir=None, expire_seconds=86400):
+    def __init__(self, target_sync_count=3, registry_dir=None, expire_seconds=86400, secure_store_path=None):
         self.target_sync_count = target_sync_count
         self.registry_dir = registry_dir
         self.expire_seconds = expire_seconds
@@ -50,6 +52,73 @@ class OSHandshakeManager:
         self.parser = None
         self.min_valid_timestamp = 1000000
         self.last_server_time = 0
+        self.cleanup_interval = max(15, int(min(self.expire_seconds, 300)))
+        self._last_cleanup = 0
+        self.secure_store_path = secure_store_path or str(Path(self.registry_dir or '.') / 'secure_sessions.json')
+        self._secure_dirty = False
+        self._secure_last_persist = 0
+        self._secure_persist_interval = 5
+        self._load_secure_sessions()
+
+    def _session_to_json(self, session):
+        out = dict(session or {})
+        key = out.get('key')
+        pending_key = out.get('pending_key')
+        out['key_hex'] = key.hex() if isinstance(key, (bytes, bytearray)) else out.get('key_hex')
+        out['pending_key_hex'] = pending_key.hex() if isinstance(pending_key, (bytes, bytearray)) else out.get('pending_key_hex')
+        out.pop('key', None)
+        out.pop('pending_key', None)
+        return out
+
+    def _session_from_json(self, session):
+        out = dict(session or {})
+        key_hex = out.get('key_hex')
+        pending_hex = out.get('pending_key_hex')
+        try:
+            out['key'] = bytes.fromhex(key_hex) if isinstance(key_hex, str) and key_hex else None
+        except Exception:
+            out['key'] = None
+        try:
+            out['pending_key'] = bytes.fromhex(pending_hex) if isinstance(pending_hex, str) and pending_hex else None
+        except Exception:
+            out['pending_key'] = None
+        return out
+
+    def _mark_secure_dirty(self):
+        self._secure_dirty = True
+
+    def _save_secure_sessions(self, force=False):
+        if not self._secure_dirty and (not force):
+            return
+        now = int(time.time())
+        if (not force) and (now - int(self._secure_last_persist or 0) < self._secure_persist_interval):
+            return
+        try:
+            p = Path(self.secure_store_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                payload = {
+                    'updated_at': now,
+                    'sessions': {k: self._session_to_json(v) for k, v in self.secure_sessions.items()},
+                }
+            write_json(str(p), payload, indent=2)
+            self._secure_last_persist = now
+            self._secure_dirty = False
+        except Exception as e:
+            os_log.err('HND', 'SECURE_SAVE', e, {'path': self.secure_store_path})
+
+    def _load_secure_sessions(self):
+        p = Path(self.secure_store_path)
+        if not p.exists():
+            return
+        try:
+            raw = read_json(str(p)) or {}
+            sessions = raw.get('sessions', {}) if isinstance(raw.get('sessions', {}), dict) else {}
+            with self._lock:
+                for key, val in sessions.items():
+                    self.secure_sessions[str(key)] = self._session_from_json(val)
+        except Exception as e:
+            os_log.err('HND', 'SECURE_LOAD', e, {'path': self.secure_store_path})
 
     def _default_secure_session(self):
         return {'last': int(time.time()), 'peer_addr': None, 'first_plaintext_ts': None, 'pending_timestamp': None, 'pending_key': None, 'pending_key_hex': None, 'key': None, 'key_hex': None, 'dict_ready': False, 'decrypt_confirmed': False, 'state': 'INIT'}
@@ -58,16 +127,20 @@ class OSHandshakeManager:
         key, _ = self._normalize_aid(aid)
         if not key:
             return None
+        self._cleanup_expired()
         with self._lock:
             session = self.secure_sessions.get(key)
             if not session and create:
                 session = self._default_secure_session()
                 self.secure_sessions[key] = session
+                self._mark_secure_dirty()
             if session:
                 session['last'] = int(time.time())
                 if addr:
                     session['peer_addr'] = str(addr)
-            return session
+                self._mark_secure_dirty()
+        self._save_secure_sessions()
+        return session
 
     def get_session_key(self, aid):
         session = self._get_secure_session(aid, create=False)
@@ -92,6 +165,8 @@ class OSHandshakeManager:
         session['pending_key'] = key
         session['pending_key_hex'] = key.hex()
         session['state'] = 'PLAINTEXT_SENT'
+        self._mark_secure_dirty()
+        self._save_secure_sessions()
         return session
 
     def establish_remote_plaintext(self, aid, timestamp_raw, addr=None):
@@ -105,6 +180,8 @@ class OSHandshakeManager:
             session['first_plaintext_ts'] = int(timestamp_raw or 0)
         session['dict_ready'] = True
         session['state'] = 'DICT_READY'
+        self._mark_secure_dirty()
+        self._save_secure_sessions()
         return session
 
     def confirm_secure_dict(self, aid, timestamp_raw=None, addr=None):
@@ -124,6 +201,8 @@ class OSHandshakeManager:
         session['dict_ready'] = bool(session.get('key'))
         if session['dict_ready']:
             session['state'] = 'DICT_READY'
+        self._mark_secure_dirty()
+        self._save_secure_sessions()
         return session['dict_ready']
 
     def mark_secure_channel(self, aid, addr=None):
@@ -132,6 +211,8 @@ class OSHandshakeManager:
             return None
         session['decrypt_confirmed'] = True
         session['state'] = 'SECURE'
+        self._mark_secure_dirty()
+        self._save_secure_sessions()
         return session
 
     def note_server_time(self, server_time):
@@ -167,6 +248,11 @@ class OSHandshakeManager:
             if meta.get('crc16_ok') is False:
                 return {'type': 'DATA', 'cmd': cmd, 'result': result, 'response': None}
             if src_aid is not None and (not result.get('error')):
+                if self.id_allocator:
+                    try:
+                        self.id_allocator.touch(int(src_aid), meta={'last_addr': str(addr) if addr else '', 'last_seen_from_data': int(time.time())})
+                    except Exception:
+                        pass
                 if not is_secure:
                     session = self._get_secure_session(src_aid, addr=addr, create=False)
                     if not (session and session.get('dict_ready')):
@@ -223,7 +309,7 @@ class OSHandshakeManager:
         assigned_id = None
         if self.id_allocator:
             try:
-                assigned_id = self.id_allocator.allocate_id(meta={'addr': str(addr) if addr else 'unknown', 'device_meta': meta, 'ts': int(time.time())})
+                assigned_id = self.id_allocator.allocate_id(meta={'addr': str(addr) if addr else 'unknown', 'device_meta': meta, 'device_id': meta.get('device_id') if isinstance(meta, dict) else None, 'ts': int(time.time())})
             except RuntimeError:
                 return {'type': 'CTRL', 'cmd': CMD.ID_REQUEST, 'result': {'status': 'REJECTED', 'reason': 'ID pool exhausted'}, 'response': self._build_nack(seq=seq, reason='ID_POOL_EXHAUSTED')}
         if assigned_id is not None:
@@ -446,6 +532,8 @@ class OSHandshakeManager:
 
     def _cleanup_expired(self):
         now = int(time.time())
+        if now - int(self._last_cleanup or 0) < self.cleanup_interval:
+            return
         with self._lock:
             expired = [k for k, v in self.registry_status.items() if now - v.get('last', 0) > self.expire_seconds]
             for k in expired:
@@ -453,6 +541,9 @@ class OSHandshakeManager:
             expired_sessions = [k for k, v in self.secure_sessions.items() if now - v.get('last', 0) > self.expire_seconds]
             for k in expired_sessions:
                 del self.secure_sessions[k]
+                self._mark_secure_dirty()
+            self._last_cleanup = now
+        self._save_secure_sessions()
 
     def request_id_via_transport(self, transport_send_fn, transport_recv_fn, device_meta=None, timeout=5.0):
         req_packet = self.build_id_request(device_meta)

@@ -3,7 +3,7 @@
 This document describes the hard-switched core API.
 
 > **See also:**
-> - [`PYCORE_INTERNALS.md`](PYCORE_INTERNALS.md) — complete method-level reference for every class in `pycore/`
+> - [`internal/PYCORE_INTERNALS.md`](internal/PYCORE_INTERNALS.md) — complete method-level reference for every class in `pycore/`
 > - [`RSCORE_API.md`](RSCORE_API.md) — Rust core (`rscore/`) API design derived from pycore
 > - [`API.md`](API.md) — full public API reference including services and plugins
 

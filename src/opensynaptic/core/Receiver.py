@@ -171,79 +171,121 @@ class ShardedPacketDispatcher:
         for t in self._threads:
             t.join(timeout=2.0)
 
+
+class ReceiverRuntime:
+
+    def __init__(self, node, listen_ip='0.0.0.0', listen_port=8080, shard_count=None, queue_size=32, report_interval_s=60.0):
+        self.node = node
+        self.listen_ip = str(listen_ip or '0.0.0.0')
+        self.listen_port = int(listen_port)
+        self.shard_count = int(shard_count or max(2, os.cpu_count() or 2))
+        self.queue_size = int(queue_size)
+        self.report_interval_s = float(report_interval_s)
+
+        self.stop_event = threading.Event()
+        self.stats = ReceiverStats()
+        self.dispatcher = None
+        self._sock = None
+        self._thread = None
+
+    def _serve_loop(self):
+        self.node.protocol.parser = self.node.fusion
+        next_report_at = time.time() + self.report_interval_s
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            self._sock = s
+            s.bind((self.listen_ip, self.listen_port))
+            s.settimeout(1.0)
+
+            def handle_packet(data, addr):
+                cmd_hex = f'0x{data[0]:02X}'
+                os_log.log_with_const('info', LogMsg.RX_PACKET_IN, addr=addr, cmd=cmd_hex, size=len(data))
+                dispatch_result = self.node.protocol.classify_and_dispatch(data, addr)
+                ptype = dispatch_result.get('type')
+                result = dispatch_result.get('result')
+                response = dispatch_result.get('response')
+                sent_bytes = 0
+                if ptype == 'DATA':
+                    os_log.log_with_const('info', LogMsg.RX_DATA_PACKET, preview=json.dumps(result, ensure_ascii=False)[:240])
+                elif ptype == 'CTRL':
+                    os_log.log_with_const('info', LogMsg.RX_CTRL_PACKET, preview=str(result)[:240])
+                    if response:
+                        s.sendto(response, addr)
+                        sent_bytes = len(response)
+                        os_log.log_with_const('info', LogMsg.RX_RESPONSE_SENT, addr=addr, size=len(response))
+                else:
+                    os_log.log_with_const('warning', LogMsg.RX_UNKNOWN_PACKET, preview=str(result)[:240])
+                    if response:
+                        s.sendto(response, addr)
+                        sent_bytes = len(response)
+                return sent_bytes
+
+            self.dispatcher = ShardedPacketDispatcher(
+                worker_fn=handle_packet,
+                stats=self.stats,
+                shard_count=self.shard_count,
+                queue_size=self.queue_size,
+            )
+            self.dispatcher.start()
+            os_log.log_with_const('info', LogMsg.RX_WORKERS_READY, shards=self.shard_count, queue_size=self.queue_size, capacity=self.dispatcher.capacity())
+            try:
+                while not self.stop_event.is_set():
+                    try:
+                        try:
+                            data, addr = s.recvfrom(4096)
+                        except socket.timeout:
+                            data = None
+                            addr = None
+                        if data:
+                            self.stats.on_receive(len(data))
+                            self.dispatcher.submit(data, addr)
+                        now = time.time()
+                        if now >= next_report_at:
+                            snap = self.stats.snapshot()
+                            os_log.log_with_const('info', LogMsg.RX_PERF, received=snap['received_packets'], completed=snap['completed_packets'], failed=snap['failed_packets'], dropped=snap['dropped_packets'], backlog=snap['backlog'], max_backlog=snap['max_backlog'], avg_latency_ms=snap['avg_latency_ms'], max_latency_ms=snap['max_latency_ms'], ingress_pps=snap['ingress_pps'], complete_pps=snap['complete_pps'])
+                            next_report_at = now + self.report_interval_s
+                    except Exception as e:
+                        os_log.log_with_const('error', LogMsg.RX_SOCKET_ERROR, error=str(e))
+            finally:
+                if self.dispatcher:
+                    self.dispatcher.stop(drain=True)
+                snap = self.stats.snapshot()
+                os_log.log_with_const('info', LogMsg.RX_FINAL_STATS, snapshot=json.dumps(snap, ensure_ascii=False))
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        os_log.log_with_const('info', LogMsg.RX_SERVER_START, port=self.listen_port)
+        self._thread = threading.Thread(target=self._serve_loop, daemon=True, name='os-receiver-runtime')
+        self._thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
+    def get_stats(self):
+        return self.stats.snapshot()
+
 def main():
     cfg_path = os.path.join(PROJECT_ROOT, 'Config.json')
     node = OpenSynaptic(cfg_path)
-    node.protocol.parser = node.fusion
-    LISTEN_IP = '0.0.0.0'
-    LISTEN_PORT = 8080
-    os_log.log_with_const('info', LogMsg.RX_SERVER_START, port=LISTEN_PORT)
-    stop_event = threading.Event()
-    shard_count = max(2, os.cpu_count() or 2)
-    queue_size = 32
-    stats = ReceiverStats()
-    report_interval_s = 5.0
-    next_report_at = time.time() + report_interval_s
+    runtime = ReceiverRuntime(node=node, listen_ip='0.0.0.0', listen_port=8080, shard_count=max(2, os.cpu_count() or 2), queue_size=32, report_interval_s=60.0)
 
     def _signal_handler(sig, frame):
         os_log.log_with_const('warning', LogMsg.RX_SIGNAL_STOP)
-        stop_event.set()
+        runtime.stop_event.set()
     signal.signal(signal.SIGINT, _signal_handler)
     if hasattr(signal, 'SIGTERM'):
         try:
             signal.signal(signal.SIGTERM, _signal_handler)
         except Exception:
             pass
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.bind((LISTEN_IP, LISTEN_PORT))
-        s.settimeout(1.0)
-
-        def handle_packet(data, addr):
-            cmd_hex = f'0x{data[0]:02X}'
-            os_log.log_with_const('info', LogMsg.RX_PACKET_IN, addr=addr, cmd=cmd_hex, size=len(data))
-            dispatch_result = node.protocol.classify_and_dispatch(data, addr)
-            ptype = dispatch_result.get('type')
-            result = dispatch_result.get('result')
-            response = dispatch_result.get('response')
-            sent_bytes = 0
-            if ptype == 'DATA':
-                os_log.log_with_const('info', LogMsg.RX_DATA_PACKET, preview=json.dumps(result, ensure_ascii=False)[:240])
-            elif ptype == 'CTRL':
-                os_log.log_with_const('info', LogMsg.RX_CTRL_PACKET, preview=str(result)[:240])
-                if response:
-                    s.sendto(response, addr)
-                    sent_bytes = len(response)
-                    os_log.log_with_const('info', LogMsg.RX_RESPONSE_SENT, addr=addr, size=len(response))
-            else:
-                os_log.log_with_const('warning', LogMsg.RX_UNKNOWN_PACKET, preview=str(result)[:240])
-                if response:
-                    s.sendto(response, addr)
-                    sent_bytes = len(response)
-            return sent_bytes
-        dispatcher = ShardedPacketDispatcher(worker_fn=handle_packet, stats=stats, shard_count=shard_count, queue_size=queue_size)
-        dispatcher.start()
-        os_log.log_with_const('info', LogMsg.RX_WORKERS_READY, shards=shard_count, queue_size=queue_size, capacity=dispatcher.capacity())
-        try:
-            while not stop_event.is_set():
-                try:
-                    try:
-                        data, addr = s.recvfrom(4096)
-                    except socket.timeout:
-                        data = None
-                        addr = None
-                    if data:
-                        stats.on_receive(len(data))
-                        dispatcher.submit(data, addr)
-                    now = time.time()
-                    if now >= next_report_at:
-                        snap = stats.snapshot()
-                        os_log.log_with_const('info', LogMsg.RX_PERF, received=snap['received_packets'], completed=snap['completed_packets'], failed=snap['failed_packets'], dropped=snap['dropped_packets'], backlog=snap['backlog'], max_backlog=snap['max_backlog'], avg_latency_ms=snap['avg_latency_ms'], max_latency_ms=snap['max_latency_ms'], ingress_pps=snap['ingress_pps'], complete_pps=snap['complete_pps'])
-                        next_report_at = now + report_interval_s
-                except Exception as e:
-                    os_log.log_with_const('error', LogMsg.RX_SOCKET_ERROR, error=str(e))
-        finally:
-            dispatcher.stop(drain=True)
-            snap = stats.snapshot()
-            os_log.log_with_const('info', LogMsg.RX_FINAL_STATS, snapshot=json.dumps(snap, ensure_ascii=False))
+    runtime.start()
+    try:
+        while not runtime.stop_event.is_set():
+            time.sleep(0.2)
+    finally:
+        runtime.stop()
 if __name__ == '__main__':
     main()

@@ -19,6 +19,7 @@ class TransporterManager:
 
     def __init__(self, master):
         self.master = master
+        self._proxy_cache = {}
         self._migrate_resource_maps()
         self._service_manager = getattr(master, 'service_manager', None)
         if not self._service_manager:
@@ -34,6 +35,14 @@ class TransporterManager:
         self._transport_manager.set_config(master.config)
         self._physical_manager.set_config(master.config)
 
+    def _get_or_create_proxy(self, manager, key):
+        cache_key = (id(manager), key)
+        proxy = self._proxy_cache.get(cache_key)
+        if proxy is None:
+            proxy = _ManagerProxyDriver(manager, key)
+            self._proxy_cache[cache_key] = proxy
+        return proxy
+
     def _migrate_resource_maps(self):
         res = self.master.config.setdefault('RESOURCES', {})
         legacy = res.get('transporters_status', {}) if isinstance(res.get('transporters_status', {}), dict) else {}
@@ -41,29 +50,30 @@ class TransporterManager:
         transport_status = res.setdefault('transport_status', {})
         physical_status = res.setdefault('physical_status', {})
         changed = False
-        for key, val in legacy.items():
-            k = str(key).strip().lower()
-            if k in self.APP_PROTOCOLS and k not in app_status:
-                app_status[k] = bool(val)
-                changed = True
-            if k in self.TRANSPORT_PROTOCOLS and k not in transport_status:
-                transport_status[k] = bool(val)
-                changed = True
-            if k in self.PHYSICAL_PROTOCOLS and k not in physical_status:
-                physical_status[k] = bool(val)
-                changed = True
-        for k in self.APP_PROTOCOLS:
-            if k not in app_status:
-                app_status[k] = bool(legacy.get(k, False))
-                changed = True
-        for k in self.TRANSPORT_PROTOCOLS:
-            if k not in transport_status:
-                transport_status[k] = bool(legacy.get(k, True))
-                changed = True
-        for k in self.PHYSICAL_PROTOCOLS:
-            if k not in physical_status:
-                physical_status[k] = bool(legacy.get(k, False))
-                changed = True
+
+        def _pull_from_legacy(protocol_set, target_map):
+            nonlocal changed
+            for key, val in legacy.items():
+                k = str(key).strip().lower()
+                if k in protocol_set and k not in target_map:
+                    target_map[k] = bool(val)
+                    changed = True
+
+        def _apply_defaults(protocol_set, target_map, default_value):
+            nonlocal changed
+            for k in protocol_set:
+                if k not in target_map:
+                    target_map[k] = bool(legacy.get(k, default_value))
+                    changed = True
+
+        _pull_from_legacy(self.APP_PROTOCOLS, app_status)
+        _pull_from_legacy(self.TRANSPORT_PROTOCOLS, transport_status)
+        _pull_from_legacy(self.PHYSICAL_PROTOCOLS, physical_status)
+
+        _apply_defaults(self.APP_PROTOCOLS, app_status, False)
+        _apply_defaults(self.TRANSPORT_PROTOCOLS, transport_status, True)
+        _apply_defaults(self.PHYSICAL_PROTOCOLS, physical_status, False)
+
         res.setdefault('application_config', {})
         res.setdefault('transport_config', {})
         res.setdefault('physical_config', {})
@@ -91,34 +101,37 @@ class TransporterManager:
         self._transport_manager.set_config(self.master.config)
         self._physical_manager.set_config(self.master.config)
         for key in list(self._transport_manager.adapters.keys()):
-            self._transport_manager._impl.refresh_if_changed(key)
+            self._transport_manager.refresh_if_changed(key)
         for key in list(self._physical_manager.adapters.keys()):
-            self._physical_manager._impl.refresh_if_changed(key)
+            self._physical_manager.refresh_if_changed(key)
         return True
 
+    def _normalize_medium(self, medium):
+        return str(medium or '').strip().lower()
+
     def refresh_protocol(self, medium):
-        key = str(medium or '').strip().lower()
+        key = self._normalize_medium(medium)
         if not key:
             return None
         refreshed = self._transport_manager.refresh(key)
         if refreshed:
-            return _ManagerProxyDriver(self._transport_manager, key)
+            return self._get_or_create_proxy(self._transport_manager, key)
         refreshed = self._physical_manager.refresh(key)
         if refreshed:
-            return _ManagerProxyDriver(self._physical_manager, key)
+            return self._get_or_create_proxy(self._physical_manager, key)
         return None
 
     def get_driver(self, medium):
-        key = str(medium or '').strip().lower()
+        key = self._normalize_medium(medium)
         if not key:
             return None
         app_driver = self._service.get_driver(key)
         if app_driver:
             return app_driver
         if self._transport_manager.get_adapter(key):
-            return _ManagerProxyDriver(self._transport_manager, key)
+            return self._get_or_create_proxy(self._transport_manager, key)
         if self._physical_manager.get_adapter(key):
-            return _ManagerProxyDriver(self._physical_manager, key)
+            return self._get_or_create_proxy(self._physical_manager, key)
         return None
 
     def dispatch_auto(self, packet):

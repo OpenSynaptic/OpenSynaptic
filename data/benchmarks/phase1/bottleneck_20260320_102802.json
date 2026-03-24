@@ -1,0 +1,74 @@
+{
+  "generated_at": "20260320_102802",
+  "rows": [
+    {
+      "spec": "p12_t2_b256",
+      "processes": 12,
+      "threads_per_process": 2,
+      "batch_size": 256,
+      "repeat": 1,
+      "throughput_pps": 17617.9,
+      "p99_99_latency_ms": 9.519,
+      "max_latency_ms": 28.1575,
+      "fail": 0,
+      "bottleneck": {
+        "worst_total_latency_ms": 28.1575,
+        "worst_tracked_stage_sum_ms": 0.0871,
+        "worst_untracked_latency_ms": 28.0704,
+        "worst_untracked_ratio_pct": 99.6907,
+        "worst_dominant_stage": "standardize_ms",
+        "worst_topk_dominant_stage_counts": {
+          "standardize_ms": 1,
+          "fuse_ms": 3,
+          "compress_ms": 1
+        }
+      },
+      "file": "C:\\Users\\26427\\Documents\\GitHub\\OpenSynaptic\\data\\benchmarks\\phase1\\p12_t2_b256_r1_20260320_102802.json"
+    },
+    {
+      "spec": "p6_t4_b256",
+      "processes": 6,
+      "threads_per_process": 4,
+      "batch_size": 256,
+      "repeat": 1,
+      "throughput_pps": 21834.2,
+      "p99_99_latency_ms": 15.7741,
+      "max_latency_ms": 20.2502,
+      "fail": 0,
+      "bottleneck": {
+        "worst_total_latency_ms": 20.2502,
+        "worst_tracked_stage_sum_ms": 20.0606,
+        "worst_untracked_latency_ms": 0.1896,
+        "worst_untracked_ratio_pct": 0.9363,
+        "worst_dominant_stage": "fuse_ms",
+        "worst_topk_dominant_stage_counts": {
+          "fuse_ms": 5
+        }
+      },
+      "file": "C:\\Users\\26427\\Documents\\GitHub\\OpenSynaptic\\data\\benchmarks\\phase1\\p6_t4_b256_r1_20260320_102802.json"
+    },
+    {
+      "spec": "p4_t6_b256",
+      "processes": 4,
+      "threads_per_process": 6,
+      "batch_size": 256,
+      "repeat": 1,
+      "throughput_pps": 19753.0,
+      "p99_99_latency_ms": 4.3585,
+      "max_latency_ms": 5.0839,
+      "fail": 0,
+      "bottleneck": {
+        "worst_total_latency_ms": 5.0839,
+        "worst_tracked_stage_sum_ms": 0.2811,
+        "worst_untracked_latency_ms": 4.8028,
+        "worst_untracked_ratio_pct": 94.4708,
+        "worst_dominant_stage": "fuse_ms",
+        "worst_topk_dominant_stage_counts": {
+          "fuse_ms": 4,
+          "compress_ms": 1
+        }
+      },
+      "file": "C:\\Users\\26427\\Documents\\GitHub\\OpenSynaptic\\data\\benchmarks\\phase1\\p4_t6_b256_r1_20260320_102802.json"
+    }
+  ]
+}

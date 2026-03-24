@@ -273,19 +273,25 @@ Core facade and loader reference -> [`docs/CORE_API.md`](docs/CORE_API.md)
 
 ## Documentation Hub
 
+- Repository docs map: [`docs/INDEX.md`](docs/INDEX.md)
 - Start here: [`docs/README.md`](docs/README.md)
 - Architecture walkthrough: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Config schema: [`docs/CONFIG_SCHEMA.md`](docs/CONFIG_SCHEMA.md)
 - Transporter/plugin extension: [`docs/TRANSPORTER_PLUGIN.md`](docs/TRANSPORTER_PLUGIN.md)
-- Core internals: [`docs/PYCORE_INTERNALS.md`](docs/PYCORE_INTERNALS.md)
+- Core internals: [`docs/internal/PYCORE_INTERNALS.md`](docs/internal/PYCORE_INTERNALS.md)
 - Rust core references: [`docs/RSCORE_API.md`](docs/RSCORE_API.md), [`docs/PYCORE_RUST_API.md`](docs/PYCORE_RUST_API.md)
+- Upgrade guide: [`docs/guides/upgrade/v0.3.0.md`](docs/guides/upgrade/v0.3.0.md)
+- Driver quick reference: [`docs/guides/drivers/quick-reference.md`](docs/guides/drivers/quick-reference.md)
+- Version comparison report: [`docs/reports/releases/v0.2.0-v0.3.0-comparison.md`](docs/reports/releases/v0.2.0-v0.3.0-comparison.md)
+- Release summary: [`docs/releases/announcement-summary-v0.3.0.md`](docs/releases/announcement-summary-v0.3.0.md)
 
 ---
 
 ## Release Notes
 
 - Project changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- Latest release draft: [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md)
+- v0.2.0 draft archive: [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md)
+- v0.3.0 announcement: [`docs/releases/v0.3.0_announcement.md`](docs/releases/v0.3.0_announcement.md)
 
 ## Plugin Config Auto-Sync
 

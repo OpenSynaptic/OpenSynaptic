@@ -41,6 +41,29 @@ def _apply_quiet_mode(args):
         pass
 
 
+def _log_cli_result_payload(payload):
+    if isinstance(payload, dict):
+        summary = {'keys': sorted(list(payload.keys()))}
+        if 'status' in payload:
+            summary['status'] = payload.get('status')
+        if 'reloaded' in payload:
+            summary['reloaded'] = payload.get('reloaded')
+        if 'ok' in payload:
+            summary['ok'] = payload.get('ok')
+        text = json.dumps(summary, ensure_ascii=False, default=str)
+        os_log.log_with_const('info', LogMsg.CLI_RESULT, result=text)
+        return
+    try:
+        text = json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(payload)
+    os_log.log_with_const('info', LogMsg.CLI_RESULT, result=text[:240] + (' ...' if len(text) > 240 else ''))
+
+
+def _print_cli_payload(payload):
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
 def _render_help_text(parser, full: bool = False) -> None:
     if full:
         parser.print_help()
@@ -71,6 +94,13 @@ def _render_help_text(parser, full: bool = False) -> None:
 
   TESTING & PROFILING
     plugin-test         Run tests  (--profile quick/deep/record for one-flag presets)
+      --suite component     Unit component tests
+      --suite stress        Concurrent stress tests
+      --suite all           Component + stress tests
+      --suite compare       pycore vs rscore comparison
+      --suite full_load     Full-CPU-saturation stress
+      --suite integration   System integration tests
+      --suite audit         Driver capability audit
       --profile quick       Fast smoke test          ( 5 000 iters, 1 proc,  b=32)
       --profile deep        Deep stress + auto-profile (50 000 iters, 4 procs, b=64)
       --profile record      pycore vs rscore compare  (10 000 iters, 2 procs, 3 runs)
@@ -113,6 +143,7 @@ def _render_help_text(parser, full: bool = False) -> None:
     --once              Run mode: execute once and exit
     --interval N        Polling interval in seconds  (run / watch)
     --duration N        Total run duration in seconds  (0 = unlimited)
+    --stats-interval N  Run-mode stats heartbeat in seconds
 
   Examples:
     os-node status
@@ -534,8 +565,23 @@ def main(argv=None):
             device_status=args.status,
         )
         sent = node.dispatch(packet, medium=args.medium)
-        result = {'assigned_id': aid, 'strategy': strategy, 'packet_len': len(packet),
-                  'sensors_count': len(sensors), 'sent': bool(sent)}
+        packet_cmd = int(packet[0]) if packet else None
+        dispatch_path = None
+        get_dispatch_path = getattr(node, 'get_last_dispatch_path', None)
+        if callable(get_dispatch_path):
+            try:
+                dispatch_path = get_dispatch_path()
+            except Exception:
+                dispatch_path = None
+        result = {
+            'assigned_id': aid,
+            'strategy': strategy,
+            'packet_len': len(packet),
+            'packet_cmd': packet_cmd,
+            'dispatch_path': dispatch_path,
+            'sensors_count': len(sensors),
+            'sent': bool(sent),
+        }
         os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(result, ensure_ascii=False))
         print(json.dumps(result, ensure_ascii=False))
         return 0 if sent else 1
@@ -559,15 +605,15 @@ def main(argv=None):
             'runtime': snap.get('runtime_index', {}),
             'builtin_plugins': list_builtin_plugins(),
         }
-        os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(result, ensure_ascii=False))
-        print(json.dumps(result, ensure_ascii=False))
+        _log_cli_result_payload(result)
+        _print_cli_payload(result)
         return 0
     if cmd in ('plugin-load', 'os-plugin-load'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='plugin-load')
         key, svc = _ensure_plugin(node, args.name, mode='runtime', load=True)
         result = {'name': key, 'loaded': bool(svc)}
-        os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(result, ensure_ascii=False))
-        print(json.dumps(result, ensure_ascii=False))
+        _log_cli_result_payload(result)
+        _print_cli_payload(result)
         return 0 if svc else 1
     if cmd in ('transport-status', 'os-transport-status'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='transport-status')
@@ -577,14 +623,14 @@ def main(argv=None):
             'physical_status': node.config.get('RESOURCES', {}).get('physical_status', {}),
             'application_status': node.config.get('RESOURCES', {}).get('application_status', {}),
         }
-        os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(result, ensure_ascii=False))
-        print(json.dumps(result, ensure_ascii=False))
+        _log_cli_result_payload(result)
+        _print_cli_payload(result)
         return 0
     if cmd in ('db-status', 'os-db-status'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='db-status')
         result = {'enabled': bool(node.db_manager), 'dialect': getattr(node.db_manager, 'dialect', None)}
-        os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(result, ensure_ascii=False))
-        print(json.dumps(result, ensure_ascii=False))
+        _log_cli_result_payload(result)
+        _print_cli_payload(result)
         return 0
 
     # ------------------------------------------------------------------
@@ -692,11 +738,20 @@ def main(argv=None):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='run')
         host = getattr(args, 'host', None) or node.config.get('Client_Core', {}).get('server_host', '127.0.0.1')
         port = getattr(args, 'port', None) or node.config.get('Client_Core', {}).get('server_port', 8080)
-        ensure_ok = node.ensure_id(host, port)
+        ensure_raw = node.ensure_id(host, port)
+        if isinstance(ensure_raw, dict):
+            ensure_ok = bool(ensure_raw.get('ok', False))
+        else:
+            ensure_ok = bool(ensure_raw)
         once = bool(getattr(args, 'once', False))
         interval = float(getattr(args, 'interval', 5.0))
         duration = float(getattr(args, 'duration', 0.0))
-        result = {'ok': ensure_ok, 'assigned_id': node.assigned_id, 'mode': 'once' if once else 'persistent'}
+        result = {
+            'ok': ensure_ok,
+            'ensure_id': ensure_raw,
+            'assigned_id': node.assigned_id,
+            'mode': 'once' if once else 'persistent',
+        }
         os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(result, ensure_ascii=False))
         print(json.dumps(result, ensure_ascii=False))
         if not ensure_ok:
@@ -704,19 +759,153 @@ def main(argv=None):
         if once:
             return 0
 
+        receiver_runtime = None
+        try:
+            cfg = node.config if isinstance(node.config, dict) else {}
+            role_cfg = cfg.get('OpenSynaptic_Setting', {}) if isinstance(cfg.get('OpenSynaptic_Setting', {}), dict) else {}
+            server_role_enabled = bool(role_cfg.get('Server_Core', False))
+            run_cfg = ((cfg.get('engine_settings', {}) or {}).get('run_loop', {}) or {}) if isinstance(cfg.get('engine_settings', {}), dict) else {}
+            auto_receive_enabled = bool(run_cfg.get('auto_receive', True)) if isinstance(run_cfg, dict) else True
+
+            if server_role_enabled and auto_receive_enabled:
+                from opensynaptic.core.Receiver import ReceiverRuntime
+                server_cfg = cfg.get('Server_Core', {}) if isinstance(cfg.get('Server_Core', {}), dict) else {}
+                listen_ip = str(server_cfg.get('host', '0.0.0.0') or '0.0.0.0')
+                listen_port = int(server_cfg.get('port', 8080) or 8080)
+                receiver_runtime = ReceiverRuntime(node=node, listen_ip=listen_ip, listen_port=listen_port)
+                receiver_runtime.start()
+                node.receiver = receiver_runtime
+                os_log.log_with_const(
+                    'info',
+                    LogMsg.CLI_RESULT,
+                    result=json.dumps(
+                        {
+                            'receiver_auto_started': True,
+                            'role_gate': 'OpenSynaptic_Setting.Server_Core',
+                            'listen_ip': listen_ip,
+                            'listen_port': listen_port,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            else:
+                reason = 'OpenSynaptic_Setting.Server_Core=false' if (not server_role_enabled) else 'engine_settings.run_loop.auto_receive=false'
+                os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps({'receiver_auto_started': False, 'reason': reason}, ensure_ascii=False))
+        except Exception as _rx_e:
+            os_log.err('CLI', 'RUN_RX_BOOT', _rx_e, {})
+
         start_at = time.time()
+        stats_interval_s = 60.0
+        try:
+            run_cfg = (((node.config or {}).get('engine_settings', {}) or {}).get('run_loop', {}) or {})
+            if isinstance(run_cfg, dict):
+                stats_interval_s = max(5.0, float(run_cfg.get('stats_interval_seconds', 60.0) or 60.0))
+        except Exception:
+            stats_interval_s = 60.0
+        cli_stats_interval = getattr(args, 'stats_interval', None)
+        if cli_stats_interval is not None:
+            try:
+                stats_interval_s = max(1.0, float(cli_stats_interval))
+            except Exception:
+                pass
+        last_stats_at = time.time() - stats_interval_s
+        tick_count = 0
+        tick_errors = 0
+        local_packets_processed = 0
+        local_latency_sum_ms = 0.0
+        local_latency_count = 0
+        last_batch_sig = None
+
+        def _collect_runtime_packet_stats():
+            # Preferred source: receiver absolute counters (if running receive mode).
+            recv = getattr(node, 'receiver', None)
+            get_stats = getattr(recv, 'get_stats', None)
+            if callable(get_stats):
+                try:
+                    snap = get_stats()
+                    if isinstance(snap, dict):
+                        p = int(snap.get('completed_packets', snap.get('received_packets', 0)) or 0)
+                        lat = float(snap.get('avg_latency_ms', 0.0) or 0.0)
+                        return p, lat
+                except Exception:
+                    pass
+
+            # Fallback source: last rscore batch metrics (incremental heuristic).
+            getter = getattr(node, 'get_last_batch_metrics', None)
+            if callable(getter):
+                try:
+                    m = getter()
+                    if isinstance(m, dict):
+                        st = m.get('stage_timing_ms', {}) if isinstance(m.get('stage_timing_ms', {}), dict) else {}
+                        sig = (
+                            int(m.get('count', 0) or 0),
+                            float(st.get('standardize_ms', 0.0) or 0.0),
+                            float(st.get('compress_ms', 0.0) or 0.0),
+                            float(st.get('fuse_ms', 0.0) or 0.0),
+                            str(m.get('source', '')),
+                        )
+                        return sig
+                except Exception:
+                    pass
+            return None
+
         while True:
             try:
                 if hasattr(node, 'transporter_manager'):
                     node.transporter_manager.runtime_tick()
+                tick_count += 1
+
+                packet_probe = _collect_runtime_packet_stats()
+                if isinstance(packet_probe, tuple) and len(packet_probe) == 2:
+                    # Absolute counters from receiver path.
+                    packets_processed = int(packet_probe[0])
+                    avg_packet_latency_ms = float(packet_probe[1])
+                else:
+                    # Incremental fallback from batch metrics signature.
+                    if packet_probe is not None and packet_probe != last_batch_sig:
+                        cnt, std_ms, cmp_ms, fus_ms, _src = packet_probe
+                        if cnt > 0:
+                            est_per_packet_ms = (std_ms + cmp_ms + fus_ms) / float(cnt)
+                            local_packets_processed += int(cnt)
+                            local_latency_sum_ms += float(est_per_packet_ms) * float(cnt)
+                            local_latency_count += int(cnt)
+                        last_batch_sig = packet_probe
+                    packets_processed = int(local_packets_processed)
+                    avg_packet_latency_ms = (local_latency_sum_ms / local_latency_count) if local_latency_count > 0 else 0.0
+
+                now = time.time()
+                if now - last_stats_at >= stats_interval_s:
+                    uptime_s = int(now - start_at)
+                    if tick_errors > 0:
+                        status = 'degraded'
+                    elif packets_processed > 0:
+                        status = 'healthy'
+                    else:
+                        status = 'idle'
+                    stats = {
+                        'status': status,
+                        'uptime_s': uptime_s,
+                        'packets_processed': packets_processed,
+                        'avg_packet_latency_ms': round(float(avg_packet_latency_ms), 4),
+                        'tick_errors': int(tick_errors),
+                    }
+                    os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(stats, ensure_ascii=False))
+                    print(json.dumps({'run_stats': stats}, ensure_ascii=False))
+                    last_stats_at = now
                 if duration and time.time() - start_at >= duration:
                     break
                 time.sleep(max(0.2, interval))
             except KeyboardInterrupt:
                 break
             except Exception as exc:
+                tick_errors += 1
                 os_log.err('CLI', 'RUN_LOOP', exc, {})
                 time.sleep(max(0.2, interval))
+        if receiver_runtime is not None:
+            try:
+                receiver_runtime.stop()
+            except Exception:
+                pass
         return 0
 
     if cmd in ('inject', 'os-inject'):
@@ -771,7 +960,7 @@ def main(argv=None):
             return 0
         # Stage 3: Fuse (binary packet)
         try:
-            aid = node.assigned_id if not node._is_id_missing() else 0
+            aid = node.assigned_id if not _node_id_is_missing(node) else 0
             raw_input_str = f'{aid};{compressed}'
             binary_packet = node.fusion.run_engine(raw_input_str, strategy='FULL')
             result['fuse'] = {'hex': binary_packet.hex(), 'length': len(binary_packet)}
@@ -876,11 +1065,17 @@ def main(argv=None):
 
     if cmd in ('reload-protocol', 'os-reload-protocol'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='reload-protocol')
-        driver = node.transporter_manager.refresh_protocol(args.medium)
+        refresh_fn = getattr(getattr(node, 'transporter_manager', None), 'refresh_protocol', None)
+        if not callable(refresh_fn):
+            result = {'medium': args.medium, 'reloaded': False, 'reason': 'refresh_protocol_unsupported'}
+            _log_cli_result_payload(result)
+            _print_cli_payload(result)
+            return 1
+        driver = refresh_fn(args.medium)
         ok = bool(driver)
         result = {'medium': args.medium, 'reloaded': ok}
-        os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(result, ensure_ascii=False))
-        print(json.dumps(result, ensure_ascii=False))
+        _log_cli_result_payload(result)
+        _print_cli_payload(result)
         return 0 if ok else 1
 
     if cmd in ('config-show', 'os-config-show'):
@@ -1028,6 +1223,7 @@ def main(argv=None):
         profile_processes = str(getattr(args, 'profile_processes', '1,2,4,8') or '1,2,4,8')
         profile_threads = getattr(args, 'profile_threads', None)
         profile_batches = str(getattr(args, 'profile_batches', '32,64,128') or '32,64,128')
+        chain_mode = str(getattr(args, 'chain_mode', 'core') or 'core')
         threads_per_process_val = getattr(args, 'threads_per_process', None)
         threads_per_process = str(int(threads_per_process_val)) if threads_per_process_val is not None else None
         parallel_component = bool(getattr(args, 'parallel_component', False))
@@ -1053,6 +1249,7 @@ def main(argv=None):
                 '--header-probe-rate', header_probe_rate,
                 '--batch-size', batch_size,
                 '--processes', processes,
+                '--chain-mode', chain_mode,
             ]
             if threads_per_process is not None:
                 extra_args += ['--threads-per-process', threads_per_process]
@@ -1083,6 +1280,7 @@ def main(argv=None):
                 '--header-probe-rate', header_probe_rate,
                 '--batch-size', batch_size,
                 '--processes', processes,
+                '--chain-mode', chain_mode,
             ]
             if threads_per_process is not None:
                 extra_args += ['--threads-per-process', threads_per_process]
@@ -1097,6 +1295,7 @@ def main(argv=None):
                 '--total', total,
                 '--sources', sources,
                 '--verbosity', verbosity,
+                '--chain-mode', chain_mode,
             ]
             if no_progress:
                 extra_args.append('--no-progress')
@@ -1116,6 +1315,8 @@ def main(argv=None):
                 extra_args.append('--with-component')
             if json_out:
                 extra_args += ['--json-out', json_out]
+        elif suite in ('integration', 'audit'):
+            extra_args = []
         else:
             extra_args = [
                 '--total', total,
@@ -1125,6 +1326,7 @@ def main(argv=None):
                 '--header-probe-rate', header_probe_rate,
                 '--batch-size', batch_size,
                 '--processes', processes,
+                '--chain-mode', chain_mode,
             ]
             if threads_per_process is not None:
                 extra_args += ['--threads-per-process', threads_per_process]

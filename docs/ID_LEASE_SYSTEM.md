@@ -94,15 +94,15 @@ def calculate_effective_lease(rate_per_hour, base_lease):
     if not adaptive_enabled:
         return base_lease
     
-    if rate_per_hour >= ultra_rate_threshold:
+    if rate_per_hour >= ultra_rate_threshold_per_hour:
         if ultra_rate_sustained_for >= ultra_rate_sustain_seconds:
             return 0  # Force-zero: immediate reclaim
     
-    if rate_per_hour <= high_rate_threshold:
+    if rate_per_hour <= high_rate_threshold_per_hour:
         return base_lease  # Normal rate: full lease
     
     # High rate detected: apply factor
-    factor = high_rate_threshold / rate_per_hour
+    factor = high_rate_threshold_per_hour / rate_per_hour
     factor = max(high_rate_min_factor, min(1.0, factor))
     return max(min_lease_seconds, int(base_lease * factor))
 ```
@@ -288,7 +288,7 @@ allocator = IDAllocator(
 ### 4. Pool Sizing
 
 The ID range default (1 to 4294967294) is enormous. If using smaller range:
-- Ensure `high_rate_threshold` and `ultra_rate_threshold` are scaled appropriately
+- Ensure `high_rate_threshold_per_hour` and `ultra_rate_threshold_per_hour` are scaled appropriately
 - Consider external ID reuse for even smaller pools
 - Monitor `released_count` to ensure pool doesn't deplete
 

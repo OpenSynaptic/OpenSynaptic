@@ -3,10 +3,8 @@ import pkgutil
 from opensynaptic.utils import (
     os_log,
     LogMsg,
-    ensure_bytes,
-    zero_copy_enabled,
-    as_readonly_view,
 )
+from opensynaptic.utils.buffer import to_wire_payload
 from opensynaptic.services.transporters import drivers
 
 class _AppProxyDriver:
@@ -24,11 +22,17 @@ class _AppProxyDriver:
         send_fn = getattr(self._module, 'send', None)
         if not send_fn:
             return False
-        wire_payload = as_readonly_view(payload) if zero_copy_enabled(merged) else ensure_bytes(payload)
+        wire_payload = to_wire_payload(payload, merged)
         return bool(send_fn(wire_payload, merged))
 
 class TransporterService:
-    """Service plugin responsible for transporter driver discovery and dispatch."""
+    """
+    Application-layer (L7) transporter service.
+    Manages only application-layer drivers (MQTT).
+    
+    Transport & Physical layer drivers are handled by LayeredProtocolManager
+    in src/opensynaptic/core/transport_layer and physical_layer.
+    """
     APP_LAYER_DRIVERS = {'mqtt'}
 
     def __init__(self, master):
@@ -43,6 +47,7 @@ class TransporterService:
         return app_cfg.get(key, {}) if isinstance(app_cfg.get(key, {}), dict) else {}
 
     def auto_load(self):
+        """Discover and load application-layer drivers (only MQTT)."""
         if 'RESOURCES' not in self.master.config:
             self.master.config['RESOURCES'] = {}
         resources = self.master.config['RESOURCES']
@@ -50,16 +55,21 @@ class TransporterService:
         resources['application_status'] = status_map
         resources.setdefault('application_config', {})
         dirty = False
+        
+        # Discover only app-layer drivers from drivers/ folder
         for _, module_name, is_pkg in pkgutil.iter_modules(drivers.__path__):
             if is_pkg or module_name.startswith('_'):
                 continue
             key = module_name.lower()
+            # Only process app-layer drivers
             if key not in self.APP_LAYER_DRIVERS:
                 continue
+            # Register new drivers with disabled default
             if key not in status_map:
                 status_map[key] = False
                 dirty = True
                 os_log.log_with_const('info', LogMsg.NEW_DRIVER_REGISTERED, module=module_name)
+            # Load if enabled
             if status_map.get(key) is True:
                 module = self._lazy_load_driver(key)
                 if module is None and status_map.get(key):
@@ -67,12 +77,8 @@ class TransporterService:
                     dirty = True
             else:
                 os_log.log_with_const('info', LogMsg.DRIVER_SLEEP, module=module_name)
+        
         if dirty:
-            merged = resources.get('transporters_status', {})
-            if not isinstance(merged, dict):
-                merged = {}
-            merged.update(status_map)
-            resources['transporters_status'] = merged
             self.master._save_config()
         return self.active_transporters
 

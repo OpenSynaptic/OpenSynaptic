@@ -22,6 +22,8 @@ Discovery behavior is layer-specific:
 
 `ServiceManager` handles application-layer drivers; transport and physical layers are managed by their dedicated layer managers.
 
+Payload materialization is centralized by `opensynaptic.utils.buffer.to_wire_payload()` to keep zero-copy behavior consistent across application/transport/physical send paths.
+
 ---
 
 ## Required Interface

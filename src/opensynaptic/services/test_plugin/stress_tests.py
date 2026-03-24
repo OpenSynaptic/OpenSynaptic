@@ -10,9 +10,10 @@ import queue
 import sys
 import time
 import threading
-import statistics
+import gc
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 # Ensure package is importable when run directly
@@ -29,6 +30,16 @@ if _ROOT and _ROOT not in sys.path:
 from opensynaptic.utils import (
     has_native_library,
     read_json,
+)
+from opensynaptic.services.test_plugin.metrics import (
+    PERCENTILE_KEYS,
+    aggregate_header_probe,
+    aggregate_run_series,
+    empty_stage_stats,
+    round4,
+    stats_from_values,
+    weighted_avg,
+    weighted_series_value,
 )
 
 import os as _os
@@ -134,18 +145,6 @@ def _process_worker_run_stress(kwargs: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _weighted_avg(pairs):
-    num = 0.0
-    den = 0.0
-    for value, weight in pairs:
-        w = max(0.0, float(weight or 0.0))
-        if w <= 0:
-            continue
-        den += w
-        num += float(value or 0.0) * w
-    return (num / den) if den > 0 else 0.0
-
-
 def _aggregate_process_summaries(
     summaries: list[dict[str, Any]],
     elapsed_s: float,
@@ -155,7 +154,7 @@ def _aggregate_process_summaries(
 ) -> dict[str, Any]:
     """Merge child-process stress summaries into one report.
 
-    p95 values are merged as weighted averages of child p95s (approximation).
+    Tail percentiles are merged as weighted averages of child summaries (approximation).
     """
     if not summaries:
         return {
@@ -164,13 +163,12 @@ def _aggregate_process_summaries(
             'fail': 0,
             'avg_latency_ms': 0.0,
             'p95_latency_ms': 0.0,
+            'p99_latency_ms': 0.0,
+            'p99_9_latency_ms': 0.0,
+            'p99_99_latency_ms': 0.0,
             'min_latency_ms': 0.0,
             'max_latency_ms': 0.0,
-            'stage_timing_ms': {
-                'standardize_ms': {'avg': 0.0, 'p95': 0.0, 'min': 0.0, 'max': 0.0},
-                'compress_ms': {'avg': 0.0, 'p95': 0.0, 'min': 0.0, 'max': 0.0},
-                'fuse_ms': {'avg': 0.0, 'p95': 0.0, 'min': 0.0, 'max': 0.0},
-            },
+            'stage_timing_ms': empty_stage_stats(),
             'error_samples': [],
             'elapsed_s': round(float(elapsed_s or 0.0), 3),
             'throughput_pps': 0.0,
@@ -178,6 +176,27 @@ def _aggregate_process_summaries(
             'execution_mode': 'hybrid',
             'processes': int(processes),
             'threads_per_process': int(threads_per_process),
+            'chain_mode': 'core',
+            'worst_sample': {
+                'total_latency_ms': 0.0,
+                'task_id': None,
+                'chain_mode': 'core',
+                'stage_timing_ms': {
+                    'standardize_ms': 0.0,
+                    'compress_ms': 0.0,
+                    'fuse_ms': 0.0,
+                },
+                'stage_share_pct': {
+                    'standardize_ms': 0.0,
+                    'compress_ms': 0.0,
+                    'fuse_ms': 0.0,
+                },
+                'dominant_stage': {
+                    'name': 'fuse_ms',
+                    'latency_ms': 0.0,
+                },
+            },
+            'worst_topk': [],
         }
 
     total = int(sum(int(s.get('total', 0) or 0) for s in summaries))
@@ -188,31 +207,54 @@ def _aggregate_process_summaries(
     stage_keys = ('standardize_ms', 'compress_ms', 'fuse_ms')
     stage_stats = {}
     for key in stage_keys:
-        avg_val = _weighted_avg((s.get('stage_timing_ms', {}).get(key, {}).get('avg', 0.0), w) for s, w in zip(summaries, weights))
-        p95_val = _weighted_avg((s.get('stage_timing_ms', {}).get(key, {}).get('p95', 0.0), w) for s, w in zip(summaries, weights))
+        stage_entry = {
+            'avg': round4(weighted_avg((s.get('stage_timing_ms', {}).get(key, {}).get('avg', 0.0), w) for s, w in zip(summaries, weights))),
+        }
+        for pct_key, fallback_key, _ in PERCENTILE_KEYS:
+            fallback = fallback_key or pct_key
+            stage_entry[pct_key] = round4(
+                weighted_avg(
+                    (s.get('stage_timing_ms', {}).get(key, {}).get(pct_key, s.get('stage_timing_ms', {}).get(key, {}).get(fallback, 0.0)), w)
+                    for s, w in zip(summaries, weights)
+                )
+            )
         mins = [float(s.get('stage_timing_ms', {}).get(key, {}).get('min', 0.0) or 0.0) for s in summaries]
         maxs = [float(s.get('stage_timing_ms', {}).get(key, {}).get('max', 0.0) or 0.0) for s in summaries]
-        stage_stats[key] = {
-            'avg': round(avg_val, 4),
-            'p95': round(p95_val, 4),
-            'min': round(min(mins) if mins else 0.0, 4),
-            'max': round(max(maxs) if maxs else 0.0, 4),
-        }
+        stage_entry['min'] = round4(min(mins) if mins else 0.0)
+        stage_entry['max'] = round4(max(maxs) if maxs else 0.0)
+        stage_stats[key] = stage_entry
 
     hp_series = [s.get('header_probe') for s in summaries if isinstance(s.get('header_probe'), dict)]
-    hp_attempted = int(sum(int(h.get('attempted', 0) or 0) for h in hp_series)) if hp_series else 0
-    hp_parsed = int(sum(int(h.get('parsed', 0) or 0) for h in hp_series)) if hp_series else 0
-    hp_crc16 = int(sum(int(h.get('crc16_ok', 0) or 0) for h in hp_series)) if hp_series else 0
+    hp_stats = aggregate_header_probe(cast(list[dict[str, Any]], hp_series)) if hp_series else {}
 
     first = summaries[0]
+    all_worst: list[dict[str, Any]] = []
+    for idx, s in enumerate(summaries):
+        entries = s.get('worst_topk') if isinstance(s.get('worst_topk'), list) else None
+        if not entries:
+            cand = s.get('worst_sample') if isinstance(s.get('worst_sample'), dict) else None
+            entries = [cand] if cand else []
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            row['process_index'] = idx
+            all_worst.append(row)
+    all_worst.sort(key=lambda it: float(it.get('total_latency_ms', 0.0) or 0.0), reverse=True)
+    topk_worst = all_worst[:5]
+    best_worst = topk_worst[0] if topk_worst else None
+
     out = {
         'total': total,
         'ok': ok,
         'fail': fail,
-        'avg_latency_ms': round(_weighted_avg((s.get('avg_latency_ms', 0.0), w) for s, w in zip(summaries, weights)), 4),
-        'p95_latency_ms': round(_weighted_avg((s.get('p95_latency_ms', 0.0), w) for s, w in zip(summaries, weights)), 4),
-        'min_latency_ms': round(min(float(s.get('min_latency_ms', 0.0) or 0.0) for s in summaries), 4),
-        'max_latency_ms': round(max(float(s.get('max_latency_ms', 0.0) or 0.0) for s in summaries), 4),
+        'avg_latency_ms': round4(weighted_series_value(summaries, weights, 'avg_latency_ms')),
+        'p95_latency_ms': round4(weighted_series_value(summaries, weights, 'p95_latency_ms')),
+        'p99_latency_ms': round4(weighted_series_value(summaries, weights, 'p99_latency_ms', fallback_key='p95_latency_ms')),
+        'p99_9_latency_ms': round4(weighted_series_value(summaries, weights, 'p99_9_latency_ms', fallback_key='p95_latency_ms')),
+        'p99_99_latency_ms': round4(weighted_series_value(summaries, weights, 'p99_99_latency_ms', fallback_key='p95_latency_ms')),
+        'min_latency_ms': round4(min(float(s.get('min_latency_ms', 0.0) or 0.0) for s in summaries)),
+        'max_latency_ms': round4(max(float(s.get('max_latency_ms', 0.0) or 0.0) for s in summaries)),
         'stage_timing_ms': stage_stats,
         'error_samples': [e for s in summaries for e in (s.get('error_samples') or [])][:5],
         'elapsed_s': round(float(elapsed_s or 0.0), 3),
@@ -225,18 +267,28 @@ def _aggregate_process_summaries(
         'processes': int(processes),
         'threads_per_process': int(threads_per_process),
         'batch_size': int(first.get('batch_size', 1) or 1),
+        'chain_mode': str(first.get('chain_mode', 'core') or 'core'),
         'runtime_toggles': dict(first.get('runtime_toggles') or {}),
+        'worst_sample': best_worst or {
+            'total_latency_ms': round4(max(float(s.get('max_latency_ms', 0.0) or 0.0) for s in summaries)),
+            'task_id': None,
+            'chain_mode': str(first.get('chain_mode', 'core') or 'core'),
+            'stage_timing_ms': {'standardize_ms': 0.0, 'compress_ms': 0.0, 'fuse_ms': 0.0},
+            'stage_share_pct': {'standardize_ms': 0.0, 'compress_ms': 0.0, 'fuse_ms': 0.0},
+            'dominant_stage': {'name': 'fuse_ms', 'latency_ms': 0.0},
+        },
+        'worst_topk': topk_worst,
     }
     if hp_series:
         out['header_probe'] = {
             'enabled': True,
             'rate': float(hp_series[0].get('rate', 0.0) or 0.0),
             'parser_available': all(bool(h.get('parser_available', False)) for h in hp_series),
-            'attempted': hp_attempted,
-            'parsed': hp_parsed,
-            'crc16_ok': hp_crc16,
-            'parse_hit_rate': round(hp_parsed / hp_attempted, 4) if hp_attempted > 0 else 0.0,
-            'crc16_ok_rate': round(hp_crc16 / hp_attempted, 4) if hp_attempted > 0 else 0.0,
+            'attempted': int(hp_stats.get('attempted', 0) or 0),
+            'parsed': int(hp_stats.get('parsed', 0) or 0),
+            'crc16_ok': int(hp_stats.get('crc16_ok', 0) or 0),
+            'parse_hit_rate': float(hp_stats.get('parse_hit_rate', 0.0) or 0.0),
+            'crc16_ok_rate': float(hp_stats.get('crc16_ok_rate', 0.0) or 0.0),
         }
     return out
 
@@ -292,6 +344,7 @@ def _resolve_stress_runtime_options(node=None, config_path=None) -> dict[str, An
         'sharded': 'batched',
     }
     mode = mode_alias.get(raw_mode, 'legacy')
+    flush_explicit = isinstance(runtime_cfg, dict) and ('collector_flush_every' in runtime_cfg)
     flush_every = max(1, int(runtime_cfg.get('collector_flush_every', 256) or 256))
 
     raw_pipeline = str(runtime_cfg.get('pipeline_mode', 'legacy') or 'legacy').strip().lower()
@@ -307,10 +360,15 @@ def _resolve_stress_runtime_options(node=None, config_path=None) -> dict[str, An
     }
     pipeline = pipeline_alias.get(raw_pipeline, 'legacy')
 
+    raw_gc = str(runtime_cfg.get('gc_mode', 'auto') or 'auto').strip().lower()
+    gc_mode = raw_gc if raw_gc in {'auto', 'on', 'off'} else 'auto'
+
     return {
         'collector_mode': mode,
         'collector_flush_every': flush_every,
+        'collector_flush_explicit': bool(flush_explicit),
         'pipeline_mode': pipeline,
+        'gc_mode': gc_mode,
     }
 
 
@@ -353,15 +411,76 @@ class StressResult:
             'compress_ms': [],
             'fuse_ms': [],
         }
+        self.worst_sample = {
+            'total_latency_ms': 0.0,
+            'task_id': None,
+            'chain_mode': 'core',
+            'stage_timing_ms': {
+                'standardize_ms': 0.0,
+                'compress_ms': 0.0,
+                'fuse_ms': 0.0,
+            },
+            'stage_share_pct': {
+                'standardize_ms': 0.0,
+                'compress_ms': 0.0,
+                'fuse_ms': 0.0,
+            },
+            'dominant_stage': {
+                'name': 'fuse_ms',
+                'latency_ms': 0.0,
+            },
+        }
+        self._worst_topk_limit = 5
+        self.worst_topk: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
-    def record_ok(self, latency_ms, stage_ms):
+    @staticmethod
+    def _make_worst_sample(latency_ms, stage_ms, task_id=None, chain_mode='core'):
+        s_std = float((stage_ms or {}).get('standardize_ms', 0.0) or 0.0)
+        s_cmp = float((stage_ms or {}).get('compress_ms', 0.0) or 0.0)
+        s_fus = float((stage_ms or {}).get('fuse_ms', 0.0) or 0.0)
+        total = max(float(latency_ms or 0.0), 1e-9)
+        stage_map = {
+            'standardize_ms': round4(s_std),
+            'compress_ms': round4(s_cmp),
+            'fuse_ms': round4(s_fus),
+        }
+        share = {
+            'standardize_ms': round4((s_std / total) * 100.0),
+            'compress_ms': round4((s_cmp / total) * 100.0),
+            'fuse_ms': round4((s_fus / total) * 100.0),
+        }
+        dom_name, dom_val = max(stage_map.items(), key=lambda kv: float(kv[1] or 0.0))
+        return {
+            'total_latency_ms': round4(float(latency_ms or 0.0)),
+            'task_id': task_id,
+            'chain_mode': str(chain_mode or 'core'),
+            'stage_timing_ms': stage_map,
+            'stage_share_pct': share,
+            'dominant_stage': {
+                'name': dom_name,
+                'latency_ms': round4(float(dom_val or 0.0)),
+            },
+        }
+
+    def _update_worst_nolock(self, latency_ms, stage_ms, task_id=None, chain_mode='core'):
+        lat = float(latency_ms or 0.0)
+        sample = self._make_worst_sample(lat, stage_ms, task_id=task_id, chain_mode=chain_mode)
+        self.worst_topk.append(sample)
+        self.worst_topk.sort(key=lambda it: float(it.get('total_latency_ms', 0.0) or 0.0), reverse=True)
+        if len(self.worst_topk) > self._worst_topk_limit:
+            self.worst_topk = self.worst_topk[:self._worst_topk_limit]
+        if lat > float(self.worst_sample.get('total_latency_ms', 0.0) or 0.0):
+            self.worst_sample = sample
+
+    def record_ok(self, latency_ms, stage_ms, task_id=None, chain_mode='core'):
         with self._lock:
             self.total += 1
             self.ok += 1
             self.latencies.append(latency_ms)
             for key in self.stage_latencies:
                 self.stage_latencies[key].append(float(stage_ms.get(key, 0.0)))
+            self._update_worst_nolock(latency_ms, stage_ms, task_id=task_id, chain_mode=chain_mode)
 
     def record_fail(self, exc):
         with self._lock:
@@ -369,7 +488,7 @@ class StressResult:
             self.fail += 1
             self.errors.append(str(exc))
 
-    def merge_chunk(self, latencies, stage_lists, errors):
+    def merge_chunk(self, latencies, stage_lists, errors, chain_mode='core'):
         """Merge a thread-local chunk in one lock section.
 
         Used by the optional batched collector to reduce hot lock contention.
@@ -386,30 +505,33 @@ class StressResult:
                 self.latencies.extend(latencies)
                 for key in self.stage_latencies:
                     self.stage_latencies[key].extend(stage_lists.get(key, []))
+                top_n = min(self._worst_topk_limit, ok_n)
+                top_idx = sorted(range(ok_n), key=lambda i: float(latencies[i] or 0.0), reverse=True)[:top_n]
+                std_list = stage_lists.get('standardize_ms', []) or [0.0] * ok_n
+                cmp_list = stage_lists.get('compress_ms', []) or [0.0] * ok_n
+                fus_list = stage_lists.get('fuse_ms', []) or [0.0] * ok_n
+                for i in top_idx:
+                    stage_i = {
+                        'standardize_ms': float(std_list[i]),
+                        'compress_ms': float(cmp_list[i]),
+                        'fuse_ms': float(fus_list[i]),
+                    }
+                    self._update_worst_nolock(latencies[i], stage_i, task_id=None, chain_mode=chain_mode)
             if fail_n > 0:
                 self.errors.extend(errors)
 
     def summary(self) -> dict[str, Any]:
-        def _stats(values):
-            if not values:
-                return {'avg': 0.0, 'p95': 0.0, 'min': 0.0, 'max': 0.0}
-            seq = sorted(values)
-            idx = min(len(seq) - 1, int(len(seq) * 0.95))
-            return {
-                'avg': round(sum(values) / len(values), 4),
-                'p95': round(seq[idx], 4),
-                'min': round(seq[0], 4),
-                'max': round(seq[-1], 4),
-            }
-
-        stage_stats = {k: _stats(v) for k, v in self.stage_latencies.items()}
-        total_stats = _stats(self.latencies)
+        stage_stats = {k: stats_from_values(v) for k, v in self.stage_latencies.items()}
+        total_stats = stats_from_values(self.latencies)
         return {
             'total': self.total,
             'ok': self.ok,
             'fail': self.fail,
             'avg_latency_ms': total_stats['avg'],
             'p95_latency_ms': total_stats['p95'],
+            'p99_latency_ms': total_stats['p99'],
+            'p99_9_latency_ms': total_stats['p99_9'],
+            'p99_99_latency_ms': total_stats['p99_99'],
             'min_latency_ms': total_stats['min'],
             'max_latency_ms': total_stats['max'],
             'stage_timing_ms': stage_stats,
@@ -432,11 +554,25 @@ class StressResult:
                 'parse_hit_rate': 0.0,
                 'crc16_ok_rate': 0.0,
             },
+            'worst_sample': dict(self.worst_sample),
+            'worst_topk': list(self.worst_topk),
         }
 
 
-def _pipeline_task(node, task_id, sensors, probe_header=False, parse_header_fn=None):
-    """Execute one full pipeline (standardize → compress → fuse) without dispatch."""
+def _pipeline_task(
+    node,
+    task_id,
+    sensors,
+    probe_header=False,
+    parse_header_fn=None,
+    chain_mode='core',
+    e2e_send_fn=None,
+):
+    """Execute one stress iteration.
+
+    core: standardize -> compress -> fuse
+    e2e : standardize -> compress -> fuse -> dispatch -> receive/process
+    """
     t_total_start = time.perf_counter_ns()
     try:
         device_id = f'STRESS_{task_id % 8}'
@@ -466,12 +602,20 @@ def _pipeline_task(node, task_id, sensors, probe_header=False, parse_header_fn=N
                 }
             except Exception:
                 header_probe = {'attempted': True, 'parsed': False, 'crc16_ok': False}
+
+        t_end = t3
+        if chain_mode == 'e2e':
+            sender = e2e_send_fn if callable(e2e_send_fn) else (lambda packet: bool(node.dispatch(packet, medium='UDP')))
+            if not sender(pkt):
+                raise ValueError('Loopback dispatch failed')
+            t_end = time.perf_counter_ns()
+
         stage_ms = {
             'standardize_ms': (t1 - t0) / 1_000_000.0,
             'compress_ms': (t2 - t1) / 1_000_000.0,
             'fuse_ms': (t3 - t2) / 1_000_000.0,
         }
-        latency_ms = (t3 - t_total_start) / 1_000_000.0
+        latency_ms = (t_end - t_total_start) / 1_000_000.0
         return latency_ms, stage_ms, None, header_probe
     except Exception as exc:
         return None, None, exc, None
@@ -496,10 +640,6 @@ def _progress_line(done, total, started_at, width=28):
         eta=eta,
         rate=rate,
     )
-
-
-def _round4(value: Any) -> float:
-    return round(float(value or 0.0), 4)
 
 
 def _make_candidate_matrix(
@@ -541,35 +681,7 @@ def _score_candidate(summary: dict[str, Any]) -> tuple[int, float, float, float]
 
 
 def _aggregate_series(series: list[dict[str, Any]]) -> dict[str, Any]:
-    if not series:
-        return {
-            'runs': 0,
-            'ok': 0,
-            'fail': 0,
-            'throughput_pps_mean': 0.0,
-            'throughput_pps_var': 0.0,
-            'throughput_pps_worst': 0.0,
-            'avg_latency_ms_mean': 0.0,
-            'p95_latency_ms_mean': 0.0,
-            'max_latency_ms_worst': 0.0,
-        }
-
-    tpps = [float(it.get('throughput_pps', 0.0) or 0.0) for it in series]
-    avg_lat = [float(it.get('avg_latency_ms', 0.0) or 0.0) for it in series]
-    p95_lat = [float(it.get('p95_latency_ms', 0.0) or 0.0) for it in series]
-    max_lat = [float(it.get('max_latency_ms', 0.0) or 0.0) for it in series]
-
-    return {
-        'runs': len(series),
-        'ok': int(sum(int(it.get('ok', 0) or 0) for it in series)),
-        'fail': int(sum(int(it.get('fail', 0) or 0) for it in series)),
-        'throughput_pps_mean': _round4(statistics.mean(tpps)),
-        'throughput_pps_var': _round4(statistics.pvariance(tpps) if len(tpps) > 1 else 0.0),
-        'throughput_pps_worst': _round4(min(tpps) if tpps else 0.0),
-        'avg_latency_ms_mean': _round4(statistics.mean(avg_lat) if avg_lat else 0.0),
-        'p95_latency_ms_mean': _round4(statistics.mean(p95_lat) if p95_lat else 0.0),
-        'max_latency_ms_worst': _round4(max(max_lat) if max_lat else 0.0),
-    }
+    return aggregate_run_series(series, suffix='_mean', include_variance=True, include_worst=True)
 
 
 def run_auto_profile(
@@ -589,6 +701,7 @@ def run_auto_profile(
     batch_candidates: list[int] | None = None,
     default_batch_size: int = 1,
     progress: bool = True,
+    chain_mode: str = 'core',
 ) -> dict[str, Any]:
     process_candidates = [max(1, int(x)) for x in (process_candidates or [1, 2, 4, 8])]
     thread_candidates = [max(1, int(x)) for x in (thread_candidates or [max(1, int(workers)), 4, 8])]
@@ -632,6 +745,7 @@ def run_auto_profile(
                     batch_size=combo['batch_size'],
                     processes=combo['processes'],
                     threads_per_process=combo['threads_per_process'],
+                    chain_mode=chain_mode,
                 )
                 samples.append(summary)
 
@@ -640,6 +754,9 @@ def run_auto_profile(
             representative['throughput_pps'] = aggregate['throughput_pps_mean']
             representative['avg_latency_ms'] = aggregate['avg_latency_ms_mean']
             representative['p95_latency_ms'] = aggregate['p95_latency_ms_mean']
+            representative['p99_latency_ms'] = aggregate['p99_latency_ms_mean']
+            representative['p99_9_latency_ms'] = aggregate['p99_9_latency_ms_mean']
+            representative['p99_99_latency_ms'] = aggregate['p99_99_latency_ms_mean']
             representative['fail'] = aggregate['fail']
             candidates.append({
                 'config': dict(combo),
@@ -686,6 +803,7 @@ def run_auto_profile(
                 batch_size=int(best_cfg.get('batch_size', max(1, int(default_batch_size)))),
                 processes=int(best_cfg.get('processes', 1)),
                 threads_per_process=int(best_cfg.get('threads_per_process', max(1, int(workers)))),
+                chain_mode=chain_mode,
             )
             final_series.append(summary)
     except KeyboardInterrupt:
@@ -701,6 +819,7 @@ def run_auto_profile(
         'workers': max(1, int(workers)),
         'sources': max(1, int(sources)),
         'core_backend': str(core_name or 'auto'),
+        'chain_mode': str(chain_mode or 'core'),
         'process_candidates': list(process_candidates),
         'thread_candidates': list(thread_candidates),
         'batch_candidates': list(batch_candidates),
@@ -726,7 +845,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                core_name=None, expect_core=None, expect_codec_class=None,
                header_probe_rate=0.0, batch_size=1, processes=1,
                threads_per_process=None, progress_queue=None,
-               progress_step=0) -> tuple['StressResult', dict[str, Any]]:
+               progress_step=0, chain_mode='core') -> tuple['StressResult', dict[str, Any]]:
     """
     Run a concurrent pipeline stress test.
 
@@ -744,12 +863,16 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     batch_size         : int        – tasks per future; >1 lowers scheduler overhead for very large totals
     processes          : int        – process count (1 = thread-only mode)
     threads_per_process: int | None – per-process thread count in hybrid mode (default=workers)
+    chain_mode         : str        – core (pipeline only) or e2e (dispatch->receive loopback)
 
     Returns
     -------
     (StressResult, summary_dict)
     """
     preflight = _preflight(core_name=core_name)
+    chain_mode = str(chain_mode or 'core').strip().lower()
+    if chain_mode not in ('core', 'e2e'):
+        raise RuntimeError('unknown chain_mode [{}], expected core/e2e'.format(chain_mode))
     process_count = max(1, int(processes or 1))
     per_process_threads = max(1, int(threads_per_process if threads_per_process is not None else workers))
 
@@ -810,7 +933,8 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                     'processes': 1,
                     'threads_per_process': None,
                     'progress_queue': _progress_queue,
-                    'progress_step': max(1, int(batch_size or 1)),
+                    'progress_step': max(1024, int(batch_size or 1) * 4),
+                    'chain_mode': chain_mode,
                 }
                 _proc_futures.append(_ppool.submit(_process_worker_run_stress, kwargs))
 
@@ -885,6 +1009,31 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                 actual_codec_module,
             )
         )
+
+    def _build_e2e_sender(attached_node):
+        receive_fn = getattr(attached_node, 'receive', None)
+        fusion = getattr(attached_node, 'fusion', None)
+        decompress_fn = getattr(fusion, 'decompress', None)
+        dispatch_fn = getattr(attached_node, 'dispatch', None)
+
+        def _send(packet):
+            try:
+                if callable(receive_fn):
+                    decoded = receive_fn(packet)
+                    return not (isinstance(decoded, dict) and decoded.get('error'))
+                if callable(decompress_fn):
+                    decoded = decompress_fn(packet)
+                    return not (isinstance(decoded, dict) and decoded.get('error'))
+                if callable(dispatch_fn):
+                    return bool(dispatch_fn(packet, medium='UDP'))
+                return False
+            except Exception:
+                return False
+
+        return _send
+
+    e2e_fast_sender = _build_e2e_sender(node) if chain_mode == 'e2e' else None
+    _thread_node_tls = threading.local()
     # Pre-build sensor sets
     sensor_sets = []
     for i in range(sources):
@@ -897,7 +1046,21 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     runtime_opts = _resolve_stress_runtime_options(node=node, config_path=config_path)
     collector_mode = str(runtime_opts.get('collector_mode', 'legacy'))
     collector_flush_every = max(1, int(runtime_opts.get('collector_flush_every', 256) or 256))
+    collector_flush_explicit = bool(runtime_opts.get('collector_flush_explicit', False))
     pipeline_mode = str(runtime_opts.get('pipeline_mode', 'legacy'))
+    gc_mode = str(runtime_opts.get('gc_mode', 'auto') or 'auto').strip().lower()
+    flush_auto_tuned = False
+    if chain_mode == 'e2e':
+        # e2e mode must execute dispatch/receive processing per item; fused shortcut skips that path.
+        pipeline_mode = 'legacy'
+        if collector_mode == 'batched' and not collector_flush_explicit and int(total) >= 500_000 and collector_flush_every < 1024:
+            collector_flush_every = 1024
+            flush_auto_tuned = True
+
+    gc_was_enabled = gc.isenabled()
+    disable_gc = (gc_mode == 'off') or (gc_mode == 'auto' and chain_mode == 'e2e')
+    if disable_gc and gc_was_enabled:
+        gc.disable()
 
     # ── Optional batch pipeline setup ─────────────────────────────────────
     _pipeline_batch = None
@@ -944,7 +1107,10 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             pipeline_mode = 'legacy'
     completed = [0]
     progress_lock = threading.Lock()
+    probe_lock = threading.Lock()
     progress_state = {'last_print_at': 0.0}
+    progress_emit_step = max(1, int(progress_step or 1))
+    progress_emit_pending = [0]
 
     # Optional Rust/C-native header parser probe (backend-agnostic capability check).
     probe_rate = min(1.0, max(0.0, float(header_probe_rate or 0.0)))
@@ -965,6 +1131,26 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     batch = max(1, int(batch_size or 1))
     # Pre-compute fixed assigned_id used in all pipeline calls
     _aid = int(getattr(node, 'assigned_id', 42) or 42)
+    legacy_mode = (collector_mode == 'legacy')
+
+    def _commit_progress(step_count):
+        if progress_queue is not None:
+            if progress_emit_step <= 1:
+                _push_progress(progress_queue, step_count)
+            else:
+                with progress_lock:
+                    progress_emit_pending[0] += int(step_count)
+                    if progress_emit_pending[0] >= progress_emit_step:
+                        _push_progress(progress_queue, progress_emit_pending[0])
+                        progress_emit_pending[0] = 0
+        if not progress:
+            return
+        with progress_lock:
+            completed[0] += step_count
+            now = time.monotonic()
+            if (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10):
+                print('\r' + _progress_line(completed[0], total, t_start), end='', flush=True)
+                progress_state['last_print_at'] = now
 
     def _task_range(start_idx, end_idx):
         range_count = end_idx - start_idx
@@ -1000,15 +1186,8 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                     b_stage['standardize_ms'].append(stage_avg)
                     b_stage['compress_ms'].append(stage_avg)
                     b_stage['fuse_ms'].append(stage_avg)
-            result.merge_chunk(b_latencies, b_stage, b_errors)
-            _push_progress(progress_queue, range_count)
-            if progress:
-                with progress_lock:
-                    completed[0] += range_count
-                    now = time.monotonic()
-                    if (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10):
-                        print('\r' + _progress_line(completed[0], total, t_start), end='', flush=True)
-                        progress_state['last_print_at'] = now
+            result.merge_chunk(b_latencies, b_stage, b_errors, chain_mode=chain_mode)
+            _commit_progress(range_count)
             return
 
         # ── legacy / batched: per-item pipeline task ──────────────────────
@@ -1018,11 +1197,11 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         local_probe = {'attempted': 0, 'parsed': 0, 'crc16_ok': 0}
 
         def _flush_local():
-            if collector_mode == 'legacy':
+            if legacy_mode:
                 return
-            result.merge_chunk(local_latencies, local_stage, local_errors)
+            result.merge_chunk(local_latencies, local_stage, local_errors, chain_mode=chain_mode)
             if local_probe['attempted'] > 0:
-                with progress_lock:
+                with probe_lock:
                     header_probe_stats['attempted'] += local_probe['attempted']
                     header_probe_stats['parsed'] += local_probe['parsed']
                     header_probe_stats['crc16_ok'] += local_probe['crc16_ok']
@@ -1035,19 +1214,31 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             local_probe['crc16_ok'] = 0
 
         for idx in range(start_idx, end_idx):
+            active_node = node
+            active_sender = e2e_fast_sender
+            if chain_mode == 'e2e':
+                worker_ctx = getattr(_thread_node_tls, 'ctx', None)
+                if worker_ctx is None:
+                    local_node = _make_node(config_path, core_name=core_name)
+                    worker_ctx = (local_node, _build_e2e_sender(local_node))
+                    _thread_node_tls.ctx = worker_ctx
+                active_node, active_sender = worker_ctx
+
             sensors = sensor_sets[idx % sources]
             do_probe = bool(probe_every > 0 and (idx % probe_every == 0) and callable(parse_header_fn))
             latency, stage_ms, exc, header_probe = _pipeline_task(
-                node, idx, sensors, probe_header=do_probe, parse_header_fn=parse_header_fn,
+                active_node, idx, sensors, probe_header=do_probe, parse_header_fn=parse_header_fn,
+                chain_mode=chain_mode,
+                e2e_send_fn=active_sender,
             )
 
-            if collector_mode == 'legacy':
+            if legacy_mode:
                 if exc is not None:
                     result.record_fail(exc)
                 else:
-                    result.record_ok(latency, stage_ms)
+                    result.record_ok(latency, stage_ms, task_id=idx, chain_mode=chain_mode)
                     if header_probe and header_probe.get('attempted'):
-                        with progress_lock:
+                        with probe_lock:
                             header_probe_stats['attempted'] += 1
                             if header_probe.get('parsed'):
                                 header_probe_stats['parsed'] += 1
@@ -1071,15 +1262,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                     _flush_local()
 
         _flush_local()
-
-        _push_progress(progress_queue, range_count)
-        if progress:
-            with progress_lock:
-                completed[0] += range_count
-                now = time.monotonic()
-                if (completed[0] >= total) or (now - progress_state['last_print_at'] >= 0.10):
-                    print('\r' + _progress_line(completed[0], total, t_start), end='', flush=True)
-                    progress_state['last_print_at'] = now
+        _commit_progress(range_count)
 
     t_start = time.monotonic()
     _tpool = ThreadPoolExecutor(max_workers=workers)
@@ -1109,6 +1292,10 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     if progress:
         print()  # newline after progress bar
 
+    if progress_queue is not None and progress_emit_pending[0] > 0:
+        _push_progress(progress_queue, progress_emit_pending[0])
+        progress_emit_pending[0] = 0
+
     elapsed = time.monotonic() - t_start
 
     summary = cast(dict[str, Any], result.summary())
@@ -1123,12 +1310,20 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     summary['processes'] = 1
     summary['threads_per_process'] = int(workers)
     summary['batch_size'] = batch
+    summary['chain_mode'] = chain_mode
     summary['runtime_toggles'] = {
         'collector_mode': collector_mode,
         'collector_flush_every': collector_flush_every,
+        'collector_flush_auto_tuned': bool(flush_auto_tuned),
         'pipeline_mode': pipeline_mode,
         'pipeline_batch_available': _pipeline_batch is not None and getattr(_pipeline_batch, 'available', False),
+        'gc_mode': gc_mode,
+        'gc_disabled_during_run': bool(disable_gc),
+        'chain_mode': chain_mode,
     }
+    ws = summary.get('worst_sample') if isinstance(summary.get('worst_sample'), dict) else None
+    if ws:
+        ws['chain_mode'] = chain_mode
     if _interrupted:
         summary['interrupted'] = True
     if probe_every > 0:
@@ -1145,6 +1340,9 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             'parse_hit_rate': round(parsed / attempted, 4) if attempted > 0 else 0.0,
             'crc16_ok_rate': round(crc16_ok / attempted, 4) if attempted > 0 else 0.0,
         }
+
+    if disable_gc and gc_was_enabled:
+        gc.enable()
     return result, summary
 
 

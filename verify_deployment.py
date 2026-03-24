@@ -10,17 +10,17 @@ print("="*70)
 
 # 1. Check AGENTS.md
 agents_file = Path('AGENTS.md')
-agents_lines = len(agents_file.read_text().split('\n'))
+agents_lines = len(agents_file.read_text(encoding='utf-8').split('\n'))
 print(f"\n✅ AGENTS.md: {agents_lines} lines")
 
 # 2. Check documentation
 for doc_path in ['docs/ID_LEASE_SYSTEM.md', 'docs/ID_LEASE_CONFIG_REFERENCE.md']:
     if Path(doc_path).exists():
-        lines = len(Path(doc_path).read_text().split('\n'))
+        lines = len(Path(doc_path).read_text(encoding='utf-8').split('\n'))
         print(f"✅ {doc_path}: {lines} lines")
 
 # 3. Check Config.json
-config_data = json.loads(Path('Config.json').read_text())
+config_data = json.loads(Path('Config.json').read_text(encoding='utf-8'))
 lease_config = config_data.get('security_settings', {}).get('id_lease', {})
 lease_keys = list(lease_config.keys())
 print(f"\n✅ Config.json ID Lease: {len(lease_keys)} parameters configured")

@@ -1,28 +1,13 @@
 # rscore is glue-only; protocol logic lives in Rust FFI.
-from opensynaptic.core.common.base import BaseOpenSynapticStandardizer, NativeLibraryUnavailable
+from opensynaptic.core.common.base import BaseOpenSynapticStandardizer
+from opensynaptic.core.rscore._ffi_proxy import RsFFIProxyBase
 
 
-class OpenSynapticStandardizer(BaseOpenSynapticStandardizer):
+class OpenSynapticStandardizer(BaseOpenSynapticStandardizer, RsFFIProxyBase):
     def __init__(self, *args, **kwargs):
-        self._ffi = None
-        try:
-            from opensynaptic.core.rscore import codec as rs_codec
-
-            ctor = getattr(rs_codec, "RsOpenSynapticStandardizer", None)
-            if not callable(ctor) or (not rs_codec.has_rs_native()):
-                raise NativeLibraryUnavailable("Rust native library not loaded")
-            self._ffi = ctor(*args, **kwargs)
-        except Exception as e:
-            self._ffi = None
-            raise NativeLibraryUnavailable("Rust standardizer is unavailable") from e
+        self._init_ffi('RsOpenSynapticStandardizer', 'Rust standardizer is unavailable', *args, **kwargs)
+        ffi = self._require_ffi('Rust native library not loaded')
+        self._ffi_standardize = ffi.standardize
 
     def standardize(self, *args, **kwargs):
-        if not self._ffi:
-            raise NativeLibraryUnavailable("Rust native library not loaded")
-        return self._ffi.standardize(*args, **kwargs)
-
-    def __getattr__(self, name):
-        ffi = self.__dict__.get("_ffi")
-        if ffi is not None and hasattr(ffi, name):
-            return getattr(ffi, name)
-        raise AttributeError(f"{self.__class__.__name__} has no attribute '{name}'")
+        return self._ffi_standardize(*args, **kwargs)

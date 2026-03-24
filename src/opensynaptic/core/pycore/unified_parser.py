@@ -1,4 +1,4 @@
-import struct, base64
+import struct, base64, time
 import threading
 import codecs
 from pathlib import Path
@@ -28,6 +28,12 @@ class OSVisualFusionEngine:
         self.codec = Base62Codec()
         self._RAM_CACHE = {}
         self._cache_lock = threading.RLock()
+        cache_cfg = cfg.get('engine_settings', {}).get('cache_settings', {}) if isinstance(cfg.get('engine_settings', {}), dict) else {}
+        fusion_cfg = cache_cfg.get('fusion_registry', {}) if isinstance(cache_cfg.get('fusion_registry', {}), dict) else {}
+        self._cache_max_entries = max(64, int(fusion_cfg.get('max_entries', 1024) or 1024))
+        self._cache_ttl_seconds = max(60, int(fusion_cfg.get('ttl_seconds', 3600) or 3600))
+        self._cache_cleanup_interval = max(15, int(fusion_cfg.get('cleanup_interval_seconds', 120) or 120))
+        self._cache_last_cleanup = 0.0
         registry_dir = getattr(ctx, 'registry_dir', None)
         if not registry_dir:
             registry_dir = str(Path(self.base_dir) / 'data' / 'device_registry')
@@ -109,7 +115,46 @@ class OSVisualFusionEngine:
             os_log.err('FUS', 'B62_ENCODE', e, {'val': val})
             return '0'
 
+    def _coerce_text(self, raw_input):
+        if isinstance(raw_input, bytes):
+            return codecs.decode(raw_input, 'utf-8', errors='ignore')
+        if isinstance(raw_input, bytearray):
+            return codecs.decode(raw_input, 'utf-8', errors='ignore')
+        if isinstance(raw_input, memoryview):
+            return codecs.decode(raw_input, 'utf-8', errors='ignore')
+        return str(raw_input)
+
+    def _coerce_bytes(self, raw_input):
+        if isinstance(raw_input, bytes):
+            return raw_input
+        if isinstance(raw_input, bytearray):
+            return memoryview(raw_input)
+        if isinstance(raw_input, memoryview):
+            return raw_input
+        return str(raw_input).encode('utf-8')
+
+    def _prune_cache_locked(self, now_ts=None):
+        now_ts = float(now_ts if now_ts is not None else time.time())
+        if (now_ts - self._cache_last_cleanup) < self._cache_cleanup_interval and len(self._RAM_CACHE) <= self._cache_max_entries:
+            return
+        expired = [
+            key for key, reg in self._RAM_CACHE.items()
+            if (now_ts - float(reg.get('last_seen', now_ts))) > self._cache_ttl_seconds
+        ]
+        for key in expired:
+            self._RAM_CACHE.pop(key, None)
+        if len(self._RAM_CACHE) > self._cache_max_entries:
+            ordered = sorted(
+                self._RAM_CACHE.items(),
+                key=lambda kv: float(kv[1].get('last_seen', now_ts)),
+            )
+            drop_count = len(self._RAM_CACHE) - self._cache_max_entries
+            for key, _ in ordered[:drop_count]:
+                self._RAM_CACHE.pop(key, None)
+        self._cache_last_cleanup = now_ts
+
     def _get_active_registry(self, aid_str):
+        now_ts = time.time()
         key = None
         if isinstance(aid_str, int):
             val = aid_str
@@ -123,8 +168,10 @@ class OSVisualFusionEngine:
                 val = self._decode_b62(s)
                 key = str(val)
         with self._cache_lock:
-            if key in self._RAM_CACHE:
-                return self._RAM_CACHE[key]
+            reg = self._RAM_CACHE.get(key)
+            if reg:
+                reg['last_seen'] = now_ts
+                return reg
         f_path = get_registry_path(val)
         p_dir = Path(f_path).parent
         p_dir.mkdir(parents=True, exist_ok=True)
@@ -162,10 +209,13 @@ class OSVisualFusionEngine:
             'lock': threading.RLock(),
             'runtime_vals': runtime_vals_by_tid,
             'sig_index': sig_index,
+            'last_seen': now_ts,
         }
         with self._cache_lock:
+            self._prune_cache_locked(now_ts=now_ts)
             existing = self._RAM_CACHE.get(key)
             if existing:
+                existing['last_seen'] = now_ts
                 return existing
             self._RAM_CACHE[key] = reg
             return reg
@@ -214,14 +264,7 @@ class OSVisualFusionEngine:
 
     def _auto_decompose(self, raw_input):
         try:
-            if isinstance(raw_input, bytes):
-                work_str = codecs.decode(raw_input, 'utf-8', errors='ignore')
-            elif isinstance(raw_input, bytearray):
-                work_str = codecs.decode(raw_input, 'utf-8', errors='ignore')
-            elif isinstance(raw_input, memoryview):
-                work_str = codecs.decode(raw_input, 'utf-8', errors='ignore')
-            else:
-                work_str = str(raw_input)
+            work_str = self._coerce_text(raw_input)
             semi_idx = work_str.find(';')
             if semi_idx >= 0:
                 work_str = work_str[semi_idx + 1:]
@@ -261,14 +304,7 @@ class OSVisualFusionEngine:
             return str(raw_input).encode('utf-8')
         ts_str, sig, vals_bin, src_aid, route_ids = decomp
         reg = self._get_active_registry(src_aid)
-        if isinstance(raw_input, bytes):
-            raw_input_bytes = raw_input
-        elif isinstance(raw_input, bytearray):
-            raw_input_bytes = memoryview(raw_input)
-        elif isinstance(raw_input, memoryview):
-            raw_input_bytes = raw_input
-        else:
-            raw_input_bytes = str(raw_input).encode('utf-8')
+        raw_input_bytes = self._coerce_bytes(raw_input)
         if strategy == 'FULL':
             runtime_vals = reg.get('runtime_vals')
             sig_index = reg.get('sig_index')

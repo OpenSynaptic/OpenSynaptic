@@ -1,0 +1,192 @@
+{
+  "total": 1000000,
+  "ok": 1000000,
+  "fail": 0,
+  "avg_latency_ms": 0.6996,
+  "p95_latency_ms": 1.3597,
+  "p99_latency_ms": 1.6491,
+  "p99_9_latency_ms": 2.1323,
+  "p99_99_latency_ms": 3.1403,
+  "min_latency_ms": 0.0828,
+  "max_latency_ms": 33.9451,
+  "stage_timing_ms": {
+    "standardize_ms": {
+      "avg": 0.0401,
+      "p95": 0.0502,
+      "p99": 0.057,
+      "p99_9": 0.1759,
+      "p99_99": 0.716,
+      "min": 0.0185,
+      "max": 32.3628
+    },
+    "compress_ms": {
+      "avg": 0.0454,
+      "p95": 0.1533,
+      "p99": 0.4723,
+      "p99_9": 0.8165,
+      "p99_99": 1.2651,
+      "min": 0.0138,
+      "max": 32.6446
+    },
+    "fuse_ms": {
+      "avg": 0.2868,
+      "p95": 0.7037,
+      "p99": 0.8589,
+      "p99_9": 1.1773,
+      "p99_99": 1.8051,
+      "min": 0.0176,
+      "max": 32.9785
+    }
+  },
+  "error_samples": [],
+  "elapsed_s": 30.285,
+  "throughput_pps": 33019.1,
+  "core_backend": "rscore",
+  "codec_class": "RsBase62Codec",
+  "codec_module": "opensynaptic.core.rscore.codec",
+  "requested_core": "auto",
+  "execution_mode": "hybrid",
+  "processes": 6,
+  "threads_per_process": 4,
+  "batch_size": 256,
+  "chain_mode": "e2e",
+  "runtime_toggles": {
+    "collector_mode": "batched",
+    "collector_flush_every": 512,
+    "pipeline_mode": "legacy",
+    "pipeline_batch_available": false,
+    "chain_mode": "e2e"
+  },
+  "worst_sample": {
+    "total_latency_ms": 33.9451,
+    "task_id": null,
+    "chain_mode": "e2e",
+    "stage_timing_ms": {
+      "standardize_ms": 0.0342,
+      "compress_ms": 0.0248,
+      "fuse_ms": 0.5934
+    },
+    "stage_share_pct": {
+      "standardize_ms": 0.1008,
+      "compress_ms": 0.0731,
+      "fuse_ms": 1.7481
+    },
+    "dominant_stage": {
+      "name": "fuse_ms",
+      "latency_ms": 0.5934
+    },
+    "process_index": 5
+  },
+  "worst_topk": [
+    {
+      "total_latency_ms": 33.9451,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0342,
+        "compress_ms": 0.0248,
+        "fuse_ms": 0.5934
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.1008,
+        "compress_ms": 0.0731,
+        "fuse_ms": 1.7481
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.5934
+      },
+      "process_index": 5
+    },
+    {
+      "total_latency_ms": 33.9315,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0338,
+        "compress_ms": 0.0251,
+        "fuse_ms": 0.3847
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.0996,
+        "compress_ms": 0.074,
+        "fuse_ms": 1.1338
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.3847
+      },
+      "process_index": 3
+    },
+    {
+      "total_latency_ms": 33.6758,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0333,
+        "compress_ms": 0.0249,
+        "fuse_ms": 0.3715
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.0989,
+        "compress_ms": 0.0739,
+        "fuse_ms": 1.1032
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.3715
+      },
+      "process_index": 1
+    },
+    {
+      "total_latency_ms": 33.3834,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0324,
+        "compress_ms": 0.0258,
+        "fuse_ms": 0.1421
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.0971,
+        "compress_ms": 0.0773,
+        "fuse_ms": 0.4257
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.1421
+      },
+      "process_index": 3
+    },
+    {
+      "total_latency_ms": 33.3807,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.034,
+        "compress_ms": 0.0243,
+        "fuse_ms": 32.9785
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.1019,
+        "compress_ms": 0.0728,
+        "fuse_ms": 98.7951
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 32.9785
+      },
+      "process_index": 0
+    }
+  ],
+  "header_probe": {
+    "enabled": true,
+    "rate": 0.0,
+    "parser_available": false,
+    "attempted": 0,
+    "parsed": 0,
+    "crc16_ok": 0,
+    "parse_hit_rate": 0.0,
+    "crc16_ok_rate": 0.0
+  }
+}

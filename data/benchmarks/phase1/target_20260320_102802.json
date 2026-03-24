@@ -1,0 +1,8 @@
+{
+  "target_throughput_pps": 1000000,
+  "suite": "stress",
+  "chain_mode": "e2e",
+  "total": 20000,
+  "repeats": 1,
+  "generated_at": "20260320_102802"
+}

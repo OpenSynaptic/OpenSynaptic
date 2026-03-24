@@ -1,0 +1,16 @@
+{
+  "updated_at": 1774348178,
+  "sessions": {
+    "4294967294": {
+      "last": 1774348178,
+      "peer_addr": "('127.0.0.1', 55943)",
+      "first_plaintext_ts": 0,
+      "pending_timestamp": null,
+      "pending_key_hex": null,
+      "key_hex": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+      "dict_ready": true,
+      "decrypt_confirmed": true,
+      "state": "SECURE"
+    }
+  }
+}

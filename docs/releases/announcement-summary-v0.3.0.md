@@ -6,7 +6,8 @@ This page is a compact index for `v0.3.0` release materials.
 
 ## Primary Release Documents
 
-- Detailed release announcement: `docs/releases/v0.3.0_announcement_en.md`
+- Detailed release announcement (publish source): `docs/releases/v0.3.0_announcement_en.md`
+- Stable index path: `docs/releases/v0.3.0_announcement.md`
 - Upgrade guide: `docs/guides/upgrade/v0.3.0.md`
 - Version comparison report: `docs/reports/releases/v0.2.0-v0.3.0-comparison.md`
 

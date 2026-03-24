@@ -38,3 +38,17 @@ def zero_copy_enabled(config: Any) -> bool:
     return bool(settings.get('zero_copy_transport', True))
 
 
+def to_wire_payload(
+    payload: Any,
+    config: Any = None,
+    *,
+    force_zero_copy: bool = False,
+    force_bytes: bool = False,
+):
+    if force_bytes:
+        return ensure_bytes(payload)
+    if force_zero_copy:
+        return as_readonly_view(payload)
+    return as_readonly_view(payload) if zero_copy_enabled(config) else ensure_bytes(payload)
+
+

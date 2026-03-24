@@ -1,7 +1,7 @@
 """OpenSynaptic utilities unified entry point."""
 
 from opensynaptic.utils.base62.base62 import Base62Codec
-from opensynaptic.utils.buffer import as_readonly_view, ensure_bytes, payload_len, zero_copy_enabled
+from opensynaptic.utils.buffer import as_readonly_view, ensure_bytes, payload_len, to_wire_payload, zero_copy_enabled
 from opensynaptic.utils.c.native_loader import (
     NativeLibraryUnavailable,
     has_native_library,
@@ -36,7 +36,7 @@ __all__ = [
     'read_json', 'write_json', 'get_config_path', 'get_registry_path', 'get_lib_path', 'ctx',
     'os_log',
     'LogMsg', 'MESSAGES', 'CLI_HELP_TABLE',
-    'ensure_bytes', 'payload_len', 'zero_copy_enabled', 'as_readonly_view',
+    'ensure_bytes', 'payload_len', 'zero_copy_enabled', 'as_readonly_view', 'to_wire_payload',
     'Base62Codec',
     'crc8', 'crc16', 'crc16_ccitt', 'xor_payload', 'xor_payload_into', 'derive_session_key',
     'load_native_library', 'require_native_library', 'has_native_library', 'NativeLibraryUnavailable',

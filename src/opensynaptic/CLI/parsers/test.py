@@ -78,9 +78,9 @@ def register(sub: argparse._SubParsersAction) -> None:
     # ------------------------------------------------------------------
     plugin_test.add_argument(
         '--suite',
-        choices=['component', 'stress', 'all', 'compare', 'full_load'],
+        choices=['component', 'stress', 'all', 'compare', 'full_load', 'integration', 'audit'],
         default='all',
-        help='Test suite (component/stress/all/compare/full_load)',
+        help='Test suite (component/stress/all/compare/full_load/integration/audit)',
     )
     plugin_test.add_argument('--workers', type=int, default=8,
                              help='Stress test worker threads')
@@ -116,6 +116,12 @@ def register(sub: argparse._SubParsersAction) -> None:
     plugin_test.add_argument(
         '--threads-per-process', type=int, default=None,
         help='Thread count inside each process (default: --workers)',
+    )
+    plugin_test.add_argument(
+        '--chain-mode',
+        choices=['core', 'e2e'],
+        default='core',
+        help='Stress chain mode: core=standardize/compress/fuse, e2e=send->receive->process loopback',
     )
     plugin_test.add_argument('--auto-profile', action='store_true', default=False,
                              help='Scan candidate stress concurrency combos, then run final with best config')

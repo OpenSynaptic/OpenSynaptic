@@ -113,3 +113,13 @@ Some performance-critical paths depend on native bindings:
 
 There is no Python fallback for these code paths.
 
+---
+
+## Dedup Status (Landed)
+
+- `libraries/` stays untouched during dedup work.
+- Transport payload materialization is now centralized via `opensynaptic.utils.buffer.to_wire_payload()`.
+- `rscore` wrapper boilerplate is consolidated through `src/opensynaptic/core/rscore/_ffi_proxy.py`.
+- Script bootstrap path setup is shared in `src/opensynaptic/utils/script_bootstrap.py`.
+- Detailed phase baseline and verification logs: [`internal/DEDUP_EXECUTION_2026M03.md`](internal/DEDUP_EXECUTION_2026M03.md).
+

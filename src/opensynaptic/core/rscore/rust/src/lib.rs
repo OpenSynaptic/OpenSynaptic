@@ -8,9 +8,12 @@
 //!   - CMD byte constants in `src/opensynaptic/core/pycore/handshake.py`
 
 use std::ffi::c_char;
+use std::fs;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
@@ -307,6 +310,130 @@ struct AidFusionState {
 #[derive(Debug, Default)]
 struct FusionState {
     aids: HashMap<u32, AidFusionState>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct RegistryTemplateDisk {
+    sig: String,
+    #[serde(default)]
+    last_vals_bin: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct RegistryDisk {
+    #[serde(default)]
+    aid: String,
+    #[serde(default)]
+    templates: HashMap<String, RegistryTemplateDisk>,
+}
+
+fn registry_path_for_aid(registry_root: &str, aid: u32) -> PathBuf {
+    let aid_str = format!("{:010}", aid);
+    Path::new(registry_root)
+        .join(&aid_str[0..2])
+        .join(&aid_str[2..4])
+        .join(format!("{}.json", aid))
+}
+
+fn load_aid_registry_into_state(state: &mut FusionState, aid: u32, registry_root: Option<&str>) {
+    if state.aids.contains_key(&aid) {
+        return;
+    }
+    let root = match registry_root {
+        Some(v) if !v.is_empty() => v,
+        _ => return,
+    };
+    let p = registry_path_for_aid(root, aid);
+    let raw = match fs::read(&p) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let disk: RegistryDisk = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let mut aid_state = AidFusionState {
+        next_tid: 24,
+        ..AidFusionState::default()
+    };
+    for (tid_str, tpl) in disk.templates {
+        let tid = match tid_str.parse::<u32>() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let sig_bytes = tpl.sig.into_bytes();
+        aid_state.sig_to_tid.insert(sig_bytes.clone(), tid);
+        aid_state.tid_to_sig.insert(tid, sig_bytes);
+        let mut vals = Vec::new();
+        for item in tpl.last_vals_bin {
+            if let Ok(v) = base64::engine::general_purpose::STANDARD.decode(item.as_bytes()) {
+                vals.push(v);
+            }
+        }
+        if !vals.is_empty() {
+            aid_state.runtime_vals.insert(tid, vals);
+        }
+        aid_state.next_tid = aid_state.next_tid.max(tid.saturating_add(1));
+    }
+
+    if !aid_state.tid_to_sig.is_empty() || !aid_state.runtime_vals.is_empty() {
+        state.aids.insert(aid, aid_state);
+    }
+}
+
+fn dump_aid_registry_from_state(state: &FusionState, aid: u32, registry_root: Option<&str>) {
+    let root = match registry_root {
+        Some(v) if !v.is_empty() => v,
+        _ => return,
+    };
+    let aid_state = match state.aids.get(&aid) {
+        Some(v) => v,
+        None => return,
+    };
+
+    let mut templates: HashMap<String, RegistryTemplateDisk> = HashMap::new();
+    for (tid, sig) in &aid_state.tid_to_sig {
+        let vals = aid_state.runtime_vals.get(tid).cloned().unwrap_or_default();
+        let encoded_vals: Vec<String> = vals
+            .iter()
+            .map(|v| base64::engine::general_purpose::STANDARD.encode(v))
+            .collect();
+        let sig_str = String::from_utf8(sig.clone()).unwrap_or_default();
+        templates.insert(
+            tid.to_string(),
+            RegistryTemplateDisk {
+                sig: sig_str,
+                last_vals_bin: encoded_vals,
+            },
+        );
+    }
+
+    let disk = RegistryDisk {
+        aid: aid.to_string(),
+        templates,
+    };
+    let body = match serde_json::to_vec_pretty(&disk) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let p = registry_path_for_aid(root, aid);
+    if let Some(parent) = p.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(p, body);
+}
+
+const JSON_FUSION_TTL_SECS: u64 = 3600;
+const JSON_FUSION_MAX_CTX: usize = 2048;
+
+type JsonFusionEntry = (Arc<Mutex<FusionState>>, u64);
+
+fn unix_now_secs() -> u64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs(),
+        Err(_) => 0,
+    }
 }
 
 fn fusion_registry() -> &'static Mutex<HashMap<u64, Arc<Mutex<FusionState>>>> {
@@ -1462,16 +1589,36 @@ fn write_out_bytes(out: *mut u8, out_len: usize, body: &[u8]) -> i32 {
     needed_i32
 }
 
-fn json_fusion_registry() -> &'static Mutex<HashMap<u64, Arc<Mutex<FusionState>>>> {
-    static REG: OnceLock<Mutex<HashMap<u64, Arc<Mutex<FusionState>>>>> = OnceLock::new();
+fn json_fusion_registry() -> &'static Mutex<HashMap<u64, JsonFusionEntry>> {
+    static REG: OnceLock<Mutex<HashMap<u64, JsonFusionEntry>>> = OnceLock::new();
     REG.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn get_json_fusion_arc(ctx_id: u64) -> Option<Arc<Mutex<FusionState>>> {
     let key = if ctx_id == 0 { 1 } else { ctx_id };
+    let now = unix_now_secs();
     let mut reg = json_fusion_registry().lock().ok()?;
-    let arc = reg.entry(key).or_insert_with(|| Arc::new(Mutex::new(FusionState::default())));
-    Some(Arc::clone(arc))
+    reg.retain(|_, (_, ts)| now.saturating_sub(*ts) <= JSON_FUSION_TTL_SECS);
+    if let Some((arc, ts)) = reg.get_mut(&key) {
+        *ts = now;
+        return Some(Arc::clone(arc));
+    }
+    if reg.len() >= JSON_FUSION_MAX_CTX {
+        let mut oldest_key = None;
+        let mut oldest_ts = u64::MAX;
+        for (ctx_key, (_, ts)) in reg.iter() {
+            if *ts < oldest_ts {
+                oldest_ts = *ts;
+                oldest_key = Some(*ctx_key);
+            }
+        }
+        if let Some(drop_key) = oldest_key {
+            reg.remove(&drop_key);
+        }
+    }
+    let arc = Arc::new(Mutex::new(FusionState::default()));
+    reg.insert(key, (Arc::clone(&arc), now));
+    Some(arc)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1483,6 +1630,8 @@ struct FusionRunReq {
     strategy: String,
     #[serde(default)]
     src_aid: Option<u32>,
+    #[serde(default)]
+    registry_root: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1490,6 +1639,8 @@ struct FusionDecompressReq {
     #[serde(default)]
     ctx_id: u64,
     packet_b64: String,
+    #[serde(default)]
+    registry_root: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1559,10 +1710,17 @@ pub unsafe extern "C" fn os_fusion_run_json_v1(
             Ok(v) => v,
             Err(_) => return 0,
         };
-        match apply_fusion_state(&mut state, src_aid, strategy_full, sig, vals) {
+        load_aid_registry_into_state(&mut state, src_aid, req.registry_root.as_deref());
+        let out = match apply_fusion_state(&mut state, src_aid, strategy_full, sig, vals) {
             Some(v) => v,
             None => return 0,
+        };
+        if let Some((_, _, flags, _)) = parse_apply_blob(&out) {
+            if (flags & 0x03) != 0 {
+                dump_aid_registry_from_state(&state, src_aid, req.registry_root.as_deref());
+            }
         }
+        out
     };
     let (cmd, tid, flags, body_native) = match parse_apply_blob(&encoded) {
         Some(v) => v,
@@ -1662,11 +1820,13 @@ pub unsafe extern "C" fn os_fusion_decompress_json_v1(
         let p = String::from_utf8(body.clone()).unwrap_or_default();
         if let Some((_, sig, vals)) = auto_decompose_input_inner(&p) {
             if let Ok(mut state) = arc.lock() {
+                load_aid_registry_into_state(&mut state, source_aid, req.registry_root.as_deref());
                 let aid_state = get_or_init_aid_state(&mut state, source_aid);
                 aid_state.sig_to_tid.insert(sig.clone(), tid);
                 aid_state.tid_to_sig.insert(tid, sig);
                 aid_state.runtime_vals.insert(tid, vals);
                 aid_state.next_tid = aid_state.next_tid.max(tid.saturating_add(1));
+                dump_aid_registry_from_state(&state, source_aid, req.registry_root.as_deref());
             }
         }
         p
@@ -1676,8 +1836,14 @@ pub unsafe extern "C" fn os_fusion_decompress_json_v1(
                 Ok(v) => v,
                 Err(_) => return 0,
             };
+            load_aid_registry_into_state(&mut state, source_aid, req.registry_root.as_deref());
             match apply_fusion_receive_state(&mut state, source_aid, base_cmd, tid, ts_enc.into_bytes(), body) {
-                Some(v) => v,
+                Some(v) => {
+                    if base_cmd == DATA_DIFF {
+                        dump_aid_registry_from_state(&state, source_aid, req.registry_root.as_deref());
+                    }
+                    v
+                }
                 None => return write_stub_json(out, out_len, br#"{"error":"fusion_receive_apply_failed"}"#),
             }
         };
@@ -1761,6 +1927,8 @@ pub unsafe extern "C" fn os_node_dispatch_json_v1(
 ///   u64  compressor_handle  (BE)
 ///   u64  ctx_id             (BE)
 ///   u32  item_count         (BE)
+///   u32  registry_root_len  (BE)
+///   bytes registry_root[registry_root_len]
 ///   repeat(item_count) {
 ///       u32  aid            (BE)
 ///       u8   strategy       (1 = FULL, 0 = DIFF)
@@ -1782,6 +1950,16 @@ fn pipeline_batch_inner(raw: &[u8]) -> Option<Vec<u8>> {
     let ctx_id = u64::from_be_bytes(raw[8..16].try_into().ok()?);
     let mut off = 16usize;
     let item_count = read_u32_be(raw, &mut off)? as usize;
+    let registry_root_len = read_u32_be(raw, &mut off)? as usize;
+    if off + registry_root_len > raw.len() {
+        return None;
+    }
+    let registry_root = if registry_root_len > 0 {
+        String::from_utf8(raw[off..off + registry_root_len].to_vec()).ok()
+    } else {
+        None
+    };
+    off += registry_root_len;
 
     // ── Acquire compressor once (one mutex round-trip for all items) ──────
     let compressor = {
@@ -1839,6 +2017,7 @@ fn pipeline_batch_inner(raw: &[u8]) -> Option<Vec<u8>> {
         };
 
         // Apply fusion state (lock already held for whole batch)
+        load_aid_registry_into_state(&mut fusion_state, aid, registry_root.as_deref());
         let encoded = match apply_fusion_state(&mut fusion_state, aid, strategy_full, sig, vals) {
             Some(v) => v,
             None => { push_u32_be(&mut out, 0)?; continue; }
@@ -1849,6 +2028,9 @@ fn pipeline_batch_inner(raw: &[u8]) -> Option<Vec<u8>> {
             Some(v) => v,
             None => { push_u32_be(&mut out, 0)?; continue; }
         };
+        if (flags & 0x03) != 0 {
+            dump_aid_registry_from_state(&fusion_state, aid, registry_root.as_deref());
+        }
         let ts_str = match String::from_utf8(ts) {
             Ok(v) => v,
             Err(_) => { push_u32_be(&mut out, 0)?; continue; }

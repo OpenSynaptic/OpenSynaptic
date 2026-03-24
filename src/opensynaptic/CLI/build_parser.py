@@ -13,14 +13,27 @@ Each sub-module in :mod:`opensynaptic.CLI.parsers` exposes a single
 in the canonical order so that ``--help`` output is deterministic.
 """
 import argparse
+import re
+import sys
 
 from opensynaptic.CLI.parsers import core, config, test, plugin, native, service, extra
+
+
+class OSCliArgumentParser(argparse.ArgumentParser):
+
+    def error(self, message):
+        msg = str(message or '')
+        # Avoid dumping the full command list for minor typos in interactive mode.
+        msg = re.sub(r'\(choose from .*\)$', '(use `help` to list commands)', msg)
+        sys.stderr.write('os-node: error: {}\n'.format(msg))
+        sys.stderr.write('Try: help  or  help --full\n')
+        raise SystemExit(2)
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build and return the complete ``os-node`` argument parser."""
 
-    parser = argparse.ArgumentParser(
+    parser = OSCliArgumentParser(
         prog='os-node',
         description='OpenSynaptic CLI – 2-N-2 IoT protocol stack control plane',
     )
@@ -37,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--once', action='store_true', default=False)
     parser.add_argument('--interval', type=float, default=5.0)
     parser.add_argument('--duration', type=float, default=0.0)
+    parser.add_argument(
+        '--stats-interval', dest='stats_interval', type=float, default=None,
+        help='Run-mode periodic stats interval in seconds (main loop heartbeat)',
+    )
     parser.add_argument(
         '--quiet', action='store_true', default=False,
         help='Suppress info logs – only warnings and errors are shown',

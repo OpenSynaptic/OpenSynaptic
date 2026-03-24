@@ -41,7 +41,7 @@ This is the canonical documentation map for the repository.
 ## Core References
 
 - Core API: `docs/CORE_API.md`
-- Pycore internals: `docs/PYCORE_INTERNALS.md`
+- Pycore internals: `docs/internal/PYCORE_INTERNALS.md`
 - Rscore API: `docs/RSCORE_API.md`
 - Python/Rust API bridge: `docs/PYCORE_RUST_API.md`
 - Transporter plugin guide: `docs/TRANSPORTER_PLUGIN.md`

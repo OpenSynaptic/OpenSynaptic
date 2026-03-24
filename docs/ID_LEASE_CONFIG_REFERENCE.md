@@ -192,7 +192,7 @@ python -c "from plugins.id_allocator import IDAllocator; import json; a = IDAllo
 
 | Metric | Interpretation | Action |
 |--------|-----------------|--------|
-| `new_device_rate_per_hour` > `high_rate_threshold` | System experiencing high device churn | Monitor adoption patterns; may be normal |
+| `new_device_rate_per_hour` > `high_rate_threshold_per_hour` | System experiencing high device churn | Monitor adoption patterns; may be normal |
 | `effective_lease_seconds` < `base_lease_seconds` | Adaptive shortening active | High device rate detected; ID recycling accelerated |
 | `ultra_rate_active: true` | Ultra-high rate sustained | Manual tuning may be needed; check for enrollment surge |
 | `force_zero_lease_active: true` | IDs being force-expired immediately | ID pool under pressure; consider scaling device infrastructure |

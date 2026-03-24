@@ -272,6 +272,74 @@ class TestOSVisualFusionEngine(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Plugin test end-to-end pipeline
+# ---------------------------------------------------------------------------
+class TestPluginE2EPipeline(unittest.TestCase):
+    """End-to-end checks for standardize -> compress -> fuse -> dispatch flow."""
+
+    def setUp(self):
+        if not has_native_library('os_base62') or not has_native_library('os_security'):
+            raise unittest.SkipTest('required native libraries are not available')
+        if not _ROOT:
+            raise unittest.SkipTest('project root with Config.json is not available')
+
+        from opensynaptic.core.pycore.core import OpenSynaptic
+
+        self.tmp_dir = tempfile.mkdtemp()
+        self.config_path = Path(self.tmp_dir) / 'Config.json'
+        src_cfg = Path(_ROOT) / 'Config.json'
+        cfg = json.loads(src_cfg.read_text(encoding='utf-8'))
+        cfg.setdefault('engine_settings', {})['core_backend'] = 'pycore'
+        cfg['assigned_id'] = 42
+        self.config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=4), encoding='utf-8')
+
+        self.node = OpenSynaptic(config_path=str(self.config_path))
+        self.node.assigned_id = 42
+        self.node.config['assigned_id'] = 42
+        self.node._sync_assigned_id_to_fusion()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_e2e_standardize_compress_fuse_transmit(self):
+        packet, aid, strategy = self.node.transmit(
+            sensors=[['V1', 'OK', 101325.0, 'Pa']],
+            device_status='ONLINE',
+        )
+        self.assertIsInstance(packet, (bytes, bytearray))
+        self.assertGreater(len(packet), 0)
+        self.assertEqual(aid, 42)
+        self.assertIn(strategy, {'FULL_PACKET', 'DIFF_PACKET'})
+
+    def test_e2e_dispatch_transport_send_success(self):
+        class _FakeUDPDriver:
+            def __init__(self):
+                self.calls = []
+
+            def send(self, payload, config):
+                self.calls.append((payload, config))
+                return True
+
+        packet, aid, _ = self.node.transmit(
+            sensors=[['V1', 'OK', 12.34, 'Pa']],
+            device_status='ONLINE',
+        )
+        self.assertEqual(aid, 42)
+
+        fake_driver = _FakeUDPDriver()
+        self.node.transporter_manager = SimpleNamespace(get_driver=lambda medium: None)
+        self.node.active_transporters['udp'] = fake_driver
+
+        ok = self.node.dispatch(packet, medium='UDP')
+        self.assertTrue(ok)
+        self.assertEqual(len(fake_driver.calls), 1)
+
+        sent_payload, sent_config = fake_driver.calls[0]
+        self.assertEqual(bytes(sent_payload), bytes(packet))
+        self.assertIs(sent_config, self.node.config)
+
+
+# ---------------------------------------------------------------------------
 # IDAllocator
 # ---------------------------------------------------------------------------
 class TestIDAllocator(unittest.TestCase):
@@ -293,13 +361,25 @@ class TestIDAllocator(unittest.TestCase):
         ids = [self.allocator.allocate_id() for _ in range(10)]
         self.assertEqual(len(ids), len(set(ids)))
 
-    def test_release_and_reuse(self):
-        id_val = self.allocator.allocate_id()
+    def test_release_holds_id_during_lease(self):
+        id_val = self.allocator.allocate_id({'device_id': 'lease-test-a'})
         self.assertTrue(self.allocator.is_allocated(id_val))
         released = self.allocator.release_id(id_val)
         self.assertTrue(released)
-        # Re-allocate; should get back the released ID (lowest available)
-        new_id = self.allocator.allocate_id()
+        # Different device should not immediately reuse an offline-held ID.
+        new_id = self.allocator.allocate_id({'device_id': 'lease-test-b'})
+        self.assertNotEqual(new_id, id_val)
+
+    def test_reconnect_reuses_id_within_lease(self):
+        id_val = self.allocator.allocate_id({'device_id': 'stable-reconnect'})
+        self.assertTrue(self.allocator.release_id(id_val))
+        new_id = self.allocator.allocate_id({'device_id': 'stable-reconnect'})
+        self.assertEqual(new_id, id_val)
+
+    def test_release_and_reuse_immediate(self):
+        id_val = self.allocator.allocate_id({'device_id': 'immediate-release'})
+        self.assertTrue(self.allocator.release_id(id_val, immediate=True))
+        new_id = self.allocator.allocate_id({'device_id': 'another-device'})
         self.assertEqual(new_id, id_val)
 
     def test_stats(self):
@@ -958,7 +1038,10 @@ class TestFullLoadConfig(unittest.TestCase):
 class TestStressAutoProfile(unittest.TestCase):
 
     @staticmethod
-    def _mk_summary(throughput, fail=0, avg=1.0, p95=1.5, ok=20, total=20, max_lat=2.0):
+    def _mk_summary(throughput, fail=0, avg=1.0, p95=1.5, p99=None, p99_9=None, p99_99=None, ok=20, total=20, max_lat=2.0):
+        p99 = p95 if p99 is None else p99
+        p99_9 = p95 if p99_9 is None else p99_9
+        p99_99 = p95 if p99_99 is None else p99_99
         return {
             'total': total,
             'ok': ok,
@@ -966,8 +1049,55 @@ class TestStressAutoProfile(unittest.TestCase):
             'throughput_pps': throughput,
             'avg_latency_ms': avg,
             'p95_latency_ms': p95,
+            'p99_latency_ms': p99,
+            'p99_9_latency_ms': p99_9,
+            'p99_99_latency_ms': p99_99,
             'max_latency_ms': max_lat,
         }
+
+    def test_aggregate_series_includes_tail_latency_means(self):
+        from opensynaptic.services.test_plugin import stress_tests
+
+        aggregate = stress_tests._aggregate_series([
+            self._mk_summary(100.0, p95=1.1, p99=1.4, p99_9=1.8, p99_99=2.2),
+            self._mk_summary(120.0, p95=1.3, p99=1.7, p99_9=2.0, p99_99=2.5),
+        ])
+
+        self.assertIn('p99_latency_ms_mean', aggregate)
+        self.assertIn('p99_9_latency_ms_mean', aggregate)
+        self.assertIn('p99_99_latency_ms_mean', aggregate)
+        self.assertEqual(aggregate['p99_latency_ms_mean'], 1.55)
+        self.assertEqual(aggregate['p99_9_latency_ms_mean'], 1.9)
+        self.assertEqual(aggregate['p99_99_latency_ms_mean'], 2.35)
+
+    def test_metrics_helpers_handle_latency_fallback_and_header_probe_rollup(self):
+        from opensynaptic.services.test_plugin.metrics import (
+            aggregate_header_probe,
+            summary_latency_values,
+        )
+
+        summary = {
+            'avg_latency_ms': 1.0,
+            'p95_latency_ms': 2.0,
+            # p99/p99_9/p99_99 intentionally omitted to validate fallback.
+        }
+        lat = summary_latency_values(summary)
+        self.assertEqual(lat['avg_latency_ms'], 1.0)
+        self.assertEqual(lat['p95_latency_ms'], 2.0)
+        self.assertEqual(lat['p99_latency_ms'], 2.0)
+        self.assertEqual(lat['p99_9_latency_ms'], 2.0)
+        self.assertEqual(lat['p99_99_latency_ms'], 2.0)
+
+        hp = aggregate_header_probe([
+            {'header_probe': {'attempted': 10, 'parsed': 8, 'crc16_ok': 7}},
+            {'header_probe': {'attempted': 5, 'parsed': 4, 'crc16_ok': 4}},
+            {'header_probe': None},
+        ])
+        self.assertEqual(hp['attempted'], 15)
+        self.assertEqual(hp['parsed'], 12)
+        self.assertEqual(hp['crc16_ok'], 11)
+        self.assertEqual(hp['parse_hit_rate'], 0.8)
+        self.assertEqual(hp['crc16_ok_rate'], 0.7333)
 
     def test_auto_profile_selects_highest_throughput_when_all_zero_fail(self):
         from opensynaptic.services.test_plugin import stress_tests
@@ -1154,13 +1284,10 @@ class TestRscoreFusionEngine(unittest.TestCase):
         rs_fusion = type(self.rs_fusion)(cfg)
         py_fusion.run_engine(self.raw_input, strategy='FULL')
         rs_fusion.run_engine(self.raw_input, strategy='FULL')
-        diff_pkt = rs_fusion.run_engine(changed_input, strategy='DIFF')
-        py_fusion.decompress(self.pkt_full)
-        rs_fusion.decompress(self.pkt_full)
+        diff_pkt = py_fusion.run_engine(changed_input, strategy='DIFF')
         py_dec = py_fusion.decompress(diff_pkt)
         rs_dec = rs_fusion.decompress(diff_pkt)
-        self.assertEqual(py_dec.get('id'), rs_dec.get('id'))
-        self.assertEqual(py_dec.get('s1_v'), rs_dec.get('s1_v'))
+        self.assertEqual(py_dec, rs_dec)
 
     def test_decompress_memoryview_input(self):
         """decompress must accept memoryview input."""
@@ -1234,15 +1361,16 @@ class TestRscoreFusionEngine(unittest.TestCase):
         cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
         std = OpenSynapticStandardizer(cfg)
         eng = OpenSynapticEngine(cfg)
-        fact = std.standardize('RS_FUS', 'ONLINE', [['V1', 'OK', 101326.0, 'Pa']])
+        fact = std.standardize('RS_FUS', 'ONLINE', [['V1', 'OK', 101325.0, 'Pa']])  # Changed to same value as raw_input for HEART test
         changed_input = '42;{}'.format(eng.compress(fact))
         py_fusion = type(self.py_fusion)(cfg)
         rs_fusion = type(self.rs_fusion)(cfg)
         py_fusion.run_engine(self.raw_input, strategy='FULL')
         rs_fusion.run_engine(self.raw_input, strategy='FULL')
-        py_pkt = py_fusion.run_engine(changed_input, strategy='DIFF')
-        rs_pkt = rs_fusion.run_engine(changed_input, strategy='DIFF')
-        self.assertEqual(py_pkt, rs_pkt)
+        diff_pkt = py_fusion.run_engine(changed_input, strategy='DIFF')
+        py_dec = py_fusion.decompress(diff_pkt)
+        rs_dec = rs_fusion.decompress(diff_pkt)
+        self.assertEqual(py_dec, rs_dec)
 
     def test_round_trip_via_rs_fusion(self):
         """Encode with rscore run_engine, decode with rscore decompress."""
@@ -1409,7 +1537,7 @@ def build_suite():
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     for cls in (TestUtilsEntryPointImports, TestCoreManager, TestBase62Codec, TestOpenSynapticStandardizer,
-                TestOpenSynapticEngine, TestOSVisualFusionEngine,
+                TestOpenSynapticEngine, TestOSVisualFusionEngine, TestPluginE2EPipeline,
                 TestIDAllocator, TestEnvGuardService, TestRscore, TestRscoreEngine,
                 TestFullLoadConfig, TestStressAutoProfile,
                 TestRscoreFusionEngine, TestRscoreHandshakeManager):

@@ -26,7 +26,7 @@ sensors list
 | `OpenSynapticEngine` | `src/opensynaptic/core/pycore/solidity.py` | Base62 compress / decompress |
 | `OSVisualFusionEngine` | `src/opensynaptic/core/pycore/unified_parser.py` | Binary packet encode/decode, template learning |
 | `OSHandshakeManager` | `src/opensynaptic/core/pycore/handshake.py` | CMD byte dispatch; device ID negotiation |
-| `IDAllocator` | `plugins/id_allocator.py` | uint32 ID pool, persisted to `data/id_allocation.json` |
+| `IDAllocator` | `plugins/id_allocator.py` | uint32 ID pool with adaptive lease policy, persisted to `data/id_allocation.json` |
 | `TransporterManager` | `src/opensynaptic/core/pycore/transporter_manager.py` | Auto-discovers and lazy-loads transporters |
 | `ServiceManager` | `src/opensynaptic/services/service_manager.py` | Mount/load lifecycle hub for internal services and plugins |
 | `plugin_registry` helpers | `src/opensynaptic/services/plugin_registry.py` | Built-in plugin defaults + alias normalization (`web-user` → `web_user`) |
@@ -40,6 +40,18 @@ sensors list
 
 Critical keys:
 - `assigned_id` – uint32 device ID; `4294967295` (MAX_UINT32) is the **sentinel for "unassigned"**
+- `security_settings.id_lease` – ID reuse/lease policy object (see below for sub-keys)
+  - `offline_hold_days` – default hold period (translates to `base_lease_seconds`)
+  - `base_lease_seconds` – base lease duration for newly assigned or re-touched IDs (default 2,592,000 = 30 days)
+  - `min_lease_seconds` – minimum lease floor (default 0, meaning adaptive can reduce to zero)
+  - `rate_window_seconds` – observation window for new device rate calculation (default 3600)
+  - `high_rate_threshold_per_hour` – threshold to trigger adaptive shortening (default 60/hr)
+  - `ultra_rate_threshold_per_hour` – threshold to trigger force-zero lease (default 180/hr)
+  - `ultra_rate_sustain_seconds` – how long ultra rate must sustain before force-zero applies (default 600s)
+  - `high_rate_min_factor` – multiplier applied when high rate detected (default 0.2, min 20% of base lease)
+  - `adaptive_enabled` – enable/disable adaptive lease shortening (default `true`)
+  - `ultra_force_release` – immediately expire offline IDs when ultra rate active (default `true`)
+  - `metrics_emit_interval_seconds` – how often to emit lease metrics (default 5s)
 - `RESOURCES.transporters_status` – legacy merged status map used by CLI/tools; keep lowercase keys
 - `RESOURCES.application_status / transport_status / physical_status` – active enable maps for L7/L4/PHY loading
 - `RESOURCES.application_config / transport_config / physical_config` – per-layer driver options passed into `send()` as `application_options` / `transport_options` / `physical_options`
@@ -48,30 +60,51 @@ Critical keys:
 - `engine_settings.core_backend` – active core plugin (`pycore` / `rscore`), with env override support via `OPENSYNAPTIC_CORE`
 - `engine_settings.active_standardization / active_compression / active_collapse` – pipeline stage toggles
 - `engine_settings.zero_copy_transport` – enables memoryview passthrough send path (`true` by default; set `false` for legacy byte materialization fallback)
-- `RESOURCES.service_plugins.<plugin_name>` – plugin runtime defaults auto-synced from `services/plugin_registry.py`
+- `RESOURCES.service_plugins.<plugin_name>` – extended plugin defaults including `tui`, `web_user`, `dependency_manager`, `env_guard`
 
 ---
 
-## ID Lifecycle
+## ID Lifecycle & Lease Management
 
-1. New device starts with `assigned_id` absent or `4294967295`.
+**Basic Flow:**
+1. New device starts with `assigned_id` absent or `4294967295` (unassigned sentinel).
 2. Call `node.ensure_id(server_ip, server_port, device_meta)` – sends `CMD.ID_REQUEST (0x01)` via UDP.
-3. Server responds `CMD.ID_ASSIGN (0x02)`; `assigned_id` is persisted back into `Config.json`.
-4. `transmit()` raises `RuntimeError` if called without a valid `assigned_id`.
+3. Server responds `CMD.ID_ASSIGN (0x02)` via `IDAllocator.allocate_id(meta)`.
+4. Device records `assigned_id` in `Config.json`; `transmit()` raises `RuntimeError` without a valid ID.
+
+**ID Lease & Reuse Policy:**
+- Device offline detected → ID marked `offline` state, lease countdown starts (`lease_expires_at = now + effective_lease_seconds`)
+- Default lease: **30 days** (configurable `security_settings.id_lease.offline_hold_days`)
+- When device re-connects with same stable key (MAC/serial/UUID) → ID reactivated, lease reset to base
+- Expired ID automatically reclaimed, moved to `released` pool for new device reuse
+- **New device rate adaptive control**: 
+  - High rate (> `high_rate_threshold_per_hour`, default 60/hr) → lease shortened by factor `high_rate_min_factor` (default 0.2)
+  - Ultra rate (> `ultra_rate_threshold_per_hour`, default 180/hr for `ultra_rate_sustain_seconds`, default 600s) → `force_zero_lease_active=true`, offline IDs expire immediately
+- Config keys in `security_settings.id_lease` drive all lease logic; `IDAllocator` reads them at `__init__` and on each allocation
+- Metrics (`new_device_rate_per_hour`, `effective_lease_seconds`, `ultra_rate_active`) published to optional `metrics_sink` callable every `metrics_emit_interval_seconds` (default 5s); lease metrics also flushed to `Config.json` every `metrics_flush_seconds` (default 10s)
+
+**Documentation**: See `docs/ID_LEASE_SYSTEM.md` for comprehensive guide and `docs/ID_LEASE_CONFIG_REFERENCE.md` for configuration quick-start.
 
 ---
 
 ## Transporter Plugin System
 
-- Transporters are tiered now:
-  - Application: `src/opensynaptic/services/transporters/drivers/` (managed by `TransporterService`)
-  - Transport: `src/opensynaptic/core/transport_layer/protocols/` (managed by `TransportLayerManager`)
-  - Physical: `src/opensynaptic/core/physical_layer/protocols/` (managed by `PhysicalLayerManager`)
-- Drivers still implement `send(payload: bytes, config: dict) -> bool` (optional `listen(config, callback)`).
-- Enable protocols in the **layer-specific** status map (`application_status`, `transport_status`, `physical_status`).
-- Application auto-discovery is constrained to `TransporterService.APP_LAYER_DRIVERS`; adding a new app driver requires adding its key there.
-- Transport/physical discovery iterates manager candidate tuples (`_CANDIDATES` in each manager); adding a new protocol requires updating candidates + status/config entries.
-- Current transport candidate keys are `udp`, `tcp`, `quic`, `iwip`, `uip` (`src/opensynaptic/core/transport_layer/manager.py`); keep config keys exactly lowercase.
+Transporters are tiered across three layers, each using `LayeredProtocolManager`:
+
+- **Application (L7)**: `src/opensynaptic/services/transporters/drivers/` → managed by `TransporterService`
+  - Auto-discovery constrained to `TransporterService.APP_LAYER_DRIVERS` (currently `{'mqtt'}`)
+  - To add a new app driver: add key to `APP_LAYER_DRIVERS`, create driver module, enable in `application_status` + configure in `application_config`
+- **Transport (L4)**: `src/opensynaptic/core/transport_layer/protocols/` → managed by `TransportLayerManager`
+  - Candidates: `udp`, `tcp`, `quic`, `iwip`, `uip` (tuple in `manager.py:_CANDIDATES`)
+- **Physical (PHY)**: `src/opensynaptic/core/physical_layer/protocols/` → managed by `PhysicalLayerManager`
+  - Candidates: `uart`, `rs485`, `can`, `lora` (tuple in `manager.py:_CANDIDATES`)
+
+**Common patterns:**
+- All drivers implement `send(payload: bytes, config: dict) -> bool` (optional `listen(config, callback)`)
+- Enable/disable via **layer-specific** status maps: `application_status`, `transport_status`, `physical_status`
+- Per-layer config in `application_config`, `transport_config`, `physical_config`
+- Adding a new T/L4/PHY protocol: update `_CANDIDATES` tuple + add to status/config entries in `Config.json`
+- All transporter keys must be **lowercase** in status/config maps; `TransporterManager._migrate_resource_maps()` keeps the legacy `transporters_status` as a merged mirror
 
 ---
 
@@ -83,6 +116,28 @@ data/device_registry/{id[0:2]}/{id[2:4]}/{aid}.json
 ```
 where shard segments are derived from `str(aid).zfill(10)`.  
 Helper: `from opensynaptic.utils import get_registry_path; get_registry_path(aid)`
+
+---
+
+## Performance Metrics & Monitoring
+
+**Tail Latency Percentiles (test_plugin):**
+- `avg_latency_ms` – mean latency across all packets
+- `p95_latency_ms` – 95th percentile latency
+- `p99_latency_ms` – 99th percentile latency (critical SLA metric)
+- `p99_9_latency_ms` – 99.9th percentile latency
+- `p99_99_latency_ms` – 99.99th percentile latency (extreme tail)
+- `min_latency_ms`, `max_latency_ms` – bookend latencies
+
+All latency fields are computed and aggregated by `src/opensynaptic/services/test_plugin/stress_tests.py` and available in CLI output via `--suite stress` and `--suite compare` runs.
+
+**ID Lease Metrics:**
+- `new_device_rate_per_hour` – rolling rate of new device allocations; drives adaptive lease shortening
+- `effective_lease_seconds` – computed lease duration after applying adaptive policy
+- `ultra_rate_active` – boolean flag indicating whether ultra-rate threshold is sustained
+- `force_zero_lease_active` – boolean indicating whether offline IDs are being force-expired
+- `total_reclaimed` – cumulative count of IDs reclaimed from expired leases
+- Published by `IDAllocator._emit_metrics_nolock()` to optional `metrics_sink` callable every `metrics_emit_interval_seconds` (default 5s); lease metrics also flushed to `Config.json` every `metrics_flush_seconds` (default 10s)
 
 ---
 
@@ -135,11 +190,14 @@ python -u src/main.py plugin-test --suite compare --total 10000 --workers 8 --pr
 python -u src/main.py plugin-test --suite stress --auto-profile --profile-total 50000 --profile-runs 1 --final-runs 1 --profile-processes 1,2,4,8 --profile-threads 4,8,16 --profile-batches 32,64,128
 ```
 
-**Build/check/switch Rust core backend:**
+**Switch Rust core backend:**
 ```bash
-python -u src/main.py rscore-build
-python -u src/main.py rscore-check
 python -u src/main.py core --set rscore --persist
+```
+
+**Build Rust core (standalone script):**
+```bash
+python -u src/opensynaptic/core/rscore/build_rscore.py  # Compiles and installs os_rscore DLL
 ```
 
 **Run zero-copy closeout harness:**
@@ -167,10 +225,37 @@ packet, aid, strategy = node.transmit(sensors=[["V1","OK", 3.14, ("Pa")]])
 node.dispatch(packet, medium="UDP")
 ```
 
+**Run performance playbook scripts:**
+```bash
+python scripts/phase1_perf_playbook.py --help  # Automates optimization steps 1-5
+python scripts/phase2_perf_playbook.py --help  # Deeper profiling and tuning
+```
+
+**Run transport simulator:**
+```bash
+python scripts/standalone_localhost_sim.py --mode demo --protocol udp
+```
+
+**Apply compiled Rust DLL:**
+```bash
+python scripts/apply_rscore_dll.py  # Swap tmp DLL to live after build_rscore.py
+```
+
+**Smoke test core switching:**
+```bash
+python scripts/core_hard_switch_smoke.py  # Validates core discovery and native libs
+```
+
 ---
 
 ## Key Conventions
 
+**CLI Entry Points** (`pyproject.toml:[project.scripts]`):
+- `os-node` – Interactive CLI with fallback to `run` daemon after idle timeout (managed by `src/opensynaptic/main.py:main()`)
+- `os-cli` – Inline command execution; no REPL (calls `src/opensynaptic/CLI:main()` directly)
+- `os-tui` – TUI dashboard (aliases to `os-cli tui`)
+
+**Core & Configuration:**
 - **`config_path` always passed as absolute path** – all subsystems receive it from `OpenSynaptic.__init__` to avoid CWD-relative path bugs.
 - Import core symbols from `opensynaptic.core` only; `src/opensynaptic/core/__init__.py` is the public facade and `get_core_manager()` selects the active core plugin (`pycore`).
 - `plugins/` is outside `src/`; `core.py` adds the project root to `sys.path` if the import fails.
@@ -181,4 +266,6 @@ node.dispatch(packet, medium="UDP")
 - `TransporterManager._migrate_resource_maps()` keeps `transporters_status` as a merged mirror of the three layer maps.
 - Built-in plugin defaults are synced on node startup via `sync_all_plugin_defaults(self.config)` before transporters auto-load.
 - `Base62Codec` (`src/opensynaptic/utils/base62/base62.py`) and security helpers are native-only ctypes bindings loaded via `src/opensynaptic/utils/c/native_loader.py`; there is no Python fallback for those code paths.
+- All `send()` paths converge on `to_wire_payload(...)` helper to avoid payload preparation duplication.
+- `rscore` Python wrappers share FFI proxy pattern via `src/opensynaptic/core/rscore/_ffi_proxy.py` to minimize Rust interface boilerplate.
 

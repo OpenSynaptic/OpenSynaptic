@@ -31,4 +31,20 @@ python -u scripts/standalone_localhost_sim.py --mode client --protocol tcp --hos
 
 - Server prints received JSON payloads
 - Client prints ACK and RTT per message
+- Periodic stats log: `[STATS] {...}` (default every 60s)
+- Final summary: `[STATS:final] {...}`
+
+## Stats Interval
+
+By default, periodic stats are printed every 60 seconds.
+
+```powershell
+python -u scripts/standalone_localhost_sim.py --mode demo --protocol udp --stats-interval 60
+```
+
+Disable periodic stats (keeps only final summary):
+
+```powershell
+python -u scripts/standalone_localhost_sim.py --mode demo --protocol udp --stats-interval 0
+```
 

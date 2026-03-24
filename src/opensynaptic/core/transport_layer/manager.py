@@ -19,6 +19,9 @@ class TransportLayerManager:
     def refresh(self, name=None):
         return self._impl.refresh(name)
 
+    def refresh_if_changed(self, name):
+        return self._impl.refresh_if_changed(name)
+
     def get_adapter(self, name):
         return self._impl.get_adapter(name)
 

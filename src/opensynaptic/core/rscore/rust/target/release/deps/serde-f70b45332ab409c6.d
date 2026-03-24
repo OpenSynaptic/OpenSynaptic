@@ -1,0 +1,14 @@
+E:\OpenSynaptic\src\opensynaptic\core\rscore\rust\target\release\deps\serde-f70b45332ab409c6.d: C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs E:\OpenSynaptic\src\opensynaptic\core\rscore\rust\target\release\build\serde-9679ef40e4b5be34\out/private.rs
+
+E:\OpenSynaptic\src\opensynaptic\core\rscore\rust\target\release\deps\libserde-f70b45332ab409c6.rlib: C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs E:\OpenSynaptic\src\opensynaptic\core\rscore\rust\target\release\build\serde-9679ef40e4b5be34\out/private.rs
+
+E:\OpenSynaptic\src\opensynaptic\core\rscore\rust\target\release\deps\libserde-f70b45332ab409c6.rmeta: C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs E:\OpenSynaptic\src\opensynaptic\core\rscore\rust\target\release\build\serde-9679ef40e4b5be34\out/private.rs
+
+C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs:
+C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs:
+C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs:
+C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs:
+C:\Users\MaoJu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs:
+E:\OpenSynaptic\src\opensynaptic\core\rscore\rust\target\release\build\serde-9679ef40e4b5be34\out/private.rs:
+
+# env-dep:OUT_DIR=E:\\OpenSynaptic\\src\\opensynaptic\\core\\rscore\\rust\\target\\release\\build\\serde-9679ef40e4b5be34\\out

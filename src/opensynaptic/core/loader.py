@@ -10,8 +10,11 @@ class CorePluginRegistry:
         self._plugins = {}
         self._lock = threading.RLock()
 
+    def _normalize_name(self, name):
+        return str(name or '').strip().lower()
+
     def register(self, name, module_path):
-        key = str(name or '').strip().lower()
+        key = self._normalize_name(name)
         if not key:
             raise ValueError('core plugin name is required')
         with self._lock:
@@ -27,11 +30,11 @@ class CorePluginRegistry:
             if name is None:
                 self._plugins.clear()
                 return
-            key = str(name or '').strip().lower()
+            key = self._normalize_name(name)
             self._plugins.pop(key, None)
 
     def load(self, name):
-        key = str(name or '').strip().lower()
+        key = self._normalize_name(name)
         if not key:
             return None
         with self._lock:

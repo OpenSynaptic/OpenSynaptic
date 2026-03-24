@@ -12,6 +12,10 @@ This folder contains internal process documents and non-publish project records.
 - `WORK_SUMMARY.md`
 - `DRIVER_BIDIRECTIONAL_REPORT.md`
 - `DEDUP_EXECUTION_2026M03.md`
+- `PYCORE_INTERNALS.md`
+- `ZERO_COPY_CLOSEOUT.md`
+- `PHASE1_PERF_PLAYBOOK.md`
+- `PHASE2_PERF_PLAYBOOK.md`
 
 ## Usage Notes
 

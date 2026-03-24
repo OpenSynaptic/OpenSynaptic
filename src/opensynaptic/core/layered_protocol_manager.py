@@ -3,10 +3,8 @@ import os
 from opensynaptic.utils import (
     LogMsg,
     os_log,
-    ensure_bytes,
-    zero_copy_enabled,
-    as_readonly_view,
 )
+from opensynaptic.utils.buffer import to_wire_payload
 
 class ProtocolAdapter:
 
@@ -90,13 +88,26 @@ class LayeredProtocolManager:
         return adapter
 
     def discover(self):
+        """Discover and load all candidate protocols from config status."""
+        loaded = 0
+        skipped = 0
+        failed = 0
         for name in self.candidates:
             if not self._is_enabled(name):
+                skipped += 1
                 continue
-            module = self._load_module(name)
-            if module is None:
-                continue
-            self.adapters[name] = ProtocolAdapter(name=name, module=module, mtime=self._get_module_mtime(module))
+            try:
+                module = self._load_module(name)
+                if module is None:
+                    failed += 1
+                    continue
+                self.adapters[name] = ProtocolAdapter(name=name, module=module, mtime=self._get_module_mtime(module))
+                loaded += 1
+            except Exception as e:
+                os_log.err(self.layer_tag, 'DISCOVER', e, {'protocol': name})
+                failed += 1
+        if loaded > 0:
+            os_log.log_with_const('info', LogMsg.DRIVER_MOUNT, module=f'{self.layer_tag}:{loaded}', source=f'discover(skipped={skipped},failed={failed})')
         return self.adapters
 
     def get_adapter(self, name):
@@ -121,25 +132,45 @@ class LayeredProtocolManager:
         if not adapter:
             return False
         try:
-            merged = {}
-            merged.update(config or {} if isinstance(config, dict) else self.config)
-            if options_key:
-                merged[options_key] = self._protocol_conf(str(name).lower())
-            wire_payload = as_readonly_view(payload) if zero_copy_enabled(merged) else ensure_bytes(payload)
+            merged = self._build_merged_config(name, config=config, options_key=options_key)
+            wire_payload = self._to_wire_payload(payload, merged)
             return adapter.send(wire_payload, merged)
         except Exception as exc:
             os_log.err(self.layer_tag, 'SEND', exc, {'protocol': name})
             return False
 
+    def _build_merged_config(self, name, config=None, options_key=None):
+        merged = {}
+        merged.update(config or {} if isinstance(config, dict) else self.config)
+        if options_key:
+            merged[options_key] = self._protocol_conf(str(name).lower())
+        return merged
+
+    def _to_wire_payload(self, payload, merged_config):
+        return to_wire_payload(payload, merged_config)
+
     def _load_module(self, name):
+        """Load and validate a protocol module."""
         try:
-            module = importlib.import_module('{}.{}'.format(self.module_prefix, name))
-            if hasattr(module, 'is_supported') and (not module.is_supported()):
+            module_path = '{}.{}'.format(self.module_prefix, name)
+            module = importlib.import_module(module_path)
+            
+            # Check if protocol declares itself as unsupported
+            if hasattr(module, 'is_supported') and not module.is_supported():
+                os_log.log_with_const('info', LogMsg.DRIVER_SLEEP, module=name)
                 return None
+            
+            # Verify send function exists
             if not hasattr(module, 'send'):
+                os_log.err(self.layer_tag, 'LOAD', f'Missing send() in {module_path}', {'protocol': name})
                 return None
+            
             return module
-        except Exception:
+        except ModuleNotFoundError as e:
+            os_log.err(self.layer_tag, 'NOT_FOUND', e, {'protocol': name, 'module_path': '{}.{}'.format(self.module_prefix, name)})
+            return None
+        except Exception as e:
+            os_log.err(self.layer_tag, 'LOAD', e, {'protocol': name})
             return None
 
     def _get_module_mtime(self, module):

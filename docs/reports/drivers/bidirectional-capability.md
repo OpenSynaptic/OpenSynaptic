@@ -2,7 +2,7 @@
 
 Canonical path for driver bidirectional capability reporting.
 
-For historical root-level content, see `DRIVER_BIDIRECTIONAL_REPORT.md`.
+Detailed archival report: `docs/internal/DRIVER_BIDIRECTIONAL_REPORT.md`.
 
 Validation references:
 
