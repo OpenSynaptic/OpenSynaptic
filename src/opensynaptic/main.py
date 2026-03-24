@@ -138,6 +138,11 @@ def tui_main():
     return cli_main(["tui"])
 
 
+def web_main():
+    # Standalone web plugin entrypoint: os-web --cmd ...
+    return cli_main(["web-user"] + list(sys.argv[1:]))
+
+
 def cli_entry():
     return cli_main()
 

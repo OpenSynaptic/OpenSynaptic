@@ -1183,7 +1183,7 @@ def main(argv=None):
             print(json.dumps({'error': f'plugin dispatch failed: {exc}'}, ensure_ascii=False))
             return 1
 
-    if cmd in ('web-user', 'os-web-user'):
+    if cmd in ('web-user', 'os-web-user', 'os-web'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='web-user')
         sub_cmd = getattr(args, 'cmd', 'start')
         extra_args = list(getattr(args, 'args', []) or [])

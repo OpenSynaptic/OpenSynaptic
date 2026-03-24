@@ -8,7 +8,7 @@ from .unified_parser import OSVisualFusionEngine
 from .handshake import OSHandshakeManager, CMD
 from .transporter_manager import TransporterManager
 from opensynaptic.services import ServiceManager
-from opensynaptic.services.plugin_registry import sync_all_plugin_defaults
+from opensynaptic.services.plugin_registry import sync_all_plugin_defaults, autoload_enabled_plugins
 from opensynaptic.utils import (
     read_json,
     write_json,
@@ -125,6 +125,10 @@ class OpenSynaptic:
             self.active_transporters = self.transporter_manager.active_transporters
         except Exception as e:
             os_log.err('TM', 'INIT', e, {})
+        try:
+            autoload_enabled_plugins(self, mode='runtime', auto_start_only=True)
+        except Exception as e:
+            os_log.err('SVC', 'AUTOLOAD', e, {})
         if lease_changed:
             self._save_config()
         os_log.log_with_const('info', LogMsg.READY, root=self.base_dir)

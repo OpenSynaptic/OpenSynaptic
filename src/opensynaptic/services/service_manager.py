@@ -111,4 +111,9 @@ class ServiceManager:
         if name == 'db_engine':
             storage = self.config.get('storage', {})
             return bool(storage.get('sql', {}).get('enabled', False))
+        service_plugins = resources.get('service_plugins', {}) if isinstance(resources.get('service_plugins', {}), dict) else {}
+        normalized = str(name or '').strip().lower().replace('-', '_')
+        plugin_cfg = service_plugins.get(normalized, {}) if isinstance(service_plugins.get(normalized, {}), dict) else {}
+        if plugin_cfg:
+            return bool(plugin_cfg.get('enabled', True))
         return True

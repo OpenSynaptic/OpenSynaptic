@@ -8,6 +8,7 @@ from pathlib import Path
 from opensynaptic.core.common.base import BaseOpenSynaptic
 from opensynaptic.core.rscore._ffi_proxy import RsFFIProxyBase
 from opensynaptic.services import ServiceManager
+from opensynaptic.services.plugin_registry import sync_all_plugin_defaults, autoload_enabled_plugins
 from opensynaptic.utils import ctx, read_json, write_json, os_log, payload_len
 from opensynaptic.utils.buffer import to_wire_payload
 
@@ -66,6 +67,11 @@ class OpenSynaptic(BaseOpenSynaptic, RsFFIProxyBase):
             pass
         self.transporter_manager = TransporterManager(*args, **kwargs)
         self.service_manager = ServiceManager(config=self.config, mode='runtime')
+        try:
+            if sync_all_plugin_defaults(self.config):
+                self._save_config()
+        except Exception as exc:
+            os_log.err('SVC', 'CFG_SYNC', exc, {})
         self.active_transporters = {}
         self.assigned_id = getattr(self._ffi, 'assigned_id', None)
         self.device_id = getattr(self._ffi, 'device_id', None)
@@ -110,6 +116,10 @@ class OpenSynaptic(BaseOpenSynaptic, RsFFIProxyBase):
         self._tx_adaptive_samples = deque(maxlen=self._tx_adaptive_history_size)
         self._tx_adaptive_batches_seen = 0
         self._last_dispatch_path = 'none'
+        try:
+            autoload_enabled_plugins(self, mode='runtime', auto_start_only=True)
+        except Exception as exc:
+            os_log.err('SVC', 'AUTOLOAD', exc, {})
 
     def _save_config(self):
         if not self.config_path:

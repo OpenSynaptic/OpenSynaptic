@@ -120,7 +120,7 @@ CLI_HELP_TABLE = {
     'native-check': {'aliases': ['os-native-check'], 'desc': 'Check native compiler environment and selected toolchain before building C bindings.'},
     'native-build': {'aliases': ['os-native-build'], 'desc': 'Build native C bindings with real-time compiler output streaming.'},
     'env-guard': {'aliases': ['os-env-guard'], 'desc': 'Environment guard plugin (error monitor + auto-install attempts + local JSON resource/status file).'},
-    'web-user': {'aliases': ['os-web-user'], 'desc': 'Direct CLI entry for the web_user plugin (--cmd start|stop|status|list|add|update|delete).'},
+    'web-user': {'aliases': ['os-web-user', 'os-web'], 'desc': 'Direct CLI entry for the web_user management plugin (--cmd start|stop|status|dashboard|cli|options-schema|options-set|options-apply|list|add|update|delete).'},
     'deps': {'aliases': ['os-deps'], 'desc': 'Direct CLI entry for dependency_manager (--cmd check|doctor|sync|repair|install).'},
     'help': {'aliases': ['os-help'], 'desc': 'Show this help and command annotations.'},
     'status': {'aliases': ['os-status'], 'desc': 'Quick human-readable node status overview: device ID, transporters, services, core backend.'},

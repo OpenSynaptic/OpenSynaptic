@@ -13,13 +13,13 @@ def register(sub: argparse._SubParsersAction) -> None:
 
     # --- web-user ---
     web_user = sub.add_parser(
-        'web-user', aliases=['os-web-user'],
+        'web-user', aliases=['os-web-user', 'os-web'],
         help='Run web_user plugin directly from CLI',
     )
     add_config_arg(web_user)
     web_user.add_argument(
         '--cmd',
-        choices=['start', 'stop', 'status', 'list', 'add', 'update', 'delete'],
+        choices=['start', 'stop', 'status', 'dashboard', 'cli', 'options-schema', 'options-set', 'options-apply', 'list', 'add', 'update', 'delete'],
         default='start',
     )
     web_user.add_argument(

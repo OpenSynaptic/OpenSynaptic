@@ -479,23 +479,37 @@ TestPlugin(node: OpenSynaptic | None = None)
 
 ## `WebUserService` — `services/web_user/main.py`
 
-Lightweight HTTP user-management plugin with a minimal browser UI.
+HTTP management-entry plugin with a browser dashboard and control APIs.
 
 | Method | Returns | Description |
 |---|---|---|
-| `start(host='127.0.0.1', port=8765)` | `bool` | Start web service thread |
+| `start(host=None, port=None)` | `bool` | Start web service thread (defaults from `RESOURCES.service_plugins.web_user`) |
 | `stop()` | `bool` | Stop web service |
 | `status()` | `dict` | Runtime state (`running`, `users`, `data_file`, `uptime_s`) |
-| `get_cli_commands()` | `dict` | Returns `start/stop/status/list/add/update/delete` handlers |
+| `build_dashboard()` | `dict` | Aggregated node snapshot for Web dashboard (`identity`, `plugins`, `transport`, `pipeline`, `users`) |
+| `get_cli_commands()` | `dict` | Returns `start/stop/status/dashboard/list/add/update/delete` handlers |
 
 HTTP routes:
 
 - `GET /` - browser UI
-- `GET /health`
+- `GET /health`, `GET /api/health`
+- `GET /api/dashboard`
+- `GET /api/dashboard?sections=identity,transport`
+- `GET /api/ui/config`
+- `PUT /api/ui/config`
+- `GET /api/options/schema?only_writable=1`
+- `PUT /api/options`
+- `GET /api/config?key=a.b.c`
+- `PUT /api/config`
+- `GET /api/plugins`, `POST /api/plugins`
+- `GET /api/transport`, `POST /api/transport`
 - `GET /users`
 - `POST /users`
 - `PUT /users/{username}`
 - `DELETE /users/{username}`
+
+Write endpoints are controlled by `web_user.read_only` and `web_user.writable_config_prefixes`.
+When `web_user.auth_enabled=true`, management calls require `X-Admin-Token`.
 
 ---
 

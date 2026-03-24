@@ -40,6 +40,26 @@ PLUGIN_SPECS = {
             'host': '127.0.0.1',
             'port': 8765,
             'auto_start': False,
+            'management_enabled': True,
+            'auth_enabled': False,
+            'admin_token': '',
+            'read_only': False,
+            'writable_config_prefixes': [
+                'RESOURCES.service_plugins',
+                'RESOURCES.application_status',
+                'RESOURCES.transport_status',
+                'RESOURCES.physical_status',
+                'RESOURCES.application_config',
+                'RESOURCES.transport_config',
+                'RESOURCES.physical_config',
+                'engine_settings',
+            ],
+            'expose_sections': ['identity', 'transport', 'plugins', 'pipeline', 'config', 'users'],
+            'ui_enabled': True,
+            'ui_theme': 'router-dark',
+            'ui_layout': 'sidebar',
+            'ui_refresh_seconds': 3,
+            'ui_compact': False,
         },
     },
     'dependency_manager': {
@@ -110,6 +130,24 @@ def ensure_plugin_defaults(config, plugin_name):
     return changed
 
 
+def get_plugin_config(config, plugin_name):
+    key = normalize_plugin_name(plugin_name)
+    resources = config.get('RESOURCES', {}) if isinstance(config.get('RESOURCES', {}), dict) else {}
+    service_cfg = resources.get('service_plugins', {}) if isinstance(resources.get('service_plugins', {}), dict) else {}
+    plugin_cfg = service_cfg.get(key, {}) if isinstance(service_cfg.get(key, {}), dict) else {}
+    return plugin_cfg
+
+
+def iter_enabled_plugins(config, auto_start_only=False):
+    for key in list_builtin_plugins():
+        plugin_cfg = get_plugin_config(config, key)
+        if plugin_cfg.get('enabled', True) is False:
+            continue
+        if auto_start_only and (not bool(plugin_cfg.get('auto_start', False))):
+            continue
+        yield key, plugin_cfg
+
+
 def sync_all_plugin_defaults(config):
     changed = False
     for key in PLUGIN_SPECS:
@@ -158,7 +196,7 @@ def mount_plugin(node, plugin_name, mode='runtime'):
     if svc is not None:
         return svc
     svc = instantiate_plugin(key, node)
-    node.service_manager.mount(key, svc, config={}, mode=mode)
+    node.service_manager.mount(key, svc, config=get_plugin_config(node.config, key), mode=mode)
     return svc
 
 
@@ -170,6 +208,16 @@ def ensure_and_mount_plugin(node, plugin_name, load=False, mode='runtime'):
     if load:
         node.service_manager.load(normalize_plugin_name(plugin_name))
     return svc
+
+
+def autoload_enabled_plugins(node, mode='runtime', auto_start_only=True):
+    mounted = {}
+    for key, _plugin_cfg in iter_enabled_plugins(node.config, auto_start_only=auto_start_only):
+        try:
+            mounted[key] = ensure_and_mount_plugin(node, key, load=True, mode=mode)
+        except Exception as exc:
+            os_log.err('SVC', 'AUTOLOAD', exc, {'plugin': key})
+    return mounted
 
 
 def safe_plugin_help():

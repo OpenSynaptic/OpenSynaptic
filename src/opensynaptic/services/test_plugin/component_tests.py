@@ -493,6 +493,165 @@ class TestEnvGuardService(unittest.TestCase):
         self.assertEqual(attempts[0].get('command'), 'echo env-guard-auto-install')
 
 
+class TestWebUserAdminService(unittest.TestCase):
+    """Checks web_user management entry behavior."""
+
+    def setUp(self):
+        from opensynaptic.services import ServiceManager
+        from opensynaptic.services.web_user import WebUserService
+
+        self.tmp_dir = tempfile.mkdtemp()
+        self.save_calls = 0
+        cfg = {
+            'engine_settings': {'core_backend': 'pycore', 'precision': 4},
+            'RESOURCES': {
+                'application_status': {'mqtt': False},
+                'transport_status': {'udp': True},
+                'physical_status': {'uart': False},
+                'transporters_status': {'udp': True},
+                'service_plugins': {
+                    'web_user': {
+                        'enabled': True,
+                        'auto_start': True,
+                        'host': '127.0.0.1',
+                        'port': 0,
+                        'management_enabled': True,
+                        'auth_enabled': False,
+                        'admin_token': '',
+                        'read_only': False,
+                        'writable_config_prefixes': ['engine_settings', 'RESOURCES.service_plugins'],
+                    },
+                },
+            },
+        }
+        node = SimpleNamespace(
+            base_dir=self.tmp_dir,
+            config=cfg,
+            device_id='UT-DEVICE',
+            assigned_id=1001,
+            active_transporters={},
+        )
+        node._save_config = self._on_save
+        node.service_manager = ServiceManager(config=cfg, mode='runtime')
+        self.svc = WebUserService(node=node)
+
+    def tearDown(self):
+        self.svc.stop()
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def _on_save(self):
+        self.save_calls += 1
+
+    def test_auto_load_starts_when_auto_start_enabled(self):
+        self.svc.auto_load()
+        self.assertTrue(self.svc.status().get('running'))
+
+    def test_dashboard_contains_management_sections(self):
+        dashboard = self.svc.build_dashboard()
+        self.assertIn('identity', dashboard)
+        self.assertIn('plugins', dashboard)
+        self.assertIn('transport', dashboard)
+        self.assertIn('pipeline', dashboard)
+        self.assertIn('users', dashboard)
+
+    def test_plugin_cmd_action_dispatches_to_service_manager(self):
+        class _DummyPlugin:
+            def get_cli_commands(self):
+                return {'ping': lambda argv: 0 if argv == ['ok'] else 1}
+
+        self.svc.node.service_manager.mount('dummy', _DummyPlugin(), config={'enabled': True}, mode='runtime')
+        ok, payload = self.svc._run_plugin_action('dummy', 'cmd', sub_cmd='ping', args=['ok'])
+        self.assertTrue(ok)
+        self.assertEqual(payload.get('exit_code'), 0)
+
+    def test_read_only_and_auth_guards_and_config_write_whitelist(self):
+        self.svc.node.config['RESOURCES']['service_plugins']['web_user']['read_only'] = True
+        self.svc.node.config['RESOURCES']['service_plugins']['web_user']['auth_enabled'] = True
+        self.svc.node.config['RESOURCES']['service_plugins']['web_user']['admin_token'] = 'secret'
+        self.svc._refresh_settings()
+
+        ok, code, _ = self.svc._authorize_request({}, write=True, management=True)
+        self.assertFalse(ok)
+        self.assertEqual(code, 403)
+
+        self.svc.node.config['RESOURCES']['service_plugins']['web_user']['read_only'] = False
+        self.svc._refresh_settings()
+        ok, code, _ = self.svc._authorize_request({}, write=False, management=True)
+        self.assertFalse(ok)
+        self.assertEqual(code, 401)
+        ok, code, _ = self.svc._authorize_request({'X-Admin-Token': 'secret'}, write=True, management=True)
+        self.assertTrue(ok)
+        self.assertEqual(code, 200)
+
+        allowed, _payload = self.svc._config_set_payload('assigned_id', 10, value_type='int')
+        self.assertFalse(allowed)
+
+        allowed, payload = self.svc._config_set_payload('engine_settings.precision', 6, value_type='int')
+        self.assertTrue(allowed)
+        self.assertEqual(payload.get('new'), 6)
+        self.assertGreaterEqual(self.save_calls, 1)
+
+    def test_option_schema_and_batch_updates_are_typed(self):
+        schema = self.svc.build_option_schema(only_writable=True)
+        categories = schema.get('categories', [])
+        self.assertTrue(categories)
+        all_fields = []
+        for cat in categories:
+            all_fields.extend(cat.get('fields', []))
+        keys = {item.get('key'): item for item in all_fields}
+        self.assertIn('engine_settings.precision', keys)
+        self.assertEqual(keys['engine_settings.precision'].get('type'), 'int')
+
+        ok, out = self.svc.apply_option_updates([
+            {'key': 'engine_settings.precision', 'value': '7', 'value_type': 'int'},
+            {'key': 'RESOURCES.service_plugins.web_user.ui_compact', 'value': 'true', 'value_type': 'bool'},
+        ])
+        self.assertTrue(ok)
+        self.assertTrue(out.get('ok'))
+        self.assertEqual(self.svc.node.config.get('engine_settings', {}).get('precision'), 7)
+        self.assertTrue(self.svc.node.config.get('RESOURCES', {}).get('service_plugins', {}).get('web_user', {}).get('ui_compact'))
+
+    def test_cli_commands_include_option_management(self):
+        cmds = self.svc.get_cli_commands()
+        self.assertIn('cli', cmds)
+        self.assertIn('options-schema', cmds)
+        self.assertIn('options-set', cmds)
+        self.assertIn('options-apply', cmds)
+
+    def test_control_cli_executes_opensynaptic_cli_bridge(self):
+        self.svc._run_opensynaptic_cli_tokens = lambda tokens: (0, 'ok-out', '')
+        ok, out = self.svc.execute_control_cli('status')
+        self.assertTrue(ok)
+        self.assertEqual(out.get('exit_code'), 0)
+        self.assertEqual(out.get('stdout'), 'ok-out')
+
+    def test_os_cli_job_and_metrics_ingest(self):
+        def _fake_runner(tokens):
+            _ = tokens
+            self.svc._ingest_cli_output_line('{"run_stats":{"status":"idle","uptime_s":60,"packets_processed":0,"avg_packet_latency_ms":0.0,"tick_errors":0}}')
+            self.svc._ingest_cli_output_line('00:43:22 [INFO] OS: Performance stats recv=0 ok=0 fail=0 drop=0 backlog=0/0 avg=0.0ms max=0.0ms pps(in/out)=0.0/0.0')
+            return (
+                0,
+                '{"run_stats":{"status":"idle","uptime_s":60,"packets_processed":0,"avg_packet_latency_ms":0.0,"tick_errors":0}}\n'
+                '00:43:22 [INFO] OS: Performance stats recv=0 ok=0 fail=0 drop=0 backlog=0/0 avg=0.0ms max=0.0ms pps(in/out)=0.0/0.0\n',
+                '',
+            )
+
+        self.svc._run_opensynaptic_cli_tokens = _fake_runner
+        ok, payload = self.svc.submit_os_cli_job('status', background=False)
+        self.assertTrue(ok)
+        job = payload.get('job', {})
+        self.assertEqual(job.get('status'), 'succeeded')
+
+        metrics = self.svc.get_overview_metrics()
+        run = metrics.get('run_stats', {})
+        perf = metrics.get('performance_stats', {})
+        self.assertEqual(run.get('status'), 'idle')
+        self.assertEqual(run.get('uptime_s'), 60)
+        self.assertEqual(perf.get('recv'), 0)
+        self.assertEqual(perf.get('ok'), 0)
+
+
 # ---------------------------------------------------------------------------
 # RSCore native library (Rust DLL)
 # ---------------------------------------------------------------------------
@@ -1538,7 +1697,7 @@ def build_suite():
     suite = unittest.TestSuite()
     for cls in (TestUtilsEntryPointImports, TestCoreManager, TestBase62Codec, TestOpenSynapticStandardizer,
                 TestOpenSynapticEngine, TestOSVisualFusionEngine, TestPluginE2EPipeline,
-                TestIDAllocator, TestEnvGuardService, TestRscore, TestRscoreEngine,
+                TestIDAllocator, TestEnvGuardService, TestWebUserAdminService, TestRscore, TestRscoreEngine,
                 TestFullLoadConfig, TestStressAutoProfile,
                 TestRscoreFusionEngine, TestRscoreHandshakeManager):
         suite.addTests(loader.loadTestsFromTestCase(cls))

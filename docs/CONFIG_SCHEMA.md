@@ -146,7 +146,27 @@ All resource paths, transporter registries, and driver configurations.
         "mode": "manual",
         "host": "127.0.0.1",
         "port": 8765,
-        "auto_start": false
+        "auto_start": false,
+        "management_enabled": true,
+        "auth_enabled": false,
+        "admin_token": "",
+        "read_only": false,
+        "writable_config_prefixes": [
+            "RESOURCES.service_plugins",
+            "RESOURCES.application_status",
+            "RESOURCES.transport_status",
+            "RESOURCES.physical_status",
+            "RESOURCES.application_config",
+            "RESOURCES.transport_config",
+            "RESOURCES.physical_config",
+            "engine_settings"
+        ],
+        "expose_sections": ["identity", "transport", "plugins", "pipeline", "config", "users"],
+        "ui_enabled": true,
+        "ui_theme": "router-dark",
+        "ui_layout": "sidebar",
+        "ui_refresh_seconds": 3,
+        "ui_compact": false
     },
     "dependency_manager": {
         "enabled": true,
