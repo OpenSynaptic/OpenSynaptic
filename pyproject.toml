@@ -75,6 +75,5 @@ show_missing = true
 skip_covered = true
 
 [tool.maturin]
-python-source = "src"
 manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
 features = ["python-module"]
