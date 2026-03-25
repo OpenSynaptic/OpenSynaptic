@@ -75,8 +75,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install maturin
         run: pip install maturin
+      - name: Copy README to Rust project for maturin
+        run: |
+          cp README.md src/opensynaptic/core/rscore/rust/
       - name: Build sdist with maturin
         run: maturin build --sdist --out dist
+        working-directory: src/opensynaptic/core/rscore/rust
+      - name: Move sdist to dist folder
+        run: |
+          mv src/opensynaptic/core/rscore/rust/dist/*.tar.gz dist/
       - name: Upload sdist artifact
         uses: actions/upload-artifact@v4
         with:
