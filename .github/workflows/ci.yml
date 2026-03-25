@@ -1,5 +1,8 @@
 name: CI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: ["**"]
@@ -9,6 +12,8 @@ jobs:
   test:
     name: test (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    env:
+      OPENSYNAPTIC_CORE: pycore
     strategy:
       fail-fast: false
       matrix:
@@ -44,28 +49,33 @@ jobs:
           name: coverage-report
           path: coverage.xml
 
-  build-python-wheels:
-    name: build-python-wheels (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  build-python-dist:
+    name: build-python-dist (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build wheels via cibuildwheel
-        uses: pypa/cibuildwheel@v2.21.3
-        env:
-          CIBW_BUILD: cp311-* cp312-* cp313-*
-          CIBW_SKIP: "*musllinux*"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-      - name: Upload built wheels
+      - name: Build sdist/wheel and validate metadata
+        run: |
+          python -m pip install -U pip build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Upload built distributions
         uses: actions/upload-artifact@v4
         with:
-          name: python-wheels-${{ matrix.os }}
-          path: wheelhouse/*.whl
+          name: python-dist-py${{ matrix.python-version }}
+          path: dist/*
 
   build-rust-wheel:
     name: build-rust-wheel (${{ matrix.os }} / py${{ matrix.python-version }})

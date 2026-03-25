@@ -33,6 +33,7 @@ src/opensynaptic/core/physical_layer/__init__.py
 src/opensynaptic/core/physical_layer/interfaces.py
 src/opensynaptic/core/physical_layer/manager.py
 src/opensynaptic/core/physical_layer/protocols/__init__.py
+src/opensynaptic/core/physical_layer/protocols/bluetooth.py
 src/opensynaptic/core/physical_layer/protocols/can.py
 src/opensynaptic/core/physical_layer/protocols/lora.py
 src/opensynaptic/core/physical_layer/protocols/rs485.py
@@ -93,7 +94,9 @@ src/opensynaptic/services/test_plugin/stress_tests.py
 src/opensynaptic/services/transporters/__init__.py
 src/opensynaptic/services/transporters/main.py
 src/opensynaptic/services/transporters/drivers/__init__.py
+src/opensynaptic/services/transporters/drivers/matter.py
 src/opensynaptic/services/transporters/drivers/mqtt.py
+src/opensynaptic/services/transporters/drivers/zigbee.py
 src/opensynaptic/services/tui/__init__.py
 src/opensynaptic/services/tui/main.py
 src/opensynaptic/services/web_user/__init__.py
