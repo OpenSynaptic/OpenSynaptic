@@ -1,8 +1,5 @@
 name: Release
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 on:
   workflow_dispatch:
     inputs:
@@ -22,7 +19,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Extract version
         id: extract
         run: |
@@ -47,35 +43,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
       - name: Install maturin
         run: pip install maturin
-
-      - name: Build wheel with maturin
+      - name: Build wheel
         run: maturin build --release --out dist --interpreter python${{ matrix.python-version }}
         env:
           OPENSYNAPTIC_REQUIRE_RSCORE: "1"
-
-      - name: Show built distributions
-        shell: bash
-        run: |
-          ls -lah dist
-          python -c "import hashlib; from pathlib import Path; [print(f'{p.name}\tsha256={hashlib.sha256(p.read_bytes()).hexdigest()}') for p in Path('dist').glob('*') if p.is_file()]"
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: dist/*
-          
+          path: dist/*.whl
+
   build-sdist:
     name: build-sdist
     runs-on: ubuntu-latest
@@ -83,25 +68,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
-
-      - name: Build sdist
-        run: python -m build --sdist --outdir dist
-
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install maturin
+        run: pip install maturin
+      - name: Build sdist with maturin
+        run: maturin build --sdist --out dist
       - name: Upload sdist artifact
         uses: actions/upload-artifact@v4
         with:
           name: sdist
-          path: dist/opensynaptic-*.tar.gz
+          path: dist/*.tar.gz
 
   collect-dist:
     name: collect-dist
@@ -114,56 +95,32 @@ jobs:
           pattern: wheels-*
           path: dist
           merge-multiple: true
-
       - name: Download sdist artifact
         uses: actions/download-artifact@v4
         with:
           name: sdist
           path: dist
-
-      - name: Validate release distributions
-        shell: bash
-        run: |
-          shopt -s nullglob
-          files=(dist/opensynaptic-*)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No opensynaptic distributions found in dist/" >&2
-            ls -lah dist || true
-            exit 1
-          fi
-          bad=(dist/*)
-          for f in "${bad[@]}"; do
-            [ -e "$f" ] || continue
-            base=$(basename "$f")
-            if [[ "$base" != opensynaptic-* ]]; then
-              echo "Unexpected artifact: $base" >&2
-              exit 1
-            fi
-          done
-          ls -lah dist
-
-      - name: Upload merged release artifacts
+      - name: Show collected artifacts
+        run: ls -lah dist
+      - name: Upload merged artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-dist
           path: dist/*
 
   github-release:
+    name: github-release
     needs: [collect-dist, get-version]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: release-dist
           path: dist
-
-      - name: Show release artifacts
-        run: ls -lah dist
-
-      - name: Publish GitHub Release assets
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.get-version.outputs.version }}
@@ -171,19 +128,16 @@ jobs:
           files: dist/*
 
   publish-testpypi:
+    name: publish-testpypi
     needs: [collect-dist, get-version]
     runs-on: ubuntu-latest
     environment: testpypi
     steps:
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: release-dist
           path: dist
-
-      - name: Show downloaded distributions
-        run: ls -lah dist
-
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -193,20 +147,18 @@ jobs:
           packages-dir: dist
           skip-existing: true
           verbose: true
-          print-hash: true
-          attestations: false
 
   publish-pypi:
+    name: publish-pypi
     needs: [publish-testpypi]
     runs-on: ubuntu-latest
     environment: pypi
     steps:
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: release-dist
           path: dist
-
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -215,5 +167,3 @@ jobs:
           packages-dir: dist
           skip-existing: true
           verbose: true
-          print-hash: true
-          attestations: false
