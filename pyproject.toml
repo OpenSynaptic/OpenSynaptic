@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opensynaptic"
-version = "1.0.0-rc1"
+version = "1.0.0rc1"
 description = "2-N-2 high-performance protocol stack"
 authors = [{name = "OpenSynaptic Contributors"}]
 readme = { file = "README.md", content-type = "text/markdown" }
