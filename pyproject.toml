@@ -74,12 +74,6 @@ branch = true
 show_missing = true
 skip_covered = true
 
-[tool.setuptools]
-include-package-data = true
-
-[tool.setuptools.package-data]
-"*" = ["LICENSE", "README.md"]
-
 [tool.maturin]
 manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
 features = ["python-module"]
