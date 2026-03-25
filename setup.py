@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import subprocess
 import sys
 
@@ -45,15 +46,28 @@ def _run_rscore_build():
     root = Path(__file__).resolve().parent
     script = root / 'src' / 'opensynaptic' / 'core' / 'rscore' / 'build_rscore.py'
     if not script.exists():
+        if _require_rscore_for_build():
+            raise SystemExit('rscore build script not found: {}'.format(script))
         return
+
+    strict = _require_rscore_for_build()
     try:
-        subprocess.run([sys.executable, str(script)], check=False, cwd=str(root))
+        subprocess.run([sys.executable, str(script)], check=strict, cwd=str(root))
     except Exception:
+        if strict:
+            raise
         return
     # Keep package payload clean: ship only final os_rscore.* files, not temp lock artifacts.
     bin_dir = root / 'src' / 'opensynaptic' / 'utils' / 'c' / 'bin'
     if not bin_dir.exists():
+        if strict:
+            raise SystemExit('rscore output directory not found: {}'.format(bin_dir))
         return
+
+    final_lib = bin_dir / ('os_rscore' + _platform_shared_ext())
+    if strict and not final_lib.exists():
+        raise SystemExit('required rscore library missing after build: {}'.format(final_lib))
+
     for ext in ('.dll', '.so', '.dylib'):
         final_lib = bin_dir / ('os_rscore' + ext)
         tmp_lib = bin_dir / ('os_rscore.tmp' + ext)
@@ -62,6 +76,19 @@ def _run_rscore_build():
                 tmp_lib.unlink()
             except Exception:
                 pass
+
+
+def _platform_shared_ext():
+    if os.name == 'nt':
+        return '.dll'
+    if sys.platform.startswith('darwin'):
+        return '.dylib'
+    return '.so'
+
+
+def _require_rscore_for_build():
+    val = os.getenv('OPENSYNAPTIC_REQUIRE_RSCORE', '0').strip().lower()
+    return val in {'1', 'true', 'yes', 'on'}
 
 
 def _print_post_install_banner():
