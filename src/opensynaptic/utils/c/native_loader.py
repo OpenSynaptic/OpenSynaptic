@@ -1,4 +1,5 @@
 import ctypes
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -63,6 +64,50 @@ def _try_build_once():
         return
 
 
+def _try_load_rs_from_python_extension(base_name):
+    """Load os_rscore from an installed opensynaptic_rscore extension fallback.
+
+    This supports environments where Rust is distributed as a Python extension
+    wheel (maturin) rather than copied into utils/c/bin as os_rscore.*.
+    """
+    if str(base_name or '').strip().lower() != 'os_rscore':
+        return None
+
+    candidate_paths = []
+    try:
+        pkg = importlib.import_module('opensynaptic_rscore')
+        pkg_file = getattr(pkg, '__file__', None)
+        if pkg_file:
+            p = Path(pkg_file)
+            if p.suffix.lower() in {'.pyd', '.so', '.dylib', '.dll'}:
+                candidate_paths.append(p)
+    except Exception:
+        pass
+
+    for mod_name in ('opensynaptic_rscore._native', '_native'):
+        try:
+            mod = importlib.import_module(mod_name)
+            mod_file = getattr(mod, '__file__', None)
+            if mod_file:
+                candidate_paths.append(Path(mod_file))
+        except Exception:
+            continue
+
+    seen = set()
+    for candidate in candidate_paths:
+        key = str(candidate.resolve()) if candidate.exists() else str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not candidate.exists():
+            continue
+        try:
+            return ctypes.CDLL(str(candidate))
+        except Exception:
+            continue
+    return None
+
+
 def load_native_library(base_name):
     key = str(base_name or '').strip().lower()
     if not key:
@@ -83,6 +128,11 @@ def load_native_library(base_name):
             except Exception:
                 continue
 
+    ext_lib = _try_load_rs_from_python_extension(base_name)
+    if ext_lib is not None:
+        _LIB_CACHE[key] = ext_lib
+        return ext_lib
+
     _try_build_once()
 
     for candidate_dir in _native_dirs():
@@ -94,6 +144,11 @@ def load_native_library(base_name):
                 return lib
             except Exception:
                 continue
+
+    ext_lib = _try_load_rs_from_python_extension(base_name)
+    if ext_lib is not None:
+        _LIB_CACHE[key] = ext_lib
+        return ext_lib
 
     _LIB_CACHE[key] = None
     return None

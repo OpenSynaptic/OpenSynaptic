@@ -184,17 +184,17 @@ class CoreManager:
         if not name:
             # Resolve the best available backend with fallback support.
             name = self.get_active_core_name()
+        requested = str(name or '').strip().lower()
         try:
             node_cls = self.get_symbol('OpenSynaptic', name=name)
+            return node_cls(config_path=config_path, **kwargs)
         except Exception as exc:
-            requested = str(name or '').strip().lower()
             if requested == 'rscore' and 'pycore' in self.available_cores():
                 os_log.err('CORE', 'RSCORE_FALLBACK', exc, {'requested': requested, 'fallback': 'pycore'})
                 self.active_core = 'pycore'
                 node_cls = self.get_symbol('OpenSynaptic', name='pycore')
-            else:
-                raise
-        return node_cls(config_path=config_path, **kwargs)
+                return node_cls(config_path=config_path, **kwargs)
+            raise
 
 
 _CORE_MANAGER = CoreManager()

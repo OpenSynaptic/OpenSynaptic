@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opensynaptic"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 description = "2-N-2 high-performance protocol stack"
 authors = [{name = "OpenSynaptic Contributors"}]
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -32,7 +32,7 @@ dependencies = [
 sql-mysql = ["mysql-connector-python>=9.0.0"]
 sql-postgresql = ["psycopg[binary]>=3.2.0"]
 transport-quic = ["aioquic>=1.2.0"]
-rscore = ["maturin>=1.6.0"]
+rscore = ["opensynaptic-rscore>=0.1.0"]
 dev = [
     "build>=1.2.2",
     "twine>=5.1.1",
@@ -73,3 +73,7 @@ branch = true
 show_missing = true
 skip_covered = true
 
+[tool.maturin]
+python-source = "src"
+manifest-path = "src/opensynaptic/rscore/Cargo.toml"
+features = ["pyo3/extension-module"]
