@@ -29,7 +29,6 @@ jobs:
             VERSION="${RAW_TAG#v}"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Releasing version: $VERSION"
 
   build-wheel:
     name: build-wheel (${{ matrix.os }} / py${{ matrix.python-version }})
@@ -49,10 +48,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install build dependencies
+        run: pip install build Cython
       - name: Build wheel
-        run: maturin build --release --out dist --interpreter python${{ matrix.python-version }}
+        run: python -m build --wheel --outdir dist
         env:
           OPENSYNAPTIC_REQUIRE_RSCORE: "1"
       - name: Upload artifacts
@@ -85,7 +84,6 @@ jobs:
           path: dist/*.tar.gz
 
   collect-dist:
-    name: collect-dist
     runs-on: ubuntu-latest
     needs: [build-wheel, build-sdist]
     steps:
@@ -100,8 +98,6 @@ jobs:
         with:
           name: sdist
           path: dist
-      - name: Show collected artifacts
-        run: ls -lah dist
       - name: Upload merged artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -109,7 +105,6 @@ jobs:
           path: dist/*
 
   github-release:
-    name: github-release
     needs: [collect-dist, get-version]
     runs-on: ubuntu-latest
     permissions:
@@ -124,11 +119,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.get-version.outputs.version }}
-          name: v${{ needs.get-version.outputs.version }}
           files: dist/*
 
   publish-testpypi:
-    name: publish-testpypi
     needs: [collect-dist, get-version]
     runs-on: ubuntu-latest
     environment: testpypi
@@ -146,10 +139,8 @@ jobs:
           password: ${{ secrets.TEST_PYPI_API_TOKEN }}
           packages-dir: dist
           skip-existing: true
-          verbose: true
 
   publish-pypi:
-    name: publish-pypi
     needs: [publish-testpypi]
     runs-on: ubuntu-latest
     environment: pypi
@@ -166,4 +157,3 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist
           skip-existing: true
-          verbose: true
