@@ -76,15 +76,24 @@ jobs:
       - name: Install maturin
         run: pip install maturin
       - name: Copy README to Rust project
-        run: cp README.md src/opensynaptic/core/rscore/rust/
+        run: cp README.md src/opensynaptic/core/rscore/rust/ || echo "README.md not found, skipping"
       - name: Build sdist
-        run: maturin build --sdist --out ../../../../dist
+        run: maturin build --sdist --out ${{ github.workspace }}/dist
         working-directory: src/opensynaptic/core/rscore/rust
+      - name: Verify sdist exists
+        run: |
+          ls -la ${{ github.workspace }}/dist/
+          if [ ! -f ${{ github.workspace }}/dist/*.tar.gz ]; then
+            echo "sdist not found in ${{ github.workspace }}/dist/"
+            exit 1
+          fi
+          echo "sdist found"
       - name: Upload sdist artifact
         uses: actions/upload-artifact@v4
         with:
           name: sdist
-          path: dist/*.tar.gz
+          path: ${{ github.workspace }}/dist/*.tar.gz
+          if-no-files-found: error
 
   collect-dist:
     runs-on: ubuntu-latest
