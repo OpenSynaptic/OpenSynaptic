@@ -60,15 +60,16 @@ jobs:
         run: pip install maturin
 
       - name: Verify version matches root pyproject
+        shell: bash
         run: |
           python - <<'PY'
           import tomllib
           from pathlib import Path
-
+          
           expected = "${{ needs.get-version.outputs.version }}"
           pyproject = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))
           actual = str(pyproject['project']['version'])
-
+          
           if expected != actual:
               raise SystemExit(f"Version mismatch: expected={expected}, actual={actual}")
           print(f"Version check passed: {actual}")
