@@ -3,7 +3,8 @@
     "OpenSynaptic_Setting": {
         "Server_Core": true,
         "Node_Core": true,
-        "Client_Core": true
+        "Client_Core": true,
+        "default_medium": "UDP"
     },
     "Server_Core": {
         "port": 8080,
@@ -27,7 +28,9 @@
         "registry": "data/device_registry/",
         "symbols": "data/symbols.json",
         "application_status": {
-            "mqtt": false
+            "mqtt": false,
+            "matter": false,
+            "zigbee": false
         },
         "transport_status": {
             "udp": true,
@@ -40,7 +43,8 @@
             "uart": true,
             "rs485": false,
             "can": false,
-            "lora": false
+            "lora": false,
+            "bluetooth": false
         },
         "application_config": {
             "mqtt": {
@@ -48,6 +52,20 @@
                 "port": 1883,
                 "topic": "os/sensors/raw",
                 "client_id": "OpenSynapticNode"
+            },
+            "matter": {
+                "enabled": false,
+                "protocol": "tcp",
+                "host": "127.0.0.1",
+                "port": 5540,
+                "timeout": 2.0
+            },
+            "zigbee": {
+                "enabled": false,
+                "protocol": "udp",
+                "host": "127.0.0.1",
+                "port": 6638,
+                "timeout": 2.0
             }
         },
         "transport_config": {
@@ -76,10 +94,19 @@
             "lora": {
                 "baudrate": 9600,
                 "timeout": 2
+            },
+            "bluetooth": {
+                "enabled": false,
+                "protocol": "udp",
+                "host": "127.0.0.1",
+                "port": 5454,
+                "timeout": 2.0
             }
         },
         "transporters_status": {
             "mqtt": false,
+            "matter": false,
+            "zigbee": false,
             "udp": true,
             "tcp": false,
             "quic": false,
@@ -88,7 +115,8 @@
             "uart": true,
             "rs485": false,
             "can": false,
-            "lora": false
+            "lora": false,
+            "bluetooth": false
         },
         "service_plugins": {
             "tui": {
@@ -140,7 +168,7 @@
                 "ui_enabled": true,
                 "ui_theme": "router-dark",
                 "ui_layout": "sidebar",
-                "ui_refresh_seconds": 3,
+                "ui_refresh_seconds": 2,
                 "ui_compact": false
             },
             "dependency_manager": {
@@ -247,5 +275,8 @@
     "automation": {
         "cpp_header": "os_symbols.hpp"
     },
-    "assigned_id": 4294967294
+    "assigned_id": 4294967294,
+    "config_version": 1,
+    "first_run": true,
+    "device_id": "DEMO_NODE"
 }

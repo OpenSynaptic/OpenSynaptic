@@ -81,6 +81,38 @@ class ServiceManager:
                         os_log.err('SVC', 'CLI_COLLECT', exc, {'service': name})
         return result
 
+    def collect_cli_completions(self):
+        """Return {plugin_name: {sub_cmd: description}} completion metadata.
+
+        Plugins may implement either:
+        - get_cli_completions() -> dict[str, str|dict]
+        - get_cli_commands() -> dict[str, callable]  (fallback with empty descriptions)
+        """
+        result = {}
+        with self._lock:
+            for name, svc in self.mount_index.items():
+                try:
+                    get_meta = getattr(svc, 'get_cli_completions', None)
+                    if callable(get_meta):
+                        meta = get_meta()
+                        if isinstance(meta, dict):
+                            # Normalize to sub_cmd -> description
+                            normalized = {}
+                            for k, v in meta.items():
+                                if isinstance(v, dict):
+                                    normalized[str(k)] = str(v.get('desc', ''))
+                                else:
+                                    normalized[str(k)] = str(v or '')
+                            result[name] = normalized
+                            continue
+                    if hasattr(svc, 'get_cli_commands'):
+                        cmds = svc.get_cli_commands()
+                        if isinstance(cmds, dict):
+                            result[name] = {str(k): '' for k in cmds.keys()}
+                except Exception as exc:
+                    os_log.err('SVC', 'CLI_COMPLETE', exc, {'service': name})
+        return result
+
     def dispatch_plugin_cli(self, plugin_name, argv):
         """Route *argv* to the named plugin's CLI handler. Returns exit code (int)."""
         key = self._normalize_name(plugin_name)

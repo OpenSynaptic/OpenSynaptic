@@ -16,6 +16,8 @@ from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.paths import (
     ctx,
     get_config_path,
+    get_user_config_path,
+    get_project_config_path,
     get_lib_path,
     get_registry_path,
     read_json,
@@ -33,7 +35,7 @@ __version__ = '0.1.0'
 crc16 = crc16_ccitt
 
 __all__ = [
-    'read_json', 'write_json', 'get_config_path', 'get_registry_path', 'get_lib_path', 'ctx',
+    'read_json', 'write_json', 'get_config_path', 'get_user_config_path', 'get_project_config_path', 'get_registry_path', 'get_lib_path', 'ctx',
     'os_log',
     'LogMsg', 'MESSAGES', 'CLI_HELP_TABLE',
     'ensure_bytes', 'payload_len', 'zero_copy_enabled', 'as_readonly_view', 'to_wire_payload',
@@ -43,6 +45,4 @@ __all__ = [
     'build_native_all', 'build_guidance', 'get_toolchain_report',
     'EnvironmentMissingError', 'classify_exception',
 ]
-
-
 

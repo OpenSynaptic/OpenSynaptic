@@ -5,14 +5,23 @@ edition = "2021"
 description = "RSCore native primitives for OpenSynaptic (Base62 codec + CMD helpers)"
 license = "MIT"
 
+[package.metadata.maturin]
+bindings = "pyo3"
+features = ["python-module"]
+
 [lib]
 name = "opensynaptic_rscore"
 crate-type = ["cdylib"]
+
+[features]
+default = []
+python-module = ["dep:pyo3"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 
 [profile.release]
 opt-level = 3

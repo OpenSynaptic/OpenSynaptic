@@ -10,9 +10,9 @@ OpenSynaptic's transport layer is split into three tiers:
 
 | Tier | Config key | Driver location | Examples |
 |---|---|---|---|
-| **Application** | `RESOURCES.application_status` | `services/transporters/drivers/` | MQTT |
+| **Application** | `RESOURCES.application_status` | `services/transporters/drivers/` | MQTT, Matter, Zigbee |
 | **Transport** | `RESOURCES.transport_status` | `core/transport_layer/` | UDP, TCP, QUIC, lwIP, uIP |
-| **Physical** | `RESOURCES.physical_status` | `core/physical_layer/` | UART, RS-485, CAN, LoRa |
+| **Physical** | `RESOURCES.physical_status` | `core/physical_layer/` | UART, RS-485, CAN, LoRa, Bluetooth |
 
 Discovery behavior is layer-specific:
 
@@ -174,7 +174,7 @@ In `services/transporters/main.py`:
 
 ```python
 class TransporterService:
-    APP_LAYER_DRIVERS = {'mqtt', 'myapp'}   # ← add here
+    APP_LAYER_DRIVERS = {'mqtt', 'matter', 'zigbee', 'myapp'}   # ← add here
 ```
 
 If the key is not listed here, the app-layer driver will not be loaded even if the file exists.
@@ -202,7 +202,7 @@ Register new protocols in `PhysicalLayerManager._CANDIDATES`, then enable them u
 Example: add `bluetooth.py`:
 
 ```
-src/opensynaptic/core/physical_layer/bluetooth.py
+src/opensynaptic/core/physical_layer/protocols/bluetooth.py
 ```
 
 ```json

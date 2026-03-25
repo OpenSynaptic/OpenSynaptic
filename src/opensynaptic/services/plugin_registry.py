@@ -227,3 +227,48 @@ def safe_plugin_help():
         os_log.err('SVC', 'REGISTRY', exc, {})
         return []
 
+
+def get_plugin_cli_completion_meta(plugin_name):
+    """Best-effort plugin CLI completion metadata.
+
+    Returns dict[sub_cmd] = description.
+    Plugins can optionally implement get_cli_completions(); fallback uses
+    get_cli_commands() keys with empty descriptions.
+    """
+    key = normalize_plugin_name(plugin_name)
+    spec = PLUGIN_SPECS.get(key)
+    if spec:
+        module_name = spec.get('module')
+        class_name = spec.get('class')
+    else:
+        module_name = f'opensynaptic.services.{key}'
+        class_name = None
+    module = importlib.import_module(module_name)
+    cls = _resolve_service_class(module, class_name=class_name)
+    if cls is None:
+        return {}
+    try:
+        svc = cls(None)
+    except Exception:
+        svc = cls()
+
+    meta_fn = getattr(svc, 'get_cli_completions', None)
+    if callable(meta_fn):
+        raw = meta_fn()
+        if isinstance(raw, dict):
+            out = {}
+            for k, v in raw.items():
+                if isinstance(v, dict):
+                    out[str(k)] = str(v.get('desc', ''))
+                else:
+                    out[str(k)] = str(v or '')
+            return out
+
+    cmds_fn = getattr(svc, 'get_cli_commands', None)
+    if callable(cmds_fn):
+        raw_cmds = cmds_fn()
+        if isinstance(raw_cmds, dict):
+            return {str(k): '' for k in raw_cmds.keys()}
+    return {}
+
+

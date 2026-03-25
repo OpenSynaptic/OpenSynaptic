@@ -2,6 +2,8 @@
 import inspect
 import socket
 import threading
+import copy
+import time
 from collections import deque
 from pathlib import Path
 
@@ -9,25 +11,83 @@ from opensynaptic.core.common.base import BaseOpenSynaptic
 from opensynaptic.core.rscore._ffi_proxy import RsFFIProxyBase
 from opensynaptic.services import ServiceManager
 from opensynaptic.services.plugin_registry import sync_all_plugin_defaults, autoload_enabled_plugins
-from opensynaptic.utils import ctx, read_json, write_json, os_log, payload_len
+from opensynaptic.utils import read_json, write_json, os_log, payload_len, get_user_config_path, get_project_config_path
 from opensynaptic.utils.buffer import to_wire_payload
 
 
 class OpenSynaptic(BaseOpenSynaptic, RsFFIProxyBase):
     MAX_UINT32 = 4294967295
+    CONFIG_VERSION = 1
+
+    def _deep_merge_missing(self, target, source):
+        changed = False
+        for key, value in (source or {}).items():
+            if key not in target:
+                target[key] = copy.deepcopy(value)
+                changed = True
+                continue
+            if isinstance(target.get(key), dict) and isinstance(value, dict):
+                if self._deep_merge_missing(target[key], value):
+                    changed = True
+        return changed
+
+    def _create_default_config(self):
+        template = read_json(get_project_config_path()) or {}
+        if not isinstance(template, dict):
+            template = {}
+        if not template:
+            template = {
+                'device_id': 'DEMO_NODE',
+                'assigned_id': 1,
+                'OpenSynaptic_Setting': {'default_medium': 'UDP'},
+                'Client_Core': {'server_host': '127.0.0.1', 'server_port': 8080},
+                'Server_Core': {'host': '127.0.0.1', 'port': 8080, 'Start_ID': 1, 'End_ID': 4294967294},
+                'RESOURCES': {},
+                'security_settings': {},
+            }
+        cfg = copy.deepcopy(template)
+        cfg['config_version'] = int(cfg.get('config_version', self.CONFIG_VERSION) or self.CONFIG_VERSION)
+        cfg.setdefault('first_run', True)
+        return cfg
+
+    def _ensure_config_exists(self):
+        cfg_path = Path(self.config_path)
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        if cfg_path.exists():
+            return False
+        legacy = Path(get_project_config_path())
+        if legacy.exists() and legacy.resolve() != cfg_path.resolve():
+            base = read_json(str(legacy)) or {}
+            if not isinstance(base, dict):
+                base = {}
+            self._deep_merge_missing(base, self._create_default_config())
+            base.setdefault('migrated_from', str(legacy))
+            write_json(str(cfg_path), base, indent=4)
+            return True
+        write_json(str(cfg_path), self._create_default_config(), indent=4)
+        return True
+
+    def _migrate_config_if_needed(self):
+        if not isinstance(self.config, dict):
+            self.config = {}
+        current = int(self.config.get('config_version', 0) or 0)
+        if current >= self.CONFIG_VERSION:
+            return False
+        self._deep_merge_missing(self.config, self._create_default_config())
+        self.config['config_version'] = self.CONFIG_VERSION
+        return True
 
     def __init__(self, *args, **kwargs):
         config_path = kwargs.get('config_path')
         if config_path is None and args:
             config_path = args[0]
         if config_path:
-            self.config_path = str(Path(config_path).resolve())
-            self.base_dir = str(Path(self.config_path).parent)
-            self.config = read_json(self.config_path) or {}
+            self.config_path = str(Path(config_path).expanduser().resolve())
         else:
-            self.base_dir = str(ctx.root)
-            self.config_path = str(Path(self.base_dir) / 'Config.json')
-            self.config = dict(ctx.config or {})
+            self.config_path = str(Path(get_user_config_path()))
+        self.base_dir = str(Path(self.config_path).parent)
+        self._ensure_config_exists()
+        self.config = read_json(self.config_path) or {}
 
         self._init_ffi('RsOpenSynaptic', 'Rust node facade is unavailable', *args, **kwargs)
         ffi = self._require_ffi('Rust node facade is unavailable')
@@ -72,6 +132,8 @@ class OpenSynaptic(BaseOpenSynaptic, RsFFIProxyBase):
                 self._save_config()
         except Exception as exc:
             os_log.err('SVC', 'CFG_SYNC', exc, {})
+        if self._migrate_config_if_needed():
+            self._save_config()
         self.active_transporters = {}
         self.assigned_id = getattr(self._ffi, 'assigned_id', None)
         self.device_id = getattr(self._ffi, 'device_id', None)
@@ -417,30 +479,42 @@ class OpenSynaptic(BaseOpenSynaptic, RsFFIProxyBase):
         target_key = target_medium.lower()
         wire_packet = self._to_wire_payload(packet, config=self.config)
         self._last_dispatch_path = 'none'
+        settings = self.config.get('engine_settings', {}) if isinstance(self.config, dict) else {}
+        retry_cfg = settings.get('network_retry', {}) if isinstance(settings.get('network_retry', {}), dict) else {}
+        retry_enabled = bool(retry_cfg.get('enabled', True))
+        max_retries = max(0, int(retry_cfg.get('max_retries', 2) or 0)) if retry_enabled else 0
+        interval_s = max(0.0, float(retry_cfg.get('interval_seconds', 1.0) or 0.0))
+        attempts = 1 + max_retries
 
-        try:
-            out = self._ffi_dispatch(packet, target_medium, *args, **kwargs)
-            if isinstance(out, dict):
-                if 'ok' in out and bool(out.get('ok')):
+        for idx in range(attempts):
+            try:
+                out = self._ffi_dispatch(packet, target_medium, *args, **kwargs)
+                if isinstance(out, dict):
+                    if 'ok' in out and bool(out.get('ok')):
+                        self._last_dispatch_path = 'ffi'
+                        return True
+                    if not bool(out.get('error')):
+                        self._last_dispatch_path = 'ffi'
+                        return True
+                elif bool(out):
                     self._last_dispatch_path = 'ffi'
                     return True
-                if not bool(out.get('error')):
-                    self._last_dispatch_path = 'ffi'
-                    return True
-            elif bool(out):
-                self._last_dispatch_path = 'ffi'
+            except Exception as e:
+                os_log.err('MAIN', 'DISPATCH_FFI', e, {'medium': target_medium, 'attempt': idx + 1})
+
+            if self._dispatch_via_driver(wire_packet, target_medium):
+                self._last_dispatch_path = 'driver'
                 return True
-        except Exception as e:
-            os_log.err('MAIN', 'DISPATCH_FFI', e, {'medium': target_medium})
 
-        if self._dispatch_via_driver(wire_packet, target_medium):
-            self._last_dispatch_path = 'driver'
-            return True
+            if target_key == 'udp':
+                ok = self._dispatch_udp_fallback(wire_packet)
+                if ok:
+                    self._last_dispatch_path = 'udp_fallback'
+                    return True
 
-        if target_key == 'udp':
-            ok = self._dispatch_udp_fallback(wire_packet)
-            self._last_dispatch_path = 'udp_fallback' if ok else 'failed'
-            return ok
+            if idx < attempts - 1:
+                time.sleep(interval_s)
+
         self._last_dispatch_path = 'failed'
         return False
 

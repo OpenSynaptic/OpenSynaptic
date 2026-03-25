@@ -1,0 +1,24 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS": "C",
+        "standard_name": "OpenSynaptic_Ucum_Humidity",
+        "class_name": "Humidity",
+        "class_id": "0x0D",
+        "version": "1.0.0",
+        "author": "OpenSynaptic_Protocol_Core",
+        "base_unit": "%"
+    },
+    "units": {
+        "%": {
+            "name": "relative_humidity_percent",
+            "ucum_code": "%",
+            "tid": "0x0D00",
+            "physical_attribute": "humidity",
+            "standard_unit_name": "relative_humidity_percent",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        }
+    }
+}
+

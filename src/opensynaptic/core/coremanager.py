@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from opensynaptic.core.loader import CorePluginRegistry
-from opensynaptic.utils import read_json
+from opensynaptic.utils import read_json, os_log
 
 
 class CoreManager:
@@ -184,7 +184,16 @@ class CoreManager:
         if not name:
             # Resolve the best available backend with fallback support.
             name = self.get_active_core_name()
-        node_cls = self.get_symbol('OpenSynaptic', name=name)
+        try:
+            node_cls = self.get_symbol('OpenSynaptic', name=name)
+        except Exception as exc:
+            requested = str(name or '').strip().lower()
+            if requested == 'rscore' and 'pycore' in self.available_cores():
+                os_log.err('CORE', 'RSCORE_FALLBACK', exc, {'requested': requested, 'fallback': 'pycore'})
+                self.active_core = 'pycore'
+                node_cls = self.get_symbol('OpenSynaptic', name='pycore')
+            else:
+                raise
         return node_cls(config_path=config_path, **kwargs)
 
 

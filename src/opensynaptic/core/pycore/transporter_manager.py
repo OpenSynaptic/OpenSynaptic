@@ -13,7 +13,7 @@ class _ManagerProxyDriver:
         return self._manager.send(self._name, payload, config)
 
 class TransporterManager:
-    APP_PROTOCOLS = {'mqtt'}
+    APP_PROTOCOLS = {'mqtt', 'matter', 'zigbee'}
     TRANSPORT_PROTOCOLS = {'udp', 'tcp', 'quic', 'iwip', 'uip'}
     PHYSICAL_PROTOCOLS = {'uart', 'rs485', 'can', 'lora'}
 

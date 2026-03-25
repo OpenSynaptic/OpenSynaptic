@@ -3,11 +3,12 @@
 Commands registered here:
   run, snapshot, receive, time-sync, ensure-id, transmit,
   inject, decode, watch, tui, reload-protocol,
-  transport-status, db-status
+  transport-status, db-status, demo
 """
 import argparse
 
 from .base import add_config_arg, add_host_args, add_quiet_arg, add_run_args
+from opensynaptic.CLI.completion import complete_transporter
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -80,6 +81,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     transmit.add_argument('--device-id', dest='device_id', default=None)
     transmit.add_argument('--status', default='ONLINE')
     transmit.add_argument('--medium', default='UDP')
+    transmit._actions[-1].completer = complete_transporter
     # Single-sensor convenience flags (used when --sensors is not provided)
     transmit.add_argument('--sensor-id', default='V1')
     transmit.add_argument('--sensor-status', default='OK')
@@ -103,6 +105,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     add_config_arg(reload_protocol)
     reload_protocol.add_argument('--medium', required=True,
                                  help='Protocol name to reload (e.g. udp, tcp)')
+    reload_protocol._actions[-1].completer = complete_transporter
 
     # --- inject ---
     inject = sub.add_parser(
@@ -174,3 +177,26 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     add_config_arg(db_status)
 
+    # --- demo ---
+    demo = sub.add_parser(
+        'demo', aliases=['os-demo'],
+        help='Start loopback demo: virtual sensor + web UI + first-send onboarding',
+    )
+    add_config_arg(demo)
+    demo.add_argument('--once', action='store_true', default=False,
+                      help='Send one demo packet then exit')
+    demo.add_argument('--interval', type=float, default=0.0,
+                      help='Demo send interval in seconds; 0=random 2-5s')
+    demo.add_argument('--duration', type=float, default=0.0,
+                      help='Total demo duration in seconds; 0 = unlimited')
+    demo.add_argument('--medium', default='UDP',
+                      help='Dispatch medium for demo packets (default: UDP)')
+    demo._actions[-1].completer = complete_transporter
+    demo.add_argument('--web-host', dest='web_host', default='127.0.0.1',
+                      help='Web UI bind host (default: 127.0.0.1)')
+    demo.add_argument('--web-port', dest='web_port', type=int, default=8765,
+                      help='Web UI bind port (default: 8765)')
+    demo.add_argument('--open-browser', action='store_true', default=False,
+                      help='Try to open the demo Web UI URL in the default browser')
+    demo.add_argument('--temp-config', action='store_true', default=False,
+                      help='Use a temporary demo config file instead of ~/.config/opensynaptic/Config.json')

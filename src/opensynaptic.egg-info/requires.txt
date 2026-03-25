@@ -1,5 +1,17 @@
-numpy
-toml
+numpy>=1.24
+toml>=0.10.2
+argcomplete>=3.0.0
+
+[dev]
+build>=1.2.2
+twine>=5.1.1
+pytest>=8.3.0
+pytest-cov>=5.0.0
+cibuildwheel>=2.20.0
+maturin>=1.6.0
+
+[rscore]
+maturin>=1.6.0
 
 [sql-mysql]
 mysql-connector-python>=9.0.0

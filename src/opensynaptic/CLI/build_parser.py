@@ -17,6 +17,7 @@ import re
 import sys
 
 from opensynaptic.CLI.parsers import core, config, test, plugin, native, service, extra
+from opensynaptic.CLI.completion import enable_argcomplete
 
 
 class OSCliArgumentParser(argparse.ArgumentParser):
@@ -58,6 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
         '--quiet', action='store_true', default=False,
         help='Suppress info logs – only warnings and errors are shown',
     )
+    parser.add_argument(
+        '--yes', action='store_true', default=False,
+        help='First-run wizard: auto-accept demo startup prompt',
+    )
+    parser.add_argument(
+        '--no-wizard', action='store_true', default=False,
+        help='Skip first-run wizard and continue with normal command flow',
+    )
 
     sub = parser.add_subparsers(dest='command')
 
@@ -69,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     native.register(sub)
     service.register(sub)
     extra.register(sub)
+
+    enable_argcomplete(parser)
 
     return parser
 

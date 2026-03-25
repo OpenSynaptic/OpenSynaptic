@@ -2,3 +2,4 @@
 os-cli = opensynaptic.main:cli_entry
 os-node = opensynaptic.main:main
 os-tui = opensynaptic.main:tui_main
+os-web = opensynaptic.main:web_main

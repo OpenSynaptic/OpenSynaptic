@@ -162,6 +162,7 @@ os_log.log_with_const("info", LogMsg.READY, root=self.base_dir)
 
 All user-facing message templates are in `utils/constants.py:MESSAGES`.  
 Add new `LogMsg` enum members there before using them with `log_with_const`.
+- Receiver runtime perf stats default to **60s** reporting cadence via `ReceiverRuntime(report_interval_s=60.0)` in `src/opensynaptic/core/Receiver.py` (override `report_interval_s` explicitly when shorter debug cadence is needed).
 
 ---
 
@@ -182,6 +183,16 @@ python scripts/concurrency_smoke.py [total=200] [workers=8] [sources=6]
 python -u src/main.py plugin-test --suite component
 python -u src/main.py plugin-test --suite stress --workers 8 --total 200
 python -u src/main.py plugin-test --suite all --workers 8 --total 200
+python -u src/main.py plugin-test --suite full_load --total 100000 --with-component
+python -u src/main.py plugin-test --suite integration
+python -u src/main.py plugin-test --suite audit
+```
+
+**Use one-flag test profiles (maps to stress/compare presets):**
+```bash
+python -u src/main.py plugin-test --profile quick
+python -u src/main.py plugin-test --profile deep
+python -u src/main.py plugin-test --profile record
 ```
 
 **Run backend comparison / high-load profiling flows:**
@@ -254,6 +265,7 @@ python scripts/core_hard_switch_smoke.py  # Validates core discovery and native 
 - `os-node` – Interactive CLI with fallback to `run` daemon after idle timeout (managed by `src/opensynaptic/main.py:main()`)
 - `os-cli` – Inline command execution; no REPL (calls `src/opensynaptic/CLI:main()` directly)
 - `os-tui` – TUI dashboard (aliases to `os-cli tui`)
+- `os-web` – Standalone web plugin entrypoint (maps to `web-user`; implemented by `src/opensynaptic/main.py:web_main`)
 
 **Core & Configuration:**
 - **`config_path` always passed as absolute path** – all subsystems receive it from `OpenSynaptic.__init__` to avoid CWD-relative path bugs.

@@ -11,6 +11,7 @@ All commands are available via `os-node` (installed entry-point) or `python -u s
 | `run` | `os-run` | Persistent run loop; maintains protocol heartbeat until Ctrl+C or `--duration` |
 | `snapshot` | `os-snapshot` | Print node / service / transporter JSON snapshot |
 | `receive` | `os-receive` | Start UDP receiver (server-side packet ingestion loop) |
+| `demo` | `os-demo` | One-command localhost onboarding: virtual sensors + Web UI |
 | `tui` | `os-tui` | Render a TUI snapshot; add `--interactive` for live mode |
 | `time-sync` | `os-time-sync` | Synchronise clock with the server once |
 | `ensure-id` | `os-ensure-id` | Request a device ID from the server and persist it to `Config.json` |
@@ -22,6 +23,8 @@ All commands are available via `os-node` (installed entry-point) or `python -u s
 | `config-show` | `os-config-show` | Display `Config.json` or one top-level section |
 | `config-get` | `os-config-get` | Read a dot-notation key path from `Config.json` |
 | `config-set` | `os-config-set` | Write a typed value to a dot-notation key path |
+| `wizard` | `init`, `os-wizard`, `os-init` | Interactive config generator (`--default` for one-shot defaults) |
+| `repair-config` | `os-repair-config` | Repair/bootstrap `~/.config/opensynaptic/Config.json` for loopback mode |
 | `transporter-toggle` | `os-transporter-toggle` | Enable or disable a transporter entry in `Config.json` |
 | `plugin-list` | `os-plugin-list` | List all mounted service plugins and their runtime state |
 | `plugin-load` | `os-plugin-load` | Load a mounted plugin by name (calls `auto_load()`) |
@@ -42,6 +45,11 @@ All commands are available via `os-node` (installed entry-point) or `python -u s
 
 ```powershell
 # ── Basic node operations ───────────────────────────────────────────────────
+python -u src/main.py demo              --open-browser
+python -u src/main.py demo              --temp-config --once
+python -u src/main.py wizard
+python -u src/main.py init --default
+python -u src/main.py repair-config
 python -u src/main.py snapshot          --config Config.json
 python -u src/main.py ensure-id         --config Config.json --host 127.0.0.1 --port 8080
 python -u src/main.py transmit          --config Config.json --sensor-id V1 --value 3.14 --unit Pa --medium UDP
@@ -186,6 +194,32 @@ Add `--interactive` to enter the live-refresh loop.
 | `--interval` | `5.0` | `run` mode polling interval (seconds) |
 | `--duration` | `0.0` | `run` / `watch` duration limit (seconds); `0` = unlimited |
 | `--once` | `false` | `run` mode: execute one cycle then exit |
+| `--yes` | `false` | First-run wizard: auto-start `demo` without prompt |
+| `--no-wizard` | `false` | Skip first-run wizard prompt |
+
+---
+
+## Argcomplete Setup (Tab Completion)
+
+```powershell
+py -3 -m pip install argcomplete
+powershell -ExecutionPolicy Bypass -File .\scripts\enable_argcomplete.ps1
+```
+
+Manual activation:
+
+```powershell
+Invoke-Expression (register-python-argcomplete os-node --shell powershell)
+```
+
+After restart, completion is available for:
+
+- command names and subcommands
+- `config-get --key` / `config-set --key` (nested dot paths + list indexes)
+- transporter names on `--medium` / `--name`
+- `plugin-cmd --plugin` and plugin `--cmd`
+
+`config-* --key` completion uses a short-lived cache keyed by config file mtime to avoid repeated deep traversal on large files.
 
 ---
 
@@ -198,5 +232,6 @@ Add `--interactive` to enter the live-refresh loop.
 - `decode --format hex` accepts `aabbcc`, `aa:bb:cc`, or `aa bb cc` (separators are stripped automatically).
 - `config-set` with `--type json` writes entire sub-dicts in one command.
 - `plugin-cmd` resolves plugins through `services/plugin_registry.py`; no plugin starts automatically on node boot.
+- Plugins can expose `get_cli_completions()` to provide `plugin-cmd --cmd` completion metadata (fallback: `get_cli_commands()` keys).
 - Required plugin settings are auto-added to `Config.json` under `RESOURCES.service_plugins.<plugin_name>`.
 - `web-user --cmd start -- --block` keeps the process in foreground so the browser UI stays available.

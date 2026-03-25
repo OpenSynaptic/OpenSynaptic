@@ -114,6 +114,7 @@ CLI_HELP_TABLE = {
     'config-show': {'aliases': ['os-config-show'], 'desc': 'Show entire Config.json or a specified section (--section <name>).'},
     'config-get': {'aliases': ['os-config-get'], 'desc': 'Read the value at a dotted path in Config.json (--key a.b.c).'},
     'config-set': {'aliases': ['os-config-set'], 'desc': 'Set the value at a dotted path in Config.json (--key a.b.c --value <v> [--type int|float|bool|str|json]).'},
+    'wizard': {'aliases': ['init', 'os-wizard', 'os-init'], 'desc': 'Interactive Config.json generator; use --default for one-shot localhost defaults.'},
     'core': {'aliases': ['os-core'], 'desc': 'Show current/available cores, and optionally switch core (--set pycore|rscore [--persist]).'},
     'plugin-cmd': {'aliases': ['os-plugin-cmd'], 'desc': 'Route a command to the specified plugin\'s CLI handler (--plugin <name> --cmd <subcommand> [args...]).'},
     'plugin-test': {'aliases': ['os-plugin-test'], 'desc': 'Run test suites (--suite component|stress|all|compare). Stress supports --auto-profile for concurrency tuning.'},
@@ -127,5 +128,6 @@ CLI_HELP_TABLE = {
     'id-info': {'aliases': ['os-id-info'], 'desc': 'Show device_id, assigned_id, assignment status, and configured server address.'},
     'log-level': {'aliases': ['os-log-level'], 'desc': 'Adjust os_log verbosity for the current process (--set debug|info|warning|error|critical).'},
     'pipeline-info': {'aliases': ['os-pipeline-info'], 'desc': 'Show pipeline configuration: stage toggles, precision, zero-copy flag, cache state.'},
+    'doctor': {'aliases': ['diagnose', 'os-doctor', 'os-diagnose'], 'desc': 'Run diagnostics for environment/config/transporter health and print repair suggestions.'},
 }
 

@@ -5,7 +5,16 @@ __pycache__/
 *.pyd
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+coverage.xml
+
+# Packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+.maturin/
 
 # Virtual Environment
 .venv/
@@ -51,6 +60,10 @@ config.local.json
 # Native/build artifacts
 src/opensynaptic/utils/c/bin/*.tmp.lib
 src/opensynaptic/utils/c/bin/*.bak.dll
+src/opensynaptic/core/rscore/rust/target/
+target/
+*.whl
+*.tar.gz
 
 # Build mirrors
 out/production/

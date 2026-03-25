@@ -6,6 +6,7 @@ Commands registered here:
 import argparse
 
 from .base import add_config_arg
+from opensynaptic.CLI.completion import complete_plugin_name, complete_plugin_subcommand
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -26,6 +27,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     add_config_arg(plugin_load)
     plugin_load.add_argument('--name', required=True,
                              help='Plugin name to load (e.g. tui / web_user)')
+    plugin_load._actions[-1].completer = complete_plugin_name
 
     # --- plugin-cmd ---
     plugin_cmd = sub.add_parser(
@@ -37,10 +39,12 @@ def register(sub: argparse._SubParsersAction) -> None:
         '--plugin', required=True,
         help='Plugin name, e.g. tui / test_plugin / web_user',
     )
+    plugin_cmd._actions[-1].completer = complete_plugin_name
     plugin_cmd.add_argument(
         '--cmd', required=True,
         help='Plugin sub-command, e.g. render / interactive / component',
     )
+    plugin_cmd._actions[-1].completer = complete_plugin_subcommand
     plugin_cmd.add_argument(
         'args', nargs=argparse.REMAINDER,
         help='Extra arguments passed to the plugin sub-command',

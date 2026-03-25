@@ -23,6 +23,8 @@
         "rpm": "401",
         "deg/s": "402",
         "rad/s": "403",
+        "humidity": "C",
+        "%": "C00",
         "informatics": "5",
         "bit": "500",
         "by": "501",

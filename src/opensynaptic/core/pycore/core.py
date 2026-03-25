@@ -1,6 +1,9 @@
+# noinspection PyTypeChecker
 import socket
 import time
 import threading
+import copy
+from typing import Any, Dict
 from pathlib import Path
 from .standardization import OpenSynapticStandardizer
 from .solidity import OpenSynapticEngine
@@ -17,6 +20,8 @@ from opensynaptic.utils import (
     LogMsg,
     NativeLibraryUnavailable,
     payload_len,
+    get_user_config_path,
+    get_project_config_path,
 )
 from opensynaptic.utils.buffer import to_wire_payload
 try:
@@ -33,16 +38,197 @@ except ImportError:
 
 class OpenSynaptic:
     MAX_UINT32 = 4294967295
+    CONFIG_VERSION = 1
+
+    def _deep_merge_missing(self, target, source):
+        changed = False
+        for key, value in (source or {}).items():
+            if key not in target:
+                target[key] = copy.deepcopy(value)
+                changed = True
+                continue
+            if isinstance(target.get(key), dict) and isinstance(value, dict):
+                if self._deep_merge_missing(target[key], value):
+                    changed = True
+        return changed
+
+    # noinspection PyTypeChecker
+    def _create_default_config(self):
+        template: Dict[str, Any] = self._load_json(get_project_config_path()) or {}
+        if not isinstance(template, dict):
+            template = {}
+        if not template:
+            template = {
+                'device_id': 'DEMO_NODE',
+                'assigned_id': 1,
+                'OpenSynaptic_Setting': {'default_medium': 'UDP'},
+                'Client_Core': {'server_host': '127.0.0.1', 'server_port': 8080},
+                'Server_Core': {'host': '127.0.0.1', 'port': 8080, 'Start_ID': 1, 'End_ID': 4294967294},
+                'engine_settings': {
+                    'precision': 4,
+                    'active_standardization': True,
+                    'active_compression': True,
+                    'active_collapse': True,
+                    'zero_copy_transport': True,
+                },
+                'RESOURCES': {},
+                'security_settings': {},
+            }
+        cfg: Dict[str, Any] = copy.deepcopy(template)
+        cfg['config_version'] = int(cfg.get('config_version', self.CONFIG_VERSION) or self.CONFIG_VERSION)
+        if 'first_run' not in cfg:
+            cfg['first_run'] = True
+        if 'device_id' not in cfg:
+            cfg['device_id'] = 'DEMO_NODE'
+        if cfg.get('assigned_id') in (None, '', 0, '0', self.MAX_UINT32, str(self.MAX_UINT32)):
+            cfg['assigned_id'] = 1
+
+        settings = cfg.get('OpenSynaptic_Setting')
+        if not isinstance(settings, dict):
+            settings = {}
+            cfg['OpenSynaptic_Setting'] = settings
+        settings['default_medium'] = 'UDP'
+
+        client = cfg.get('Client_Core')
+        if not isinstance(client, dict):
+            client = {}
+            cfg['Client_Core'] = client
+        client['server_host'] = '127.0.0.1'
+        client['server_port'] = 8080
+
+        server = cfg.get('Server_Core')
+        if not isinstance(server, dict):
+            server = {}
+            cfg['Server_Core'] = server
+        if 'Start_ID' not in server:
+            server['Start_ID'] = 1
+        if 'End_ID' not in server:
+            server['End_ID'] = 4294967294
+        server['host'] = '127.0.0.1'
+        server['port'] = 8080
+
+        resources = cfg.get('RESOURCES')
+        if not isinstance(resources, dict):
+            resources = {}
+            cfg['RESOURCES'] = resources
+        if 'registry' not in resources:
+            resources['registry'] = 'data/device_registry/'
+
+        app_status = resources.get('application_status')
+        if not isinstance(app_status, dict):
+            app_status = {}
+            resources['application_status'] = app_status
+        if 'mqtt' not in app_status:
+            app_status['mqtt'] = False
+        if 'matter' not in app_status:
+            app_status['matter'] = False
+        if 'zigbee' not in app_status:
+            app_status['zigbee'] = False
+
+        transport_status = resources.get('transport_status')
+        if not isinstance(transport_status, dict):
+            transport_status = {}
+            resources['transport_status'] = transport_status
+        transport_status.setdefault('udp', True)
+        transport_status.setdefault('tcp', False)
+        transport_status.setdefault('quic', False)
+        transport_status.setdefault('iwip', False)
+        transport_status.setdefault('uip', False)
+
+        physical_status = resources.get('physical_status')
+        if not isinstance(physical_status, dict):
+            physical_status = {}
+            resources['physical_status'] = physical_status
+        physical_status.setdefault('uart', False)
+        physical_status.setdefault('rs485', False)
+        physical_status.setdefault('can', False)
+        physical_status.setdefault('lora', False)
+        physical_status.setdefault('bluetooth', False)
+
+        resources['transporters_status'] = {
+            **{k: bool(v) for k, v in app_status.items()},
+            **{k: bool(v) for k, v in transport_status.items()},
+            **{k: bool(v) for k, v in physical_status.items()},
+        }
+
+        app_cfg = resources.get('application_config')
+        if not isinstance(app_cfg, dict):
+            app_cfg = {}
+            resources['application_config'] = app_cfg
+        app_cfg.setdefault('mqtt', {'enabled': False})
+        app_cfg.setdefault('matter', {'enabled': False, 'protocol': 'tcp', 'host': '127.0.0.1', 'port': 5540, 'timeout': 2.0})
+        app_cfg.setdefault('zigbee', {'enabled': False, 'protocol': 'udp', 'host': '127.0.0.1', 'port': 6638, 'timeout': 2.0})
+
+        transport_cfg = resources.get('transport_config')
+        if not isinstance(transport_cfg, dict):
+            transport_cfg = {}
+            resources['transport_config'] = transport_cfg
+        transport_cfg.setdefault('udp', {'host': '127.0.0.1', 'port': 8080})
+
+        physical_cfg = resources.get('physical_config')
+        if not isinstance(physical_cfg, dict):
+            physical_cfg = {}
+            resources['physical_config'] = physical_cfg
+        physical_cfg.setdefault('uart', {})
+        physical_cfg.setdefault('rs485', {})
+        physical_cfg.setdefault('can', {})
+        physical_cfg.setdefault('lora', {})
+        physical_cfg.setdefault('bluetooth', {'enabled': False, 'protocol': 'udp', 'host': '127.0.0.1', 'port': 5454, 'timeout': 2.0})
+
+        service_plugins = resources.get('service_plugins')
+        if not isinstance(service_plugins, dict):
+            service_plugins = {}
+            resources['service_plugins'] = service_plugins
+        web_cfg = service_plugins.get('web_user')
+        if not isinstance(web_cfg, dict):
+            web_cfg = {}
+            service_plugins['web_user'] = web_cfg
+        web_cfg.setdefault('enabled', True)
+        web_cfg.setdefault('mode', 'manual')
+        web_cfg.setdefault('host', '127.0.0.1')
+        web_cfg.setdefault('port', 8765)
+        web_cfg.setdefault('auto_start', False)
+        web_cfg.setdefault('auth_enabled', False)
+        return cfg
+
+    def _ensure_config_exists(self):
+        cfg_path = Path(self.config_path)
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        if cfg_path.exists():
+            return False
+        legacy = Path(get_project_config_path())
+        if legacy.exists() and legacy.resolve() != cfg_path.resolve():
+            base = self._load_json(str(legacy)) or {}
+            if not isinstance(base, dict):
+                base = {}
+            changed = self._deep_merge_missing(base, self._create_default_config())
+            if changed:
+                base['config_version'] = self.CONFIG_VERSION
+            base.setdefault('migrated_from', str(legacy))
+            write_json(str(cfg_path), base, indent=4)
+            return True
+        write_json(str(cfg_path), self._create_default_config(), indent=4)
+        return True
+
+    def _migrate_config_if_needed(self):
+        current = int(self.config.get('config_version', 0) or 0)
+        changed = False
+        if current < self.CONFIG_VERSION:
+            defaults = self._create_default_config()
+            if self._deep_merge_missing(self.config, defaults):
+                changed = True
+            self.config['config_version'] = self.CONFIG_VERSION
+            changed = True
+        return changed
 
     def __init__(self, config_path=None):
         if config_path:
-            self.config_path = config_path
-            self.config = self._load_json(self.config_path)
-            self.base_dir = str(Path(self.config_path).resolve().parent)
+            self.config_path = str(Path(config_path).expanduser().resolve())
         else:
-            self.config = ctx.config or {}
-            self.config_path = str(Path(ctx.root) / 'Config.json')
-            self.base_dir = ctx.root
+            self.config_path = str(Path(get_user_config_path()))
+        self.base_dir = str(Path(self.config_path).resolve().parent)
+        self._ensure_config_exists()
+        self.config = self._load_json(self.config_path) or {}
         self.settings = self.config.get('OpenSynaptic_Setting', {})
         self.res_conf = self.config.get('RESOURCES', {})
         self.security_settings = self.config.get('security_settings', {})
@@ -70,6 +256,7 @@ class OpenSynaptic:
         end_id = int(self.config.get('Server_Core', {}).get('End_ID', 4294967295))
 
         lease_cfg, lease_changed = self._resolve_id_lease_config()
+        migrated_cfg = self._migrate_config_if_needed()
         self._lease_metrics_flush_interval = max(1, int(lease_cfg.get('metrics_flush_seconds', 10) or 10))
         self.id_allocator = IDAllocator(
             base_dir=self.base_dir,
@@ -129,7 +316,7 @@ class OpenSynaptic:
             autoload_enabled_plugins(self, mode='runtime', auto_start_only=True)
         except Exception as e:
             os_log.err('SVC', 'AUTOLOAD', e, {})
-        if lease_changed:
+        if lease_changed or migrated_cfg:
             self._save_config()
         os_log.log_with_const('info', LogMsg.READY, root=self.base_dir)
         if DatabaseManager:
@@ -385,12 +572,22 @@ class OpenSynaptic:
         if not driver:
             driver = self.active_transporters.get(target_key)
         if driver and hasattr(driver, 'send'):
+            settings = self.config.get('engine_settings', {}) if isinstance(self.config, dict) else {}
+            retry_cfg = settings.get('network_retry', {}) if isinstance(settings.get('network_retry', {}), dict) else {}
+            retry_enabled = bool(retry_cfg.get('enabled', True))
+            max_retries = max(0, int(retry_cfg.get('max_retries', 2) or 0)) if retry_enabled else 0
+            interval_s = max(0.0, float(retry_cfg.get('interval_seconds', 1.0) or 0.0))
+            attempts = 1 + max_retries
             try:
                 wire_packet = self._to_wire_payload(packet, config=self.config)
-                result = driver.send(wire_packet, self.config)
-                if not result:
-                    os_log.err('MAIN', 'SEND_FAIL', f'Driver [{target_medium}] rejected send', {'len': payload_len(wire_packet)})
-                return result
+                for idx in range(attempts):
+                    result = bool(driver.send(wire_packet, self.config))
+                    if result:
+                        return True
+                    if idx < attempts - 1:
+                        time.sleep(interval_s)
+                os_log.err('MAIN', 'SEND_FAIL', f'Driver [{target_medium}] rejected send', {'len': payload_len(wire_packet), 'attempts': attempts})
+                return False
             except Exception as e:
                 os_log.err('MAIN', 'PHYSICAL_ERR', e, {'medium': target_medium})
                 return False

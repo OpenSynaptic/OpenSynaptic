@@ -5,6 +5,9 @@ Commands registered here:
   id-info       – device identity and ID assignment details
   log-level     – adjust logger verbosity at runtime
   pipeline-info – pipeline configuration summary
+  wizard/init   – interactive config generator
+  repair-config – repair/bootstrap user config for local demo workflows
+  doctor/diagnose – run system diagnostics and optional self-heal
   help          – formatted command reference (--full for raw argparse output)
 """
 import argparse
@@ -59,6 +62,43 @@ def register(sub: argparse._SubParsersAction) -> None:
     pipeline_info.add_argument(
         '--json', action='store_true', default=False,
         help='Output as JSON',
+    )
+
+    # --- repair-config ---
+    repair_cfg = sub.add_parser(
+        'repair-config', aliases=['os-repair-config'],
+        help='Repair or initialize user config (~/.config/opensynaptic/Config.json) for local loopback use',
+    )
+    add_config_arg(repair_cfg)
+    repair_cfg.add_argument(
+        '--json', action='store_true', default=False,
+        help='Output result as JSON',
+    )
+
+    # --- doctor / diagnose ---
+    doctor = sub.add_parser(
+        'doctor', aliases=['diagnose', 'os-doctor', 'os-diagnose'],
+        help='Run environment/config/transporter diagnostics and print repair suggestions',
+    )
+    add_config_arg(doctor)
+    doctor.add_argument(
+        '--json', action='store_true', default=False,
+        help='Output diagnosis report as JSON',
+    )
+    doctor.add_argument(
+        '--self-heal', action='store_true', default=False,
+        help='Auto-backup corrupted config and fill required missing keys',
+    )
+
+    # --- wizard / init ---
+    wizard = sub.add_parser(
+        'wizard', aliases=['init', 'os-wizard', 'os-init'],
+        help='Interactive configuration wizard (or --default for non-interactive setup)',
+    )
+    add_config_arg(wizard)
+    wizard.add_argument(
+        '--default', action='store_true', default=False,
+        help='Generate default localhost config and skip questions',
     )
 
     # --- help ---

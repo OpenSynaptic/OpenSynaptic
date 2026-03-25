@@ -57,8 +57,19 @@ class OSContext:
         return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 ctx = OSContext()
 
-def get_config_path():
+
+def get_user_config_path():
+    return str((Path.home() / '.config' / 'opensynaptic' / 'Config.json').resolve())
+
+
+def get_project_config_path():
     return os.path.join(ctx.root, 'Config.json')
+
+
+def get_config_path(prefer_user=True):
+    if prefer_user:
+        return get_user_config_path()
+    return get_project_config_path()
 
 def get_registry_path(aid):
     s_val = str(aid).zfill(10)

@@ -16,6 +16,21 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "python-module")]
+use pyo3::prelude::*;
+
+#[cfg(feature = "python-module")]
+#[pyfunction]
+fn abi_info_py() -> String {
+    "opensynaptic_rscore c-api+pyo3".to_string()
+}
+
+#[cfg(feature = "python-module")]
+#[pymodule]
+fn opensynaptic_rscore(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(abi_info_py, m)?)?;
+    Ok(())
+}
 
 fn push_u32_be(dst: &mut Vec<u8>, n: usize) -> Option<()> {
     let v = u32::try_from(n).ok()?;

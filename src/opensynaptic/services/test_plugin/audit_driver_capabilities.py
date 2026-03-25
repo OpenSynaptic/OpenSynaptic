@@ -68,9 +68,12 @@ def audit_all_drivers() -> dict:
             ("opensynaptic.core.physical_layer.protocols.rs485", "RS485"),
             ("opensynaptic.core.physical_layer.protocols.can", "CAN"),
             ("opensynaptic.core.physical_layer.protocols.lora", "LoRa"),
+            ("opensynaptic.core.physical_layer.protocols.bluetooth", "Bluetooth"),
         ],
         "L7 Application": [
             ("opensynaptic.services.transporters.drivers.mqtt", "MQTT"),
+            ("opensynaptic.services.transporters.drivers.matter", "Matter"),
+            ("opensynaptic.services.transporters.drivers.zigbee", "Zigbee"),
         ]
     }
     

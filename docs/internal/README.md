@@ -4,12 +4,8 @@ This folder contains internal process documents and non-publish project records.
 
 ## Internal Files
 
-- `DELIVERABLES.md`
-- `EXECUTION_SUMMARY.md`
-- `ID_LEASE_IMPLEMENTATION_STATUS.md`
-- `INTEGRATION_SUMMARY.md`
+- `WORK_SUMMARY.md` (consolidated internal status snapshot)
 - `OPTIMIZATION_REPORT.md`
-- `WORK_SUMMARY.md`
 - `DRIVER_BIDIRECTIONAL_REPORT.md`
 - `DEDUP_EXECUTION_2026M03.md`
 - `PYCORE_INTERNALS.md`

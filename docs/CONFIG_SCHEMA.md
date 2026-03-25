@@ -119,8 +119,8 @@ All resource paths, transporter registries, and driver configurations.
 | `prefixes` | string (path) | Prefix definition file (alternative to `symbols`) |
 | `transporters_status` | map | Legacy merged mirror used by CLI/tooling compatibility. Keep lowercase keys. This map is synchronized from layer-specific maps. |
 | `transport_status` | map | Active transport-layer enable map (UDP, TCP, QUIC, lwIP, uIP) |
-| `physical_status` | map | Active physical-layer enable map (UART, RS-485, CAN, LoRa) |
-| `application_status` | map | Active application-layer enable map (MQTT and app drivers) |
+| `physical_status` | map | Active physical-layer enable map (UART, RS-485, CAN, LoRa, Bluetooth) |
+| `application_status` | map | Active application-layer enable map (MQTT, Matter, Zigbee, and app drivers) |
 | `transport_config` | map-of-dicts | Per-driver config dicts for transport layer |
 | `physical_config` | map-of-dicts | Per-driver config dicts for physical layer |
 | `application_config` | map-of-dicts | Per-driver config dicts for application layer |
@@ -198,7 +198,8 @@ All resource paths, transporter registries, and driver configurations.
     "uart":  { "port": "UART0", "baudrate": 115200 },
     "rs485": { "port": "COM1",  "baudrate": 9600 },
     "can":   { "can_id": 291 },
-    "lora":  { "baudrate": 9600, "timeout": 2 }
+    "lora":  { "baudrate": 9600, "timeout": 2 },
+    "bluetooth": { "protocol": "udp", "host": "127.0.0.1", "port": 5454, "timeout": 2.0 }
 }
 ```
 
@@ -221,6 +222,18 @@ All resource paths, transporter registries, and driver configurations.
         "port":      1883,
         "topic":     "os/sensors/raw",
         "client_id": "OpenSynapticNode"
+    },
+    "matter": {
+        "protocol": "tcp",
+        "host": "127.0.0.1",
+        "port": 5540,
+        "timeout": 2.0
+    },
+    "zigbee": {
+        "protocol": "udp",
+        "host": "127.0.0.1",
+        "port": 6638,
+        "timeout": 2.0
     }
 }
 ```
@@ -415,4 +428,3 @@ python -u src/main.py config-set --config Config.json --key engine_settings.prec
 # Enable a transporter
 python -u src/main.py transporter-toggle --config Config.json --name udp --enable
 ```
-

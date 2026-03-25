@@ -6,6 +6,7 @@ Commands registered here:
 import argparse
 
 from .base import add_config_arg
+from opensynaptic.CLI.completion import complete_config_path, complete_transporter
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -32,6 +33,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         '--key', required=True,
         help='Dot path, for example: engine_settings.precision',
     )
+    config_get._actions[-1].completer = complete_config_path
 
     # --- config-set ---
     config_set = sub.add_parser(
@@ -43,6 +45,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         '--key', required=True,
         help='Dot path, for example: engine_settings.precision',
     )
+    config_set._actions[-1].completer = complete_config_path
     config_set.add_argument(
         '--value', required=True,
         help='New value string (use --type for conversion)',
@@ -64,6 +67,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         '--name', required=True,
         help='Transporter name (lowercase), e.g. udp / tcp / lora',
     )
+    transporter_toggle._actions[-1].completer = complete_transporter
     tog_group = transporter_toggle.add_mutually_exclusive_group(required=True)
     tog_group.add_argument('--enable', action='store_true', default=False)
     tog_group.add_argument('--disable', action='store_true', default=False)

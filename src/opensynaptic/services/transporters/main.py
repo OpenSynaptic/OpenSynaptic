@@ -28,12 +28,12 @@ class _AppProxyDriver:
 class TransporterService:
     """
     Application-layer (L7) transporter service.
-    Manages only application-layer drivers (MQTT).
+    Manages only application-layer drivers (MQTT/Matter/Zigbee).
     
     Transport & Physical layer drivers are handled by LayeredProtocolManager
     in src/opensynaptic/core/transport_layer and physical_layer.
     """
-    APP_LAYER_DRIVERS = {'mqtt'}
+    APP_LAYER_DRIVERS = {'mqtt', 'matter', 'zigbee'}
 
     def __init__(self, master):
         self.master = master
@@ -47,7 +47,7 @@ class TransporterService:
         return app_cfg.get(key, {}) if isinstance(app_cfg.get(key, {}), dict) else {}
 
     def auto_load(self):
-        """Discover and load application-layer drivers (only MQTT)."""
+        """Discover and load application-layer drivers (MQTT/Matter/Zigbee)."""
         if 'RESOURCES' not in self.master.config:
             self.master.config['RESOURCES'] = {}
         resources = self.master.config['RESOURCES']

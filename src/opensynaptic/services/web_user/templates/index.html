@@ -1,0 +1,911 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <title>OpenSynaptic Router Admin</title>
+  <style>
+    :root {
+      --bg: #0e1422;
+      --panel: #141d2f;
+      --panel-2: #1a263d;
+      --text: #e7edf8;
+      --muted: #93a2bf;
+      --line: #2c3b58;
+      --accent: #38bdf8;
+      --accent-2: #22d3ee;
+      --ok: #34d399;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --radius: 12px;
+      --row-h: 42px;
+    }
+    body.light {
+      --bg: #f3f6fb;
+      --panel: #ffffff;
+      --panel-2: #f8fbff;
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #d6e0ee;
+      --accent: #0284c7;
+      --accent-2: #0891b2;
+    }
+    body.compact { --row-h: 34px; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top right, #192742, var(--bg));
+      min-height: 100vh;
+    }
+    body.light {
+      background: radial-gradient(circle at top right, #dbeafe, #eef4ff 46%, #f7f9fd 100%);
+    }
+    .topbar {
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(20, 29, 47, 0.9);
+      backdrop-filter: blur(6px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    body.light .topbar {
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+      backdrop-filter: blur(4px);
+    }
+    .brand { font-weight: 700; letter-spacing: .4px; }
+    .status-dot { width: 10px; height: 10px; border-radius: 99px; display: inline-block; margin-right: 8px; background: var(--warn); }
+    .ok { background: var(--ok); }
+    .wrap { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 56px); }
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: rgba(20, 29, 47, 0.7);
+      padding: 10px;
+    }
+    body.light .sidebar {
+      background: rgba(255, 255, 255, 0.72);
+    }
+    .nav-btn {
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      color: var(--text);
+      background: transparent;
+      height: var(--row-h);
+      border-radius: 10px;
+      padding: 0 12px;
+      margin-bottom: 6px;
+      cursor: pointer;
+    }
+    .nav-btn:hover { background: var(--panel-2); }
+    .nav-btn.active { border-color: var(--accent); background: rgba(56, 189, 248, .12); }
+    body.light .nav-btn:hover { background: #e9f2ff; }
+    body.light .nav-btn.active { background: #dbeafe; }
+    body.light .nav-btn {
+      color: #14532d;
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+    body.light .nav-btn:hover {
+      background: #dcfce7;
+    }
+    body.light .nav-btn.active {
+      background: #bbf7d0;
+      border-color: #22c55e;
+      color: #14532d;
+    }
+    .main { padding: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+    .card {
+      grid-column: span 12;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 16px;
+    }
+    body.light .card {
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+    }
+    .kpi { grid-column: span 3; min-width: 180px; }
+    .title { font-weight: 700; margin-bottom: 12px; }
+    .muted { color: var(--muted); }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+    input, select, textarea, button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
+      color: var(--text);
+      height: var(--row-h);
+      padding: 0 10px;
+    }
+    textarea { height: 100px; padding-top: 8px; }
+    textarea,
+    pre,
+    #pluginItemsView {
+      overflow: auto;
+    }
+    textarea {
+      height: 140px;
+      min-height: 140px;
+      max-height: 140px;
+      resize: vertical;
+      line-height: 1.35;
+      padding: 8px 10px;
+    }
+    #optionSchemaView textarea {
+      height: auto;
+      min-height: 140px;
+      max-height: none;
+      overflow: hidden;
+    }
+    button.primary { background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #fff; border: none; }
+    body.light button {
+      color: #14532d;
+      background: #f0fdf4;
+      border-color: #86efac;
+    }
+    body.light button:hover {
+      background: #dcfce7;
+    }
+    body.light button.primary {
+      background: linear-gradient(90deg, #16a34a, #22c55e);
+      border: 1px solid #16a34a;
+      color: #ffffff;
+    }
+    body.light button.primary:hover {
+      background: linear-gradient(90deg, #15803d, #16a34a);
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px; text-align: left; }
+    .section { display: none; }
+    .section.show { display: block; }
+    .opt-cat { border: 1px solid var(--line); border-radius: 10px; margin-top: 10px; overflow: hidden; }
+    .opt-head { background: rgba(56, 189, 248, .08); padding: 8px 10px; border-bottom: 1px solid var(--line); font-weight: 600; }
+    .opt-row { display: grid; grid-template-columns: 1fr 300px 108px; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); align-items: center; }
+    .opt-row:last-child { border-bottom: none; }
+    .opt-meta { font-size: 12px; color: var(--muted); }
+    .opt-key { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); }
+    .opt-input { width: 100%; }
+    .sub-editor { border: 1px dashed var(--line); border-radius: 10px; padding: 12px; background: rgba(56, 189, 248, .05); }
+    .sub-editor[hidden] { display: none; }
+    .sub-editor-list { display: grid; gap: 8px; margin-top: 8px; }
+    .sub-editor-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+    .sub-editor-json { width: 100%; min-height: 180px; height: 180px; max-height: 320px; }
+    .sub-editor-head { display: grid; gap: 4px; margin-bottom: 8px; }
+    .sub-editor-key { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); }
+    .conn-banner {
+      display: block;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      background: rgba(245, 158, 11, 0.15);
+      color: #fcd34d;
+    }
+    .conn-banner.ok {
+      background: rgba(52, 211, 153, 0.12);
+      color: #86efac;
+    }
+    .conn-banner.bad {
+      background: rgba(239, 68, 68, 0.16);
+      color: #fca5a5;
+    }
+    pre {
+      margin: 0;
+      border: 1px solid var(--line);
+      background: rgba(0, 0, 0, .15);
+      border-radius: 10px;
+      padding: 10px;
+      overflow: auto;
+      height: 180px;
+      min-height: 180px;
+      max-height: 180px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    /* Overview page should read like a full card, not a nested scroll box. */
+    #perfStatsView,
+    #httpStatsView,
+    #jobStatsView,
+    #selfCheckView {
+      height: auto;
+      min-height: 140px;
+      max-height: none;
+      overflow: visible;
+    }
+    #cmdOutputFull { height: 260px; min-height: 260px; max-height: 260px; }
+    #pluginItemsView {
+      max-height: 420px;
+      min-height: 220px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      background: rgba(0, 0, 0, .06);
+    }
+    #transportItemsView {
+      min-height: 220px;
+      max-height: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(0, 0, 0, .04);
+      overflow: visible;
+    }
+    #optionSchemaView {
+      min-height: 220px;
+      max-height: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(0, 0, 0, .04);
+      overflow: visible;
+    }
+    /* Avoid cards touching each other in stacked sections like UI Options. */
+    .section > .card + .card {
+      margin-top: 14px;
+    }
+    /* Keep result blocks away from controls/content above. */
+    #optionApplyResult,
+    #uiResult,
+    #configResult,
+    #pluginResult,
+    #transportResult,
+    #cmdResult,
+    #cmdOutputPreview,
+    #cmdOutputFull {
+      margin-top: 10px;
+    }
+    body.light pre,
+    body.light #optionSchemaView,
+    body.light #pluginItemsView,
+    body.light #transportItemsView {
+      background: #f8fbff;
+      border-color: #cbd5e1;
+    }
+    body.light input,
+    body.light select,
+    body.light textarea,
+    body.light button {
+      background: #ffffff;
+      border-color: #cbd5e1;
+    }
+    body.light input,
+    body.light select,
+    body.light textarea {
+      color: #0f172a;
+    }
+    body.light button {
+      color: #14532d;
+      background: #f0fdf4;
+      border-color: #86efac;
+    }
+    body.light button:hover {
+      background: #dcfce7;
+    }
+    body.light button.primary {
+      background: linear-gradient(90deg, #16a34a, #22c55e);
+      border: 1px solid #16a34a;
+      color: #ffffff;
+    }
+    body.light button.primary:hover {
+      background: linear-gradient(90deg, #15803d, #16a34a);
+    }
+    body.light .conn-banner {
+      background: #fff7ed;
+      color: #b45309;
+    }
+    body.light .conn-banner.ok {
+      background: #ecfdf5;
+      color: #166534;
+    }
+    body.light .conn-banner.bad {
+      background: #fef2f2;
+      color: #991b1b;
+    }
+    .http-stats-wrap { display: grid; gap: 8px; }
+    .http-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+    .os-badge {
+      font-size: 12px;
+      line-height: 1;
+      border-radius: 999px;
+      padding: 5px 8px;
+      border: 1px solid var(--line);
+    }
+    .os-badge-ok { background: rgba(52, 211, 153, .16); color: #86efac; }
+    .os-badge-mid { background: rgba(56, 189, 248, .16); color: #7dd3fc; }
+    .os-badge-bad { background: rgba(239, 68, 68, .16); color: #fca5a5; }
+    .os-badge-neutral { background: rgba(148, 163, 184, .14); color: #cbd5e1; }
+    .http-codes { font-size: 12px; }
+    .http-table { width: 100%; border-collapse: collapse; }
+    .http-table th, .http-table td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+    .http-table .right { text-align: right; }
+  </style>
+</head>
+<body class='dark'>
+  <div class='topbar'>
+    <div class='brand'>OpenSynaptic Router Admin</div>
+    <div class='row'>
+      <span><span id='runningDot' class='status-dot'></span><span id='runningLabel'>service</span></span>
+      <input id='token' placeholder='X-Admin-Token'>
+      <button id='refreshBtn' class='primary' onclick='reloadAll()'>Refresh</button>
+    </div>
+  </div>
+  <div id='connectionBanner' class='conn-banner'>Connecting to web service...</div>
+
+  <div class='wrap'>
+    <aside class='sidebar'>
+      <button class='nav-btn active' data-target='overview' onclick='switchSection("overview")'>Overview</button>
+      <button class='nav-btn' data-target='plugins' onclick='switchSection("plugins")'>Plugins</button>
+      <button class='nav-btn' data-target='transport' onclick='switchSection("transport")'>Transport</button>
+      <button class='nav-btn' data-target='config' onclick='switchSection("config")'>Config</button>
+      <button class='nav-btn' data-target='users' onclick='switchSection("users")'>Users</button>
+      <button class='nav-btn' data-target='console' onclick='switchSection("console")'>Command Console</button>
+      <button class='nav-btn' data-target='options' onclick='switchSection("options")'>UI Options</button>
+    </aside>
+
+    <main class='main'>
+      <section id='sec-overview' class='section show'>
+        <div class='grid'>
+          <div class='card kpi'><div class='muted'>Device</div><div id='kpiDevice'>-</div></div>
+          <div class='card kpi'><div class='muted'>Assigned ID</div><div id='kpiAid'>-</div></div>
+          <div class='card kpi'><div class='muted'>Core</div><div id='kpiCore'>-</div></div>
+          <div class='card kpi'><div class='muted'>Uptime</div><div id='kpiUp'>-</div></div>
+          <div class='card kpi'><div class='muted'>Run Status</div><div id='runStatus'>idle</div></div>
+          <div class='card kpi'><div class='muted'>Packets</div><div id='runPackets'>0</div></div>
+          <div class='card kpi'><div class='muted'>Avg Latency (ms)</div><div id='runLatency'>0.0</div></div>
+          <div class='card kpi'><div class='muted'>Tick Errors</div><div id='runErrors'>0</div></div>
+          <div class='card'><div class='title'>Performance Stats</div><pre id='perfStatsView'>loading...</pre></div>
+          <div class='card'><div class='title'>HTTP Stats (Current Minute)</div><pre id='httpStatsView'>loading...</pre></div>
+          <div class='card'><div class='title'>Recent CLI Jobs</div><pre id='jobStatsView'>loading...</pre></div>
+          <div class='card'>
+            <div class='title'>Frontend Self-check</div>
+            <div class='row'>
+              <button id='selfCheckBtn' onclick='runSelfCheck()'>Run Self-check</button>
+              <span class='muted' id='selfCheckHint'>Checks api health, overview, runtime script, and browser features.</span>
+            </div>
+            <pre id='selfCheckView'>not started</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id='sec-plugins' class='section'>
+        <div class='card'>
+          <div class='title'>Plugin Control</div>
+          <div class='row'>
+            <button id='pluginRunBtn' class='primary' onclick='loadPluginControl()'>Reload Plugin List</button>
+          </div>
+          <div id='pluginItemsView' class='muted'>loading plugins...</div>
+          <pre id='pluginResult' class='muted'></pre>
+        </div>
+      </section>
+
+      <section id='sec-transport' class='section'>
+        <div class='card'>
+          <div class='title'>Transport Control</div>
+          <div class='row'>
+            <button id='transportApplyBtn' class='primary' onclick='loadTransportControl()'>Reload Transport List</button>
+          </div>
+          <div id='transportItemsView' class='muted'>loading transporters...</div>
+          <pre id='transportResult' class='muted'></pre>
+        </div>
+      </section>
+
+      <section id='sec-config' class='section'>
+        <div class='card'>
+          <div class='title'>Config Editor</div>
+          <div class='row'>
+            <input id='cfgKey' placeholder='dotted key path'>
+            <select id='cfgType'>
+              <option value='json'>json</option>
+              <option value='str'>str</option>
+              <option value='int'>int</option>
+              <option value='float'>float</option>
+              <option value='bool'>bool</option>
+            </select>
+            <button id='configGetBtn' onclick='getConfig()'>Get</button>
+            <button id='configSetBtn' class='primary' onclick='setConfig()'>Set</button>
+          </div>
+          <textarea id='cfgValue' placeholder='value'></textarea>
+          <pre id='configResult' class='muted'></pre>
+        </div>
+      </section>
+
+      <section id='sec-users' class='section'>
+        <div class='card'>
+          <div class='title'>User Manager</div>
+          <div class='row'>
+            <input id='username' placeholder='username'>
+            <input id='role' placeholder='role (user/admin)' value='user'>
+            <button id='userAddBtn' class='primary' onclick='addUser()'>Add User</button>
+            <button id='userReloadBtn' onclick='reloadUsers()'>Reload</button>
+          </div>
+          <table>
+            <thead><tr><th>User</th><th>Role</th><th>Enabled</th><th>Actions</th></tr></thead>
+            <tbody id='users'></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id='sec-console' class='section'>
+        <div class='card'>
+          <div class='title'>Command Console</div>
+          <div class='row'>
+            <input id='cmdLine' placeholder='e.g. plugin-test --suite component' style='min-width:420px;'>
+            <button id='consoleRunBtn' class='primary' onclick='runCommandLine()'>Run</button>
+            <button id='consoleHelpBtn' onclick='loadCommandHelp()'>Help</button>
+            <button id='consoleToggleOutputBtn' onclick='toggleFullCmdOutput()'>Toggle Full Output</button>
+          </div>
+          <div class='row'>
+            <span class='muted'>Quick examples:</span>
+            <button class='cmd-example' data-cmd='status' onclick='setCmd("status")'>status</button>
+            <button class='cmd-example' data-cmd='plugin-test --suite component' onclick='setCmd("plugin-test --suite component")'>plugin-test component</button>
+            <button class='cmd-example' data-cmd='plugin-test --suite stress --workers 2 --total 20' onclick='setCmd("plugin-test --suite stress --workers 2 --total 20")'>plugin-test stress</button>
+            <button class='cmd-example' data-cmd='pipeline-info' onclick='setCmd("pipeline-info")'>pipeline-info</button>
+          </div>
+          <pre id='cmdResult' class='muted'></pre>
+          <pre id='cmdOutputPreview' class='muted'></pre>
+          <pre id='cmdOutputFull' class='muted' style='display:none; max-height:420px; overflow:auto;'></pre>
+        </div>
+      </section>
+
+      <section id='sec-options' class='section'>
+        <div class='card'>
+          <div class='title'>UI Options</div>
+          <div class='row'>
+            <select id='uiTheme'>
+              <option value='router-dark'>router-dark</option>
+              <option value='router-light'>router-light</option>
+            </select>
+            <select id='uiLayout'>
+              <option value='sidebar'>sidebar</option>
+            </select>
+            <input id='uiRefresh' type='number' min='1' value='3'>
+            <label><input id='uiCompact' type='checkbox' style='height:auto'> compact</label>
+            <button id='uiSaveBtn' class='primary' onclick='saveUiOptions()'>Save UI</button>
+          </div>
+          <pre id='uiResult' class='muted'></pre>
+        </div>
+        <div class='card'>
+          <div class='title'>Auto Option Studio</div>
+          <div class='row'>
+            <label><input id='onlyWritable' type='checkbox' checked style='height:auto'> writable only</label>
+            <button id='optionsReloadBtn' onclick='loadOptionSchema()'>Reload Options</button>
+            <button id='optionsApplyBtn' class='primary' onclick='applyDirtyOptions()'>Apply Changed</button>
+          </div>
+          <div id='optionSchemaView' class='muted'>loading option schema...</div>
+          <pre id='optionApplyResult' class='muted'></pre>
+          <div id='optionSubEditor' class='sub-editor' hidden>
+            <div class='sub-editor-head'>
+              <div class='title' id='optionSubEditorTitle'>Sub Option Editor</div>
+              <div class='sub-editor-key' id='optionSubEditorKey'>-</div>
+            </div>
+            <div class='row'>
+              <button id='optionSubAddItemBtn'>Add Item</button>
+              <button id='optionSubApplyBtn' class='primary'>Apply To Field</button>
+              <button id='optionSubCloseBtn'>Close</button>
+            </div>
+            <div id='optionSubEditorBody' class='sub-editor-list'></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src='/api/web_runtime.js?v=20260325-opsfix'></script>
+
+  <script>
+    (function () {
+      // If external runtime is blocked too, keep a visible hint for diagnosis.
+      setTimeout(function () {
+        if (!window.__OS_WEB_RUNTIME_LOADED) {
+          var el = document.getElementById('connectionBanner');
+          if (el) {
+            el.className = 'conn-banner bad';
+            el.textContent = 'Runtime script failed to load. Try Ctrl+F5, disable cache, or check browser script policy.';
+          }
+        }
+      }, 1500);
+    })();
+  </script>
+
+  <script>
+    // ES5 fallback runtime: keeps dashboard and command console alive even when modern JS parsing fails.
+    (function () {
+      if (window.__OS_WEB_RUNTIME_LOADED) { return; }
+      window.__OS_WEB_RUNTIME_LOADED = true;
+      function byId(id) { return document.getElementById(id); }
+      function safeText(id, v) { var el = byId(id); if (el) { el.textContent = String(v); } }
+      function tokenHeader() {
+        var el = byId('token');
+        var token = el ? String(el.value || '').trim() : '';
+        return token ? {'X-Admin-Token': token} : {};
+      }
+      function setBanner(state, msg) {
+        var el = byId('connectionBanner');
+        if (!el) { return; }
+        el.className = 'conn-banner' + (state === 'ok' ? ' ok' : (state === 'bad' ? ' bad' : ''));
+        el.textContent = msg;
+      }
+      function requestJson(method, path, body, cb) {
+        var xhr = new XMLHttpRequest();
+        xhr.open(method, path, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        var hdr = tokenHeader();
+        if (hdr['X-Admin-Token']) { xhr.setRequestHeader('X-Admin-Token', hdr['X-Admin-Token']); }
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState !== 4) { return; }
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              var data = JSON.parse(xhr.responseText || '{}');
+              setBanner('ok', 'Connected to web service.');
+              cb(null, data);
+            } catch (e) {
+              setBanner('bad', 'Disconnected: invalid JSON response');
+              cb(e || new Error('invalid json'));
+            }
+            return;
+          }
+          setBanner('bad', 'Disconnected from web service: HTTP ' + String(xhr.status));
+          cb(new Error('http ' + String(xhr.status)));
+        };
+        try {
+          xhr.send(body ? JSON.stringify(body) : null);
+        } catch (e) {
+          setBanner('bad', 'Disconnected from web service: network error');
+          cb(e || new Error('network error'));
+        }
+      }
+      function renderHttpStatsFallback(stats) {
+        var s = stats || {};
+        var total = Number(s.total || 0);
+        var bands = s.status_bands || {};
+        var top = s.top_paths || [];
+        var host = byId('httpStatsView');
+        if (!host) { return; }
+        function esc(v) {
+          return String(v == null ? '' : v)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        }
+        var chips = '';
+        var keys = ['2xx', '3xx', '4xx', '5xx', 'unknown'];
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          if (bands[k] == null) { continue; }
+          var cls = 'os-badge os-badge-neutral';
+          if (k === '2xx') { cls = 'os-badge os-badge-ok'; }
+          if (k === '3xx') { cls = 'os-badge os-badge-mid'; }
+          if (k === '4xx' || k === '5xx') { cls = 'os-badge os-badge-bad'; }
+          chips += '<span class="' + cls + '">' + esc(k) + ': ' + esc(bands[k]) + '</span>';
+        }
+        if (!chips) { chips = '<span class="muted">No status yet</span>'; }
+
+        var rows = '';
+        if (top && top.length) {
+          for (var j = 0; j < top.length; j++) {
+            var r = top[j] || [];
+            rows += '<tr><td><code>' + esc(r[0]) + '</code></td><td class="right">' + esc(r[1]) + '</td></tr>';
+          }
+        } else {
+          rows = '<tr><td colspan="2" class="muted">No requests in current minute window.</td></tr>';
+        }
+        host.innerHTML = '' +
+          '<div class="http-stats-wrap">' +
+          '<div class="row"><span class="muted">Total:</span><strong>' + esc(total) + '</strong></div>' +
+          '<div class="http-badges">' + chips + '</div>' +
+          '<table class="http-table"><thead><tr><th>Path</th><th class="right">Count</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+          '</div>';
+      }
+      window.switchSection = window.switchSection || function (name) {
+        var sections = document.querySelectorAll('.section');
+        for (var i = 0; i < sections.length; i++) { sections[i].classList.remove('show'); }
+        var target = byId('sec-' + name);
+        if (target) { target.classList.add('show'); }
+      };
+      window.setCmd = window.setCmd || function (text) {
+        var el = byId('cmdLine');
+        if (el) { el.value = text; }
+      };
+      window.reloadUsers = window.reloadUsers || function () {
+        requestJson('GET', '/users', null, function (_err, data) {
+          if (_err || !data) { return; }
+          var rows = data.users || [];
+          var html = '';
+          for (var i = 0; i < rows.length; i++) {
+            var u = rows[i] || {};
+            var uname = String(u.username || '');
+            var role = String(u.role || 'user');
+            var checked = u.enabled ? 'checked' : '';
+            html += '<tr>' +
+              '<td>' + uname + '</td>' +
+              '<td><input id="role-' + uname + '" value="' + role + '"></td>' +
+              '<td><input id="on-' + uname + '" type="checkbox" ' + checked + '></td>' +
+              '<td><button data-user-action="update" data-username="' + uname + '">Update</button> <button data-user-action="delete" data-username="' + uname + '">Delete</button></td>' +
+              '</tr>';
+          }
+          var tb = byId('users');
+          if (tb) { tb.innerHTML = html; }
+        });
+      };
+      window.reloadAll = window.reloadAll || function () {
+        requestJson('GET', '/api/overview', null, function (err, payload) {
+          if (err || !payload) {
+            safeText('perfStatsView', 'Failed to load overview.');
+            safeText('httpStatsView', 'Failed to load HTTP stats.');
+            return;
+          }
+          var d = payload.overview || {};
+          var idn = d.identity || {};
+          var svc = d.service || {};
+          var m = d.overview_metrics || {};
+          var run = m.run_stats || {};
+          var perf = m.performance_stats || {};
+          var httpStats = m.http_stats || {};
+          var jobs = m.jobs || {};
+          safeText('runningLabel', svc.running ? 'service running' : 'service stopped');
+          safeText('kpiDevice', idn.device_id || '-');
+          safeText('kpiAid', idn.assigned_id == null ? '-' : idn.assigned_id);
+          safeText('kpiCore', idn.core_backend || '-');
+          safeText('kpiUp', String(svc.uptime_s || 0) + ' s');
+          safeText('runStatus', run.status || 'idle');
+          safeText('runPackets', run.packets_processed || 0);
+          safeText('runLatency', run.avg_packet_latency_ms || 0.0);
+          safeText('runErrors', run.tick_errors || 0);
+          safeText('perfStatsView', JSON.stringify(perf, null, 2));
+          renderHttpStatsFallback(httpStats);
+          safeText('jobStatsView', JSON.stringify({total: jobs.total || 0, recent: jobs.recent || []}, null, 2));
+          window.reloadUsers();
+        });
+      };
+      window.runCommandLine = window.runCommandLine || function () {
+        var el = byId('cmdLine');
+        var line = el ? String(el.value || '').trim() : '';
+        if (!line) { return; }
+        requestJson('POST', '/api/oscli/execute', {command: line, background: true}, function (err, data) {
+          safeText('cmdResult', JSON.stringify(data || {ok: false, error: String(err || 'request failed')}, null, 2));
+        });
+      };
+      window.addUser = window.addUser || function () {
+        var u = byId('username');
+        var r = byId('role');
+        var username = u ? String(u.value || '').trim() : '';
+        var role = r ? String(r.value || '').trim() : 'user';
+        if (!username) { return; }
+        requestJson('POST', '/users', {username: username, role: role || 'user', enabled: true}, function () {
+          if (u) { u.value = ''; }
+          if (window.reloadUsers) { window.reloadUsers(); }
+        });
+      };
+      window.updateUser = window.updateUser || function (username) {
+        var roleEl = byId('role-' + username);
+        var onEl = byId('on-' + username);
+        requestJson('PUT', '/users/' + encodeURIComponent(username), {
+          role: roleEl ? roleEl.value : null,
+          enabled: onEl ? !!onEl.checked : null,
+        }, function () {
+          if (window.reloadUsers) { window.reloadUsers(); }
+        });
+      };
+      window.delUser = window.delUser || function (username) {
+        requestJson('DELETE', '/users/' + encodeURIComponent(username), null, function () {
+          if (window.reloadUsers) { window.reloadUsers(); }
+        });
+      };
+      window.loadCommandHelp = window.loadCommandHelp || function () {
+        requestJson('POST', '/api/oscli/execute', {command: 'help --full', background: false}, function (err, data) {
+          safeText('cmdResult', JSON.stringify(data || {ok: false, error: String(err || 'request failed')}, null, 2));
+        });
+      };
+      window.loadPluginControl = window.loadPluginControl || function () {
+        requestJson('GET', '/api/plugins', null, function (err, payload) {
+          if (err || !payload) {
+            safeText('pluginItemsView', 'Failed to load plugins: ' + String(err || 'request failed'));
+            return;
+          }
+          var items = payload.items || [];
+          if (!items.length) {
+            safeText('pluginItemsView', 'No plugin entries found.');
+            return;
+          }
+          var html = '<div class="opt-cat"><div class="opt-head">Service Plugins (' + items.length + ')</div>';
+          for (var i = 0; i < items.length; i++) {
+            var it = items[i] || {};
+            var t = it.enabled ? 'selected' : '';
+            var f = it.enabled ? '' : 'selected';
+            html += '<div class="opt-row"><div><div><strong>' + String(it.name || '') + '</strong></div><div class="opt-meta">mode=' + String(it.mode || 'manual') + '</div></div>' +
+              '<div><select data-plugin-name="' + String(it.name || '') + '"><option value="true" ' + t + '>true</option><option value="false" ' + f + '>false</option></select></div>' +
+              '<div><button data-plugin-apply="' + String(it.name || '') + '">Apply</button></div></div>';
+          }
+          html += '</div>';
+          var view = byId('pluginItemsView');
+          if (view) { view.innerHTML = html; }
+          safeText('pluginResult', JSON.stringify(payload, null, 2));
+        });
+      };
+      window.setPluginEnabled = window.setPluginEnabled || function (name, enabled) {
+        requestJson('POST', '/api/plugins', {plugin: name, action: 'set_enabled', enabled: !!enabled}, function (_err, payload) {
+          safeText('pluginResult', JSON.stringify(payload || {ok: false}, null, 2));
+          if (window.loadPluginControl) { window.loadPluginControl(); }
+          if (window.reloadAll) { window.reloadAll(); }
+        });
+      };
+      window.loadTransportControl = window.loadTransportControl || function () {
+        requestJson('GET', '/api/transport', null, function (err, payload) {
+          if (err || !payload) {
+            safeText('transportItemsView', 'Failed to load transport list: ' + String(err || 'request failed'));
+            return;
+          }
+          var items = payload.items || [];
+          if (!items.length) {
+            safeText('transportItemsView', 'No transport entries found.');
+            return;
+          }
+          var html = '<div class="opt-cat"><div class="opt-head">Transport/Physical/Application (' + items.length + ')</div>';
+          for (var i = 0; i < items.length; i++) {
+            var it = items[i] || {};
+            var t = it.enabled ? 'selected' : '';
+            var f = it.enabled ? '' : 'selected';
+            html += '<div class="opt-row"><div><div><strong>' + String(it.name || '') + '</strong></div><div class="opt-meta">layer=' + String(it.layer || '') + '</div></div>' +
+              '<div><select data-medium-name="' + String(it.name || '') + '"><option value="true" ' + t + '>true</option><option value="false" ' + f + '>false</option></select></div>' +
+              '<div><button data-medium-apply="' + String(it.name || '') + '">Apply</button></div></div>';
+          }
+          html += '</div>';
+          var view = byId('transportItemsView');
+          if (view) { view.innerHTML = html; }
+          safeText('transportResult', JSON.stringify(payload, null, 2));
+        });
+      };
+      window.setTransportEnabled = window.setTransportEnabled || function (name, enabled) {
+        requestJson('POST', '/api/transport', {medium: name, enabled: !!enabled}, function (_err, payload) {
+          safeText('transportResult', JSON.stringify(payload || {ok: false}, null, 2));
+          if (window.loadTransportControl) { window.loadTransportControl(); }
+          if (window.reloadAll) { window.reloadAll(); }
+        });
+      };
+          window.loadOptionSchema = window.loadOptionSchema || function () {
+        var only = byId('onlyWritable');
+        var q = (only && !!only.checked) ? '1' : '0';
+        requestJson('GET', '/api/options/schema?only_writable=' + q, null, function (err, payload) {
+          if (err || !payload) {
+            safeText('optionSchemaView', 'Failed to load option schema: ' + String(err || 'request failed'));
+            return;
+          }
+              renderOptionSchemaFallback(payload);
+        });
+      };
+          window.applyDirtyOptions = window.applyDirtyOptions || function () {
+            var updates = [];
+            for (var k in __optionDraft) {
+              if (!Object.prototype.hasOwnProperty.call(__optionDraft, k)) { continue; }
+              var it = __optionDraft[k];
+              try {
+                updates.push({key: it.key, value_type: it.value_type, value: parseOptionValue(it.raw_value, it.value_type)});
+              } catch (e) {
+                safeText('optionApplyResult', JSON.stringify({ok: false, key: it.key, error: String(e)}, null, 2));
+                return;
+              }
+            }
+            if (!updates.length) {
+              safeText('optionApplyResult', JSON.stringify({ok: true, changed: [], info: 'no dirty fields'}, null, 2));
+              return;
+            }
+            requestJson('PUT', '/api/options', {updates: updates}, function (err, p) {
+              safeText('optionApplyResult', JSON.stringify(p || {ok: false, error: String(err || 'request failed')}, null, 2));
+              __optionDraft = {};
+              if (window.loadOptionSchema) { window.loadOptionSchema(); }
+            });
+      };
+      function bindUiHandlers() {
+        var nav = document.querySelectorAll('.nav-btn[data-target]');
+        for (var i = 0; i < nav.length; i++) {
+          nav[i].addEventListener('click', function (evt) {
+            var target = evt.currentTarget ? evt.currentTarget.getAttribute('data-target') : null;
+            if (target && window.switchSection) { window.switchSection(target); }
+          });
+        }
+        var examples = document.querySelectorAll('.cmd-example[data-cmd]');
+        for (var j = 0; j < examples.length; j++) {
+          examples[j].addEventListener('click', function (evt) {
+            var cmd = evt.currentTarget ? evt.currentTarget.getAttribute('data-cmd') : '';
+            if (cmd && window.setCmd) { window.setCmd(cmd); }
+          });
+        }
+        function wire(id, fn) {
+          var el = byId(id);
+          if (el) { el.addEventListener('click', fn); }
+        }
+        wire('refreshBtn', function () { if (window.reloadAll) { window.reloadAll(); } });
+        wire('selfCheckBtn', function () { if (window.runSelfCheck) { window.runSelfCheck(); } });
+        wire('pluginRunBtn', function () { if (window.loadPluginControl) { window.loadPluginControl(); } });
+        wire('transportApplyBtn', function () { if (window.loadTransportControl) { window.loadTransportControl(); } });
+        wire('configGetBtn', function () { if (window.getConfig) { window.getConfig(); } });
+        wire('configSetBtn', function () { if (window.setConfig) { window.setConfig(); } });
+        wire('userAddBtn', function () { if (window.addUser) { window.addUser(); } });
+        wire('userReloadBtn', function () { if (window.reloadUsers) { window.reloadUsers(); } });
+        wire('consoleRunBtn', function () { if (window.runCommandLine) { window.runCommandLine(); } });
+        wire('consoleHelpBtn', function () { if (window.loadCommandHelp) { window.loadCommandHelp(); } });
+        wire('consoleToggleOutputBtn', function () { if (window.toggleFullCmdOutput) { window.toggleFullCmdOutput(); } });
+        wire('uiSaveBtn', function () { if (window.saveUiOptions) { window.saveUiOptions(); } });
+        wire('optionsReloadBtn', function () { if (window.loadOptionSchema) { window.loadOptionSchema(); } });
+        wire('optionsApplyBtn', function () { if (window.applyDirtyOptions) { window.applyDirtyOptions(); } });
+        var usersTable = byId('users');
+        if (usersTable) {
+          usersTable.addEventListener('click', function (evt) {
+            var t = evt.target || evt.srcElement;
+            if (!t || !t.getAttribute) { return; }
+            var action = t.getAttribute('data-user-action');
+            var username = t.getAttribute('data-username');
+            if (!action || !username) { return; }
+            if (action === 'update' && window.updateUser) { window.updateUser(username); }
+            if (action === 'delete' && window.delUser) { window.delUser(username); }
+          });
+        }
+        var pview = byId('pluginItemsView');
+        if (pview) {
+          pview.addEventListener('click', function (evt) {
+            var t = evt.target || evt.srcElement;
+            if (!t || !t.getAttribute) { return; }
+            var name = t.getAttribute('data-plugin-apply');
+            if (!name) { return; }
+            var sel = pview.querySelector('select[data-plugin-name="' + name + '"]');
+            var enabled = sel ? String(sel.value) === 'true' : true;
+            if (window.setPluginEnabled) { window.setPluginEnabled(name, enabled); }
+          });
+        }
+        var tview = byId('transportItemsView');
+        if (tview) {
+          tview.addEventListener('click', function (evt) {
+            var t = evt.target || evt.srcElement;
+            if (!t || !t.getAttribute) { return; }
+            var name = t.getAttribute('data-medium-apply');
+            if (!name) { return; }
+            var sel = tview.querySelector('select[data-medium-name="' + name + '"]');
+            var enabled = sel ? String(sel.value) === 'true' : true;
+            if (window.setTransportEnabled) { window.setTransportEnabled(name, enabled); }
+          });
+        }
+      }
+      window.runSelfCheck = window.runSelfCheck || function () {
+        var report = {
+          ts: Math.floor(Date.now() / 1000),
+          mode: 'fallback',
+          location: window.location.href,
+          runtime_loaded: !!window.__OS_WEB_RUNTIME_LOADED,
+          checks: {},
+        };
+        function put(name, ok, status, sample) {
+          report.checks[name] = {ok: !!ok, status: status, sample: String(sample || '')};
+          safeText('selfCheckView', JSON.stringify(report, null, 2));
+        }
+        requestJson('GET', '/api/health', null, function (e1, d1) {
+          put('health', !e1, e1 ? 'error' : 200, e1 ? String(e1) : JSON.stringify(d1 || {}).slice(0, 120));
+        });
+        requestJson('GET', '/api/overview', null, function (e2, d2) {
+          put('overview', !e2, e2 ? 'error' : 200, e2 ? String(e2) : JSON.stringify(d2 || {}).slice(0, 120));
+        });
+        requestJson('GET', '/api/web_runtime.js', null, function (e3, d3) {
+          put('runtime_js', !e3, e3 ? 'error' : 200, e3 ? String(e3) : JSON.stringify(d3 || {}).slice(0, 120));
+        });
+      };
+      setBanner('warn', 'Connecting to web service...');
+      setTimeout(bindUiHandlers, 120);
+      setTimeout(window.reloadAll, 80);
+      setTimeout(function () { if (window.loadPluginControl) { window.loadPluginControl(); } }, 100);
+      setTimeout(function () { if (window.loadTransportControl) { window.loadTransportControl(); } }, 130);
+      setTimeout(function () { if (window.loadOptionSchema) { window.loadOptionSchema(); } }, 160);
+      setInterval(window.reloadAll, 3000);
+      setTimeout(function () { if (window.runSelfCheck) { window.runSelfCheck(); } }, 350);
+    })();
+  </script>
+
+  <!-- External runtime.js is the primary UI implementation. The ES5 fallback block above runs only if runtime.js fails to load. -->
+</body>
+</html>

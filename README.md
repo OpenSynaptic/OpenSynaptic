@@ -2,6 +2,33 @@
 
 **2-N-2 high-performance IoT protocol stack** — standardises sensor readings into UCUM units, compresses them via Base62 encoding, wraps them in a binary packet, and dispatches over pluggable transporters (TCP / UDP / UART / LoRa / MQTT / CAN).
 
+## Try In 30 Seconds
+
+```powershell
+pip install -e .
+os-node demo --open-browser
+```
+
+- Default user config path: `~/.config/opensynaptic/Config.json`
+- First run launches onboarding wizard (`--yes` / `--no-wizard` supported)
+
+### CLI Completion (Tab)
+
+```powershell
+py -3 -m pip install argcomplete
+powershell -ExecutionPolicy Bypass -File .\scripts\enable_argcomplete.ps1
+```
+
+Manual (without script):
+
+```powershell
+Invoke-Expression (register-python-argcomplete os-node --shell powershell)
+```
+
+Restart PowerShell after activation.
+
+![OpenSynaptic Demo Quickstart](https://raw.githubusercontent.com/OpenSynaptic/OpenSynaptic/main/docs/assets/demo_quickstart.svg)
+
 ---
 
 ## Table of Contents
@@ -196,6 +223,21 @@ python -u src/main.py plugin-test --suite all
 python scripts/concurrency_smoke.py 200 8 6
 ```
 
+## Packaging And Release
+
+```powershell
+# Build and validate Python distributions
+py -3 -m pip install -e .[dev]
+py -3 -m build
+py -3 -m twine check dist/*
+
+# Build Rust acceleration wheel (maturin)
+py -3 -m maturin build --manifest-path src/opensynaptic/core/rscore/rust/Cargo.toml --release
+```
+
+GitHub Actions workflows are defined in `.github/workflows/ci.yml` and `.github/workflows/release.yml`.
+Configure repository secrets `TEST_PYPI_API_TOKEN` and `PYPI_API_TOKEN` before tag-based publishing.
+
 ---
 
 ## v0.2.0 Performance Focus
@@ -300,4 +342,3 @@ Built-in plugin settings are stored in `Config.json` at:
 `RESOURCES.service_plugins.<plugin_name>`
 
 These entries are auto-created with defaults if missing; plugins remain manual-start and do not auto-run at process startup.
-

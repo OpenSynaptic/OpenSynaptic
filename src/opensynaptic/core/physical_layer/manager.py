@@ -1,7 +1,7 @@
 from opensynaptic.core.layered_protocol_manager import LayeredProtocolManager
 
 class PhysicalLayerManager:
-    _CANDIDATES = ('uart', 'rs485', 'can', 'lora')
+    _CANDIDATES = ('uart', 'rs485', 'can', 'lora', 'bluetooth')
 
     def __init__(self):
         self._impl = LayeredProtocolManager(layer_tag='PHY', module_prefix='opensynaptic.core.physical_layer.protocols', candidates=self._CANDIDATES, status_key='physical_status', config_key='physical_config')
