@@ -153,7 +153,7 @@ jobs:
           skip-existing: true
 
   publish-pypi:
-    needs: [publish-testpypi]
+    needs: [collect-dist, get-version]
     runs-on: ubuntu-latest
     environment: pypi
     steps:
