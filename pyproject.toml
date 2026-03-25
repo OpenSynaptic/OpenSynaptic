@@ -8,7 +8,7 @@ version = "1.0.0rc2"
 description = "2-N-2 high-performance protocol stack"
 authors = [{name = "OpenSynaptic Contributors"}]
 readme = { file = "README.md", content-type = "text/markdown" }
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 keywords = ["iot", "protocol", "ucum", "telemetry", "sensor"]
 classifiers = [
