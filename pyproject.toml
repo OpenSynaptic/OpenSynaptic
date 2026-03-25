@@ -78,3 +78,6 @@ skip_covered = true
 manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
 features = ["python-module"]
 sdist-include = ["LICENSE", "README.md"]
+license = "Apache-2.0"
+
+
