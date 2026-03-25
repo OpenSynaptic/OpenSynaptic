@@ -65,6 +65,7 @@ jobs:
           OPENSYNAPTIC_REQUIRE_RSCORE: "1"
 
       - name: Show built distributions
+        shell: bash
         run: |
           ls -lah dist
           python -c "import hashlib; from pathlib import Path; [print(f'{p.name}\tsha256={hashlib.sha256(p.read_bytes()).hexdigest()}') for p in Path('dist').glob('*') if p.is_file()]"
