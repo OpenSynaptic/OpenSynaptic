@@ -137,6 +137,7 @@ jobs:
     needs: [collect-dist, get-version]
     runs-on: ubuntu-latest
     environment: testpypi
+    continue-on-error: true
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
