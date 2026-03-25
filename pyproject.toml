@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "Cython>=3.0"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.6,<2.0", "Cython>=3.0"]
+build-backend = "maturin"
 
 [project]
 name = "opensynaptic"
