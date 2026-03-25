@@ -3,7 +3,7 @@ name = "opensynaptic_rscore"
 version = "0.1.0"
 edition = "2021"
 description = "RSCore native primitives for OpenSynaptic (Base62 codec + CMD helpers)"
-license = "MIT"
+license = "Apache-2.0"
 
 [package.metadata.maturin]
 bindings = "pyo3"
