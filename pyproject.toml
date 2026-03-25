@@ -32,7 +32,7 @@ dependencies = [
 sql-mysql = ["mysql-connector-python>=9.0.0"]
 sql-postgresql = ["psycopg[binary]>=3.2.0"]
 transport-quic = ["aioquic>=1.2.0"]
-rscore = ["opensynaptic-rscore>=0.1.0"]
+rscore = ["maturin>=1.6.0"]
 dev = [
     "build>=1.2.2",
     "twine>=5.1.1",
@@ -52,6 +52,7 @@ include-package-data = true
 "opensynaptic.utils" = ["*.c", "bin/*.dll", "bin/*.so", "bin/*.dylib"]
 "opensynaptic.utils.base62" = ["*.c"]
 "opensynaptic.utils.security" = ["*.c"]
+"opensynaptic.utils.c" = ["bin/*.dll", "bin/*.so", "bin/*.dylib"]
 "opensynaptic.services.web_user" = ["templates/*.html", "templates/*.js"]
 
 [project.scripts]
@@ -75,5 +76,5 @@ skip_covered = true
 
 [tool.maturin]
 python-source = "src"
-manifest-path = "src/opensynaptic/rscore/Cargo.toml"
-features = ["pyo3/extension-module"]
+manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
+features = ["python-module"]
