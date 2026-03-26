@@ -42,6 +42,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify checkout and maturin config
+        shell: bash
+        run: |
+          git rev-parse HEAD
+          git --no-pager log -1 --oneline
+          echo "=== root pyproject (head) ==="
+          sed -n '1,140p' pyproject.toml
+          echo "=== rust pyproject (head) ==="
+          sed -n '1,140p' src/opensynaptic/core/rscore/rust/pyproject.toml
+          if grep -RIn "python-source" pyproject.toml src/opensynaptic/core/rscore/rust/pyproject.toml; then
+            echo "Unexpected python-source found in active commit"
+            exit 1
+          fi
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -55,6 +69,7 @@ jobs:
 
       - name: Build wheels
         run: cibuildwheel --output-dir dist
+        working-directory: src/opensynaptic/core/rscore/rust
         env:
           CIBW_BUILD: "cp311-* cp312-* cp313-*"
           CIBW_ARCHS: auto64
@@ -67,7 +82,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
-          path: dist/*.whl
+          path: src/opensynaptic/core/rscore/rust/dist/*.whl
 
   build-sdist:
     name: build-sdist
@@ -87,7 +102,7 @@ jobs:
       - name: Copy README to Rust project
         run: cp README.md src/opensynaptic/core/rscore/rust/ || echo "README.md not found, skipping"
       - name: Build sdist
-        run: maturin build --sdist --out ${{ github.workspace }}/dist
+        run: maturin sdist --out ${{ github.workspace }}/dist
         working-directory: src/opensynaptic/core/rscore/rust
       - name: Verify sdist exists
         run: |
