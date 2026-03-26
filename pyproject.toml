@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "opensynaptic"
-version = "1.0.0rc7"
+version = "1.0.0rc6"
 description = "2-N-2 high-performance protocol stack"
 authors = [{name = "OpenSynaptic Contributors"}]
 readme = "README.md"
