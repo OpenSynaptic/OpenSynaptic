@@ -78,7 +78,10 @@ skip_covered = true
 [tool.maturin]
 manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
 features = ["python-module"]
-sdist-include = ["LICENSE", "README.md"]
+sdist-include = [
+    "LICENSE", 
+    "README.md",
+    "src/opensynaptic/", 
+]
 license = "Apache-2.0"
-
 
