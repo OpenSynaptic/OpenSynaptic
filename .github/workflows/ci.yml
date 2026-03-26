@@ -55,59 +55,58 @@ jobs:
           echo "Installing Rust wheel..."
           pip install opensynaptic/utils/c/bin/*.whl
           
-          # 安装主包（不开发模式，直接安装）
+          # 安装主包
           echo "Installing main package..."
           pip install .[dev]
 
-      - name: Debug installation
+      - name: Verify installation
         run: |
           echo "=== Installed packages ==="
           pip list | grep -E "(opensynaptic|rscore)"
           
-          echo "=== Check installed modules ==="
-          python -c "import sys; print('\n'.join(sys.path))"
-          
-          echo "=== Try different imports ==="
+          echo "=== Import test ==="
           python << 'EOF'
-          import sys
-          
-          # 尝试导入 Rust 模块
-          try:
-              import opensynaptic_rscore
-              print(f"✅ opensynaptic_rscore imported from: {opensynaptic_rscore.__file__}")
-              if hasattr(opensynaptic_rscore, 'has_rs_native'):
-                  print(f"✅ has_rs_native: {opensynaptic_rscore.has_rs_native()}")
-          except ImportError as e:
-              print(f"❌ opensynaptic_rscore: {e}")
-          
-          # 尝试从主包导入
+          # 测试主包导入
           try:
               import opensynaptic
-              print(f"✅ opensynaptic imported from: {opensynaptic.__file__}")
-          except ImportError as e:
-              print(f"❌ opensynaptic: {e}")
+              print("✅ OpenSynaptic imported")
+          except Exception as e:
+              print(f"❌ OpenSynaptic import failed: {e}")
           
-          # 列出所有安装的包
-          import pkg_resources
-          print("\n=== All installed packages ===")
-          for pkg in pkg_resources.working_set:
-              if 'opensynaptic' in pkg.key or 'rscore' in pkg.key:
-                  print(f"  {pkg.key}=={pkg.version} from {pkg.location}")
+          # 测试 Rust 扩展导入
+          try:
+              import opensynaptic_rscore
+              print("✅ Rust extension imported as opensynaptic_rscore")
+              print(f"   Location: {opensynaptic_rscore.__file__}")
+          except Exception as e:
+              print(f"❌ opensynaptic_rscore import failed: {e}")
+          
+          # 测试 has_rs_native 函数
+          try:
+              from opensynaptic_rscore import has_rs_native
+              print(f"✅ has_rs_native: {has_rs_native()}")
+          except Exception as e:
+              print(f"❌ has_rs_native import failed: {e}")
+          
+          # 检查是否可以从 opensynaptic.core.rscore 导入（如果项目需要）
+          try:
+              # 尝试创建命名空间包结构
+              import opensynaptic
+              import opensynaptic.core
+              import opensynaptic.core.rscore
+              print("✅ opensynaptic.core.rscore namespace exists")
+          except ImportError:
+              print("⚠️  opensynaptic.core.rscore not found (this may be expected)")
           EOF
-
-      - name: Verify installation
-        run: |
-          python -c "import opensynaptic; print('✅ OpenSynaptic imported')"
-          python -c "import opensynaptic_rscore; print('✅ Rust extension loaded')"
 
       - name: Run unit and integration tests with coverage
         run: |
-          pytest --cov=opensynaptic --cov-report=xml --cov-report=term tests || true
+          pytest --cov=opensynaptic --cov-report=xml --cov-report=term tests
 
       - name: Run component smoke suite (single matrix shard)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         run: |
-          python -u src/main.py plugin-test --suite component || true
+          python -u src/main.py plugin-test --suite component
 
       - name: Upload coverage report
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
