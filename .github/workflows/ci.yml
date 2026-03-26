@@ -37,11 +37,28 @@ jobs:
 
       - name: Build Rust extension
         run: |
+          # 创建输出目录（如果不存在）
+          mkdir -p src/opensynaptic/utils/c/bin
+          
+          # 进入 Rust 项目目录
           cd src/opensynaptic/core/rscore/rust
+          
+          # 构建 wheel 包
           maturin build --release --out ../../../../opensynaptic/utils/c/bin
+          
+          # 返回项目根目录
           cd ../../../..
+          
+          # 显示构建结果
           echo "=== Rust extension files ==="
-          ls -la src/opensynaptic/utils/c/bin/
+          if [ -d "src/opensynaptic/utils/c/bin" ]; then
+            ls -la src/opensynaptic/utils/c/bin/
+            echo "✅ Rust wheel built successfully"
+          else
+            echo "❌ Error: Directory src/opensynaptic/utils/c/bin does not exist"
+            exit 1
+          fi
+        shell: bash
 
       - name: Install package and test dependencies
         run: |
