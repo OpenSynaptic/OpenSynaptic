@@ -43,10 +43,10 @@ jobs:
           # 进入 Rust 项目目录
           cd src/opensynaptic/core/rscore/rust
           
-          # 确保输出目录存在（使用相对于项目根目录的路径）
+          # 确保输出目录存在
           mkdir -p "$PROJECT_ROOT/opensynaptic/utils/c/bin"
           
-          # 构建 wheel 包（输出到项目根目录下的 opensynaptic/utils/c/bin）
+          # 构建 wheel 包
           maturin build --release --out "$PROJECT_ROOT/opensynaptic/utils/c/bin"
           
           # 返回项目根目录
@@ -59,9 +59,6 @@ jobs:
             echo "✅ Rust wheel built successfully"
           else
             echo "❌ Error: Directory opensynaptic/utils/c/bin does not exist"
-            echo "Current directory: $(pwd)"
-            echo "Searching for wheel files:"
-            find . -name "*rscore*.whl" -type f 2>/dev/null | head -10
             exit 1
           fi
         shell: bash
@@ -69,15 +66,22 @@ jobs:
       - name: Install package and test dependencies
         run: |
           python -m pip install -U pip
-          python -m pip install .[dev]
+          # 先安装 Rust 扩展的 wheel
+          if [ -d "opensynaptic/utils/c/bin" ]; then
+            echo "Installing Rust wheel..."
+            pip install opensynaptic/utils/c/bin/*.whl
+          fi
+          # 再安装主包（开发模式）
+          python -m pip install -e .[dev]
 
       - name: Verify installation
         run: |
           echo "=== Installed packages ==="
-          pip list | grep opensynaptic
+          pip list | grep -E "(opensynaptic|rscore)"
           echo "=== Import test ==="
           python -c "import opensynaptic; print('✅ OpenSynaptic imported')"
-          python -c "from opensynaptic.core.rscore.codec import has_rs_native; print('✅ Rust loaded:', has_rs_native())"
+          python -c "from opensynaptic.core.rscore import has_rs_native; print('✅ Rust loaded:', has_rs_native())"
+          python -c "import opensynaptic.core.rscore; print('✅ Rust module location:', opensynaptic.core.rscore.__file__)"
 
       - name: Run unit and integration tests with coverage
         run: |
