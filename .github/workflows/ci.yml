@@ -10,7 +10,7 @@ on:
   workflow_dispatch:  
 
 jobs:
-    test:
+  test:
     name: test (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     env:
@@ -23,38 +23,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
+  
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
+  
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
+  
       - name: Install maturin
         run: pip install maturin
-
+  
       - name: Build Rust extension
         run: |
           cd src/opensynaptic/core/rscore/rust
           maturin build --release --out ../../../..
           cd ../../../..
-
+  
       - name: Install package and test dependencies
         run: |
           python -m pip install -U pip
           python -m pip install -e .[dev]
-
+  
       - name: Run unit and integration tests with coverage
         run: |
           pytest --cov=opensynaptic --cov-report=xml --cov-report=term tests
-
+  
       - name: Run component smoke suite (single matrix shard)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         run: |
           python -u src/main.py plugin-test --suite component
-
+  
       - name: Upload coverage report
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
