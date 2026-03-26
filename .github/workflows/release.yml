@@ -69,7 +69,6 @@ jobs:
 
       - name: Build wheels
         run: cibuildwheel --output-dir dist
-        working-directory: src/opensynaptic/core/rscore/rust
         env:
           CIBW_BUILD: "cp311-* cp312-* cp313-*"
           CIBW_ARCHS: auto64
@@ -82,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
-          path: src/opensynaptic/core/rscore/rust/dist/*.whl
+          path: dist/*.whl
 
   build-sdist:
     name: build-sdist
@@ -99,11 +98,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install maturin
         run: pip install maturin
-      - name: Copy README to Rust project
-        run: cp README.md src/opensynaptic/core/rscore/rust/ || echo "README.md not found, skipping"
       - name: Build sdist
-        run: maturin sdist --out ${{ github.workspace }}/dist
-        working-directory: src/opensynaptic/core/rscore/rust
+        run: python -m build --sdist --outdir ${{ github.workspace }}/dist
       - name: Verify sdist exists
         run: |
           ls -la ${{ github.workspace }}/dist/
@@ -139,6 +135,19 @@ jobs:
         with:
           name: release-dist
           path: dist/*
+
+      - name: Assert package set is opensynaptic only
+        shell: bash
+        run: |
+          ls -la dist
+          if ls dist/opensynaptic_rscore-* 1>/dev/null 2>&1; then
+            echo "Unexpected opensynaptic_rscore artifact found in release-dist"
+            exit 1
+          fi
+          if ! ls dist/opensynaptic-* 1>/dev/null 2>&1; then
+            echo "No opensynaptic artifacts found in release-dist"
+            exit 1
+          fi
 
   github-release:
     needs: [collect-dist, get-version]
@@ -176,6 +185,7 @@ jobs:
           password: ${{ secrets.TEST_PYPI_API_TOKEN }}
           packages-dir: dist
           skip-existing: true
+          verbose: true
 
   publish-pypi:
     needs: [collect-dist, get-version]
