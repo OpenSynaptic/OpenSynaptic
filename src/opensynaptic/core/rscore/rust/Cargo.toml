@@ -1,6 +1,6 @@
 [package]
 name = "opensynaptic_rscore"
-version = "1.0.0-rc4"
+version = "1.0.0-rc5"
 edition = "2021"
 license = "Apache-2.0"
 description = "RSCore native primitives for OpenSynaptic (Base62 codec + CMD helpers)"
