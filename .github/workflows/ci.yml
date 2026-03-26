@@ -15,6 +15,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       OPENSYNAPTIC_CORE: pycore
+      PYTHONPATH: ${{ github.workspace }}/src
     strategy:
       fail-fast: false
       matrix:
@@ -39,69 +40,37 @@ jobs:
         run: |
           PROJECT_ROOT=$(pwd)
           cd src/opensynaptic/core/rscore/rust
-          mkdir -p "$PROJECT_ROOT/opensynaptic/utils/c/bin"
-          maturin build --release --out "$PROJECT_ROOT/opensynaptic/utils/c/bin"
+          mkdir -p "$PROJECT_ROOT/dist"
+          maturin build --release --out "$PROJECT_ROOT/dist"
           cd "$PROJECT_ROOT"
           
           echo "=== Rust extension files ==="
-          ls -la opensynaptic/utils/c/bin/
+          ls -la dist/
         shell: bash
 
       - name: Install package
         run: |
           python -m pip install -U pip
           
-          # 安装 Rust wheel
+          # Install Rust wheel built in the previous step.
           echo "Installing Rust wheel..."
-          pip install opensynaptic/utils/c/bin/*.whl
+          pip install dist/*.whl
           
-          # 安装主包
+          # Editable install keeps imports stable from src layout in CI.
           echo "Installing main package..."
-          pip install .[dev]
+          pip install -e ".[dev]"
 
       - name: Verify installation
         run: |
           echo "=== Installed packages ==="
-          pip list | grep -E "(opensynaptic|rscore)"
+          python -c "from importlib.metadata import version; print('opensynaptic', version('opensynaptic')); print('opensynaptic-rscore', version('opensynaptic-rscore'))"
           
           echo "=== Import test ==="
-          python << 'EOF'
-          # 测试主包导入
-          try:
-              import opensynaptic
-              print("✅ OpenSynaptic imported")
-          except Exception as e:
-              print(f"❌ OpenSynaptic import failed: {e}")
-          
-          # 测试 Rust 扩展导入
-          try:
-              import opensynaptic_rscore
-              print("✅ Rust extension imported as opensynaptic_rscore")
-              print(f"   Location: {opensynaptic_rscore.__file__}")
-          except Exception as e:
-              print(f"❌ opensynaptic_rscore import failed: {e}")
-          
-          # 测试 has_rs_native 函数
-          try:
-              from opensynaptic_rscore import has_rs_native
-              print(f"✅ has_rs_native: {has_rs_native()}")
-          except Exception as e:
-              print(f"❌ has_rs_native import failed: {e}")
-          
-          # 检查是否可以从 opensynaptic.core.rscore 导入（如果项目需要）
-          try:
-              # 尝试创建命名空间包结构
-              import opensynaptic
-              import opensynaptic.core
-              import opensynaptic.core.rscore
-              print("✅ opensynaptic.core.rscore namespace exists")
-          except ImportError:
-              print("⚠️  opensynaptic.core.rscore not found (this may be expected)")
-          EOF
+          python -c "import opensynaptic, opensynaptic.core, opensynaptic_rscore; print('opensynaptic:', opensynaptic.__file__); print('opensynaptic_rscore:', opensynaptic_rscore.__file__)"
 
       - name: Run unit and integration tests with coverage
         run: |
-          pytest --cov=opensynaptic --cov-report=xml --cov-report=term tests
+          python -m pytest --cov=opensynaptic --cov-report=xml --cov-report=term tests
 
       - name: Run component smoke suite (single matrix shard)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
