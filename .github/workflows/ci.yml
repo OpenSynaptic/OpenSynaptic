@@ -36,6 +36,10 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
+      - name: Setup MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Build Rust extension
         run: |
           PROJECT_ROOT=$(pwd)
@@ -67,6 +71,12 @@ jobs:
           
           echo "=== Import test ==="
           python -c "import opensynaptic, opensynaptic.core, opensynaptic_rscore; print('opensynaptic:', opensynaptic.__file__); print('opensynaptic_rscore:', opensynaptic_rscore.__file__)"
+
+      - name: Build native C runtime libraries
+        run: |
+          python -u src/opensynaptic/utils/c/check_native_toolchain.py
+          python -u src/opensynaptic/utils/c/build_native.py
+          python -c "from pathlib import Path; import sys; ext = '.dll' if sys.platform.startswith('win') else ('.dylib' if sys.platform == 'darwin' else '.so'); base = Path('src/opensynaptic/utils/c/bin'); required = [base / f'os_base62{ext}', base / f'os_security{ext}']; missing = [str(p) for p in required if not p.exists()]; print('native outputs:', ', '.join(str(p) for p in required)); sys.exit(f'Missing native outputs: {missing}') if missing else None"
 
       - name: Run unit and integration tests with coverage
         run: |
