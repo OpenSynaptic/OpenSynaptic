@@ -37,25 +37,31 @@ jobs:
 
       - name: Build Rust extension
         run: |
-          # 创建输出目录（如果不存在）
-          mkdir -p src/opensynaptic/utils/c/bin
+          # 保存项目根目录
+          PROJECT_ROOT=$(pwd)
           
           # 进入 Rust 项目目录
           cd src/opensynaptic/core/rscore/rust
           
-          # 构建 wheel 包
-          maturin build --release --out ../../../../opensynaptic/utils/c/bin
+          # 确保输出目录存在（使用相对于项目根目录的路径）
+          mkdir -p "$PROJECT_ROOT/opensynaptic/utils/c/bin"
+          
+          # 构建 wheel 包（输出到项目根目录下的 opensynaptic/utils/c/bin）
+          maturin build --release --out "$PROJECT_ROOT/opensynaptic/utils/c/bin"
           
           # 返回项目根目录
-          cd ../../../..
+          cd "$PROJECT_ROOT"
           
           # 显示构建结果
           echo "=== Rust extension files ==="
-          if [ -d "src/opensynaptic/utils/c/bin" ]; then
-            ls -la src/opensynaptic/utils/c/bin/
+          if [ -d "opensynaptic/utils/c/bin" ]; then
+            ls -la opensynaptic/utils/c/bin/
             echo "✅ Rust wheel built successfully"
           else
-            echo "❌ Error: Directory src/opensynaptic/utils/c/bin does not exist"
+            echo "❌ Error: Directory opensynaptic/utils/c/bin does not exist"
+            echo "Current directory: $(pwd)"
+            echo "Searching for wheel files:"
+            find . -name "*rscore*.whl" -type f 2>/dev/null | head -10
             exit 1
           fi
         shell: bash
