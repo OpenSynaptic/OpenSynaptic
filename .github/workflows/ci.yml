@@ -48,9 +48,14 @@ jobs:
   
       - name: Verify installation
         run: |
+          echo "=== Python path ==="
+          python -c "import sys; print(sys.path)"
+          echo "=== Import test ==="
           python -c "import opensynaptic; print('✅ OpenSynaptic imported')"
           python -c "from opensynaptic.core.rscore.codec import has_rs_native; print('✅ Rust loaded:', has_rs_native())"
-          ls -la src/opensynaptic/utils/c/bin/
+          echo "=== Rust extension files ==="
+          ls -la src/opensynaptic/utils/c/bin/ || echo "bin directory not found"
+          find . -name "*.so" -o -name "*.dylib" -o -name "*.dll" 2>/dev/null | grep -v target | head -20
   
       - name: Run unit and integration tests with coverage
         run: |
