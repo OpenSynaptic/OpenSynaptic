@@ -226,13 +226,11 @@ python scripts/concurrency_smoke.py 200 8 6
 ## Packaging And Release
 
 ```powershell
-# Build and validate Python distributions
+# Build and validate Python distributions (maturin-only)
 py -3 -m pip install -e .[dev]
-py -3 -m build
+py -3 -m maturin sdist --manifest-path src/opensynaptic/core/rscore/rust/Cargo.toml --out dist
+py -3 -m maturin build --manifest-path src/opensynaptic/core/rscore/rust/Cargo.toml --release --out dist
 py -3 -m twine check dist/*
-
-# Build Rust acceleration wheel (maturin)
-py -3 -m maturin build --manifest-path src/opensynaptic/core/rscore/rust/Cargo.toml --release
 ```
 
 GitHub Actions workflows are defined in `.github/workflows/ci.yml` and `.github/workflows/release.yml`.

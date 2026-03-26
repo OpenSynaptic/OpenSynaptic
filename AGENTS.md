@@ -35,11 +35,13 @@ sensors list
 
 ## Config.json – Single Source of Truth
 
-`Config.json` at project root drives **all** runtime behaviour.  
-`OSContext` (`utils/paths.py`) auto-detects root by walking up from `__file__` until it finds `Config.json`.
+`Config.json` at project root remains the template/SSOT for defaults and repo-local tooling.  
+Runtime CLI/node sessions default to user config `~/.config/opensynaptic/Config.json` (`get_user_config_path()`), and bootstrap/migrate from project `Config.json` when needed.
+`OSContext` (`utils/paths.py`) still auto-detects repo root by walking up from `__file__` until it finds project `Config.json`.
 
 Critical keys:
 - `assigned_id` – uint32 device ID; `4294967295` (MAX_UINT32) is the **sentinel for "unassigned"**
+- `--config` omitted in CLI / `OpenSynaptic()` constructor – defaults to `~/.config/opensynaptic/Config.json`
 - `security_settings.id_lease` – ID reuse/lease policy object (see below for sub-keys)
   - `offline_hold_days` – default hold period (translates to `base_lease_seconds`)
   - `base_lease_seconds` – base lease duration for newly assigned or re-touched IDs (default 2,592,000 = 30 days)
@@ -92,18 +94,18 @@ Critical keys:
 Transporters are tiered across three layers, each using `LayeredProtocolManager`:
 
 - **Application (L7)**: `src/opensynaptic/services/transporters/drivers/` → managed by `TransporterService`
-  - Auto-discovery constrained to `TransporterService.APP_LAYER_DRIVERS` (currently `{'mqtt'}`)
+  - Auto-discovery constrained to `TransporterService.APP_LAYER_DRIVERS` (currently `{'mqtt', 'matter', 'zigbee'}`)
   - To add a new app driver: add key to `APP_LAYER_DRIVERS`, create driver module, enable in `application_status` + configure in `application_config`
 - **Transport (L4)**: `src/opensynaptic/core/transport_layer/protocols/` → managed by `TransportLayerManager`
   - Candidates: `udp`, `tcp`, `quic`, `iwip`, `uip` (tuple in `manager.py:_CANDIDATES`)
 - **Physical (PHY)**: `src/opensynaptic/core/physical_layer/protocols/` → managed by `PhysicalLayerManager`
-  - Candidates: `uart`, `rs485`, `can`, `lora` (tuple in `manager.py:_CANDIDATES`)
+  - Candidates: `uart`, `rs485`, `can`, `lora`, `bluetooth` (tuple in `manager.py:_CANDIDATES`)
 
 **Common patterns:**
 - All drivers implement `send(payload: bytes, config: dict) -> bool` (optional `listen(config, callback)`)
 - Enable/disable via **layer-specific** status maps: `application_status`, `transport_status`, `physical_status`
 - Per-layer config in `application_config`, `transport_config`, `physical_config`
-- Adding a new T/L4/PHY protocol: update `_CANDIDATES` tuple + add to status/config entries in `Config.json`
+- Adding a new T/L4/PHY protocol: update layer `manager.py:_CANDIDATES` tuple(s), update `TransporterManager` protocol sets used by `_migrate_resource_maps()`, then add status/config entries in `Config.json`
 - All transporter keys must be **lowercase** in status/config maps; `TransporterManager._migrate_resource_maps()` keeps the legacy `transporters_status` as a merged mirror
 
 ---
@@ -173,9 +175,14 @@ Add new `LogMsg` enum members there before using them with `log_with_const`.
 pip install -e .
 ```
 
-**Run concurrency smoke test** (validates transmit/receive under load):
+**Run standalone integration smoke harness** (repo-local quick verification):
 ```bash
-python scripts/concurrency_smoke.py [total=200] [workers=8] [sources=6]
+python scripts/integration_test.py
+```
+
+**Run protocol receive harness** (UDP default; supports TCP via `--protocol tcp`):
+```bash
+python scripts/udp_receive_test.py --protocol udp --host 127.0.0.1 --port 8080 --config Config.json
 ```
 
 **Run built-in plugin test suites:**
@@ -206,14 +213,15 @@ python -u src/main.py plugin-test --suite stress --auto-profile --profile-total 
 python -u src/main.py core --set rscore --persist
 ```
 
+**Build Rust core (CLI):**
+```bash
+python -u src/main.py rscore-build
+python -u src/main.py rscore-check
+```
+
 **Build Rust core (standalone script):**
 ```bash
 python -u src/opensynaptic/core/rscore/build_rscore.py  # Compiles and installs os_rscore DLL
-```
-
-**Run zero-copy closeout harness:**
-```bash
-python -u scripts/zero_copy_closeout.py --runs 3 --total 100000 --config Config.json
 ```
 
 **Check/build native bindings** (required for Base62 + security code paths):
@@ -230,31 +238,15 @@ SymbolHarvester().sync()
 
 **Minimal node usage (see bottom of `src/opensynaptic/core/pycore/core.py`):**
 ```python
-node = OpenSynaptic()           # reads Config.json via ctx auto-detection
+node = OpenSynaptic()           # defaults to ~/.config/opensynaptic/Config.json
 node.ensure_id("192.168.1.100", 8080)
 packet, aid, strategy = node.transmit(sensors=[["V1","OK", 3.14, ("Pa")]])
 node.dispatch(packet, medium="UDP")
 ```
 
-**Run performance playbook scripts:**
+**Run driver capability audit script:**
 ```bash
-python scripts/phase1_perf_playbook.py --help  # Automates optimization steps 1-5
-python scripts/phase2_perf_playbook.py --help  # Deeper profiling and tuning
-```
-
-**Run transport simulator:**
-```bash
-python scripts/standalone_localhost_sim.py --mode demo --protocol udp
-```
-
-**Apply compiled Rust DLL:**
-```bash
-python scripts/apply_rscore_dll.py  # Swap tmp DLL to live after build_rscore.py
-```
-
-**Smoke test core switching:**
-```bash
-python scripts/core_hard_switch_smoke.py  # Validates core discovery and native libs
+python scripts/audit_driver_capabilities.py
 ```
 
 ---
@@ -263,12 +255,12 @@ python scripts/core_hard_switch_smoke.py  # Validates core discovery and native 
 
 **CLI Entry Points** (`pyproject.toml:[project.scripts]`):
 - `os-node` – Interactive CLI with fallback to `run` daemon after idle timeout (managed by `src/opensynaptic/main.py:main()`)
-- `os-cli` – Inline command execution; no REPL (calls `src/opensynaptic/CLI:main()` directly)
+- `os-cli` – Inline command execution; no REPL (entrypoint `opensynaptic.main:cli_entry`)
 - `os-tui` – TUI dashboard (aliases to `os-cli tui`)
 - `os-web` – Standalone web plugin entrypoint (maps to `web-user`; implemented by `src/opensynaptic/main.py:web_main`)
 
 **Core & Configuration:**
-- **`config_path` always passed as absolute path** – all subsystems receive it from `OpenSynaptic.__init__` to avoid CWD-relative path bugs.
+- **`config_path` is always normalized to absolute path** in `OpenSynaptic.__init__`; when omitted, default path is `~/.config/opensynaptic/Config.json`.
 - Import core symbols from `opensynaptic.core` only; `src/opensynaptic/core/__init__.py` is the public facade and `get_core_manager()` selects the active core plugin (`pycore`).
 - `plugins/` is outside `src/`; `core.py` adds the project root to `sys.path` if the import fails.
 - `OSContext` (`ctx`) is a module-level singleton imported at `from opensynaptic.utils import ctx`; it is instantiated at import time.
@@ -277,6 +269,7 @@ python scripts/core_hard_switch_smoke.py  # Validates core discovery and native 
 - Transporter keys in all status maps are **lowercase** (`"tcp"`, not `"TCP"`).
 - `TransporterManager._migrate_resource_maps()` keeps `transporters_status` as a merged mirror of the three layer maps.
 - Built-in plugin defaults are synced on node startup via `sync_all_plugin_defaults(self.config)` before transporters auto-load.
+- Plugin auto-load on node startup is gated by `auto_start=True` (`autoload_enabled_plugins(..., auto_start_only=True)`); default plugin mode is manual unless config opts in.
 - `Base62Codec` (`src/opensynaptic/utils/base62/base62.py`) and security helpers are native-only ctypes bindings loaded via `src/opensynaptic/utils/c/native_loader.py`; there is no Python fallback for those code paths.
 - All `send()` paths converge on `to_wire_payload(...)` helper to avoid payload preparation duplication.
 - `rscore` Python wrappers share FFI proxy pattern via `src/opensynaptic/core/rscore/_ffi_proxy.py` to minimize Rust interface boilerplate.
