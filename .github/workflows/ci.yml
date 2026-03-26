@@ -40,7 +40,22 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build Rust extension
+      - name: Pin Rust linker to MSVC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $linkPath = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'
+          if (!(Test-Path $linkPath)) {
+            throw "MSVC linker not found at: $linkPath"
+          }
+          if ($linkPath -like '*Git\\usr\\bin\\link.exe') {
+            throw "Resolved linker points to Git link.exe: $linkPath"
+          }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linkPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Pinned linker: $linkPath"
+
+      - name: Build Rust extension (Unix)
+        if: runner.os != 'Windows'
         run: |
           PROJECT_ROOT=$(pwd)
           cd src/opensynaptic/core/rscore/rust
@@ -51,6 +66,19 @@ jobs:
           echo "=== Rust extension files ==="
           ls -la dist/
         shell: bash
+
+      - name: Build Rust extension (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $projectRoot = (Get-Location).Path
+          Set-Location 'src/opensynaptic/core/rscore/rust'
+          New-Item -ItemType Directory -Path "$projectRoot/dist" -Force | Out-Null
+          maturin build --release --out "$projectRoot/dist"
+          Set-Location $projectRoot
+
+          Write-Host '=== Rust extension files ==='
+          Get-ChildItem -Force "$projectRoot/dist"
 
       - name: Install package
         run: |
@@ -138,6 +166,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Setup MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Pin Rust linker to MSVC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $linkPath = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'
+          if (!(Test-Path $linkPath)) {
+            throw "MSVC linker not found at: $linkPath"
+          }
+          if ($linkPath -like '*Git\\usr\\bin\\link.exe') {
+            throw "Resolved linker points to Git link.exe: $linkPath"
+          }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linkPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Pinned linker: $linkPath"
 
       - name: Build Rust wheel with maturin
         uses: PyO3/maturin-action@v1
