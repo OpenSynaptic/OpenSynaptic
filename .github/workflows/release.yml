@@ -98,8 +98,8 @@ jobs:
           python-version: "3.13"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install build tools
+        run: pip install maturin build
       - name: Build sdist
         run: python -m build --sdist --outdir ${{ github.workspace }}/dist
       - name: Verify sdist exists
