@@ -49,10 +49,12 @@ jobs:
           git --no-pager log -1 --oneline
           echo "=== root pyproject (head) ==="
           sed -n '1,140p' pyproject.toml
-          echo "=== rust pyproject (head) ==="
-          sed -n '1,140p' src/opensynaptic/core/rscore/rust/pyproject.toml
-          if grep -RIn "python-source" pyproject.toml src/opensynaptic/core/rscore/rust/pyproject.toml; then
-            echo "Unexpected python-source found in active commit"
+          if ! grep -q "python-source = \"src\"" pyproject.toml; then
+            echo "Expected python-source=\"src\" for single-package mixed build"
+            exit 1
+          fi
+          if ! grep -q "python-packages = \[\"opensynaptic\", \"opensynaptic_rscore\"\]" pyproject.toml; then
+            echo "Expected python-packages to include opensynaptic and opensynaptic_rscore"
             exit 1
           fi
 

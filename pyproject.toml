@@ -62,6 +62,8 @@ skip_covered = true
 [tool.maturin]
 manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
 features = ["python-module"]
+python-source = "src"
+python-packages = ["opensynaptic", "opensynaptic_rscore"]
 sdist-include = [
     "LICENSE", 
     "README.md",
