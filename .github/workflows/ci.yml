@@ -38,8 +38,9 @@ jobs:
       - name: Build Rust extension
         run: |
           cd src/opensynaptic/core/rscore/rust
-          maturin build --release --out ../../../..
+          maturin build --release --out ../../../../opensynaptic/utils/c/bin
           cd ../../../..
+          echo "=== Rust extension files ==="
           ls -la src/opensynaptic/utils/c/bin/
 
       - name: Install package and test dependencies
@@ -54,8 +55,6 @@ jobs:
           echo "=== Import test ==="
           python -c "import opensynaptic; print('✅ OpenSynaptic imported')"
           python -c "from opensynaptic.core.rscore.codec import has_rs_native; print('✅ Rust loaded:', has_rs_native())"
-          echo "=== Rust extension files ==="
-          ls -la src/opensynaptic/utils/c/bin/ || echo "bin directory not found"
 
       - name: Run unit and integration tests with coverage
         run: |
