@@ -1,0 +1,12 @@
+{
+    "aid": "42",
+    "templates": {
+        "01": {
+            "sig": "DEMO_NODE.ONLINE.{TS}|V1>\u0001:\u0001|",
+            "last_vals_bin": [
+                "T0sucHJlc3N1cmU=",
+                "MTZ6dUJX"
+            ]
+        }
+    }
+}

@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "service": "env_guard",
+  "auto_install": false,
+  "status_json_path": "E:\\新建文件夹 (2)\\src\\data\\env_guard\\status.json",
+  "resource_library_json_path": "E:\\新建文件夹 (2)\\src\\data\\env_guard\\resources.json",
+  "resource_summary": {
+    "kinds": [
+      "compiler",
+      "native_library"
+    ],
+    "entries_total": 2
+  },
+  "issues_total": 0,
+  "attempts_total": 0,
+  "issues": [],
+  "attempts": []
+}

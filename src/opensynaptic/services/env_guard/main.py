@@ -1,3 +1,19 @@
+"""
+env_guard - 环境守卫插件
+
+功能：
+    - 监控错误流并自动补救环境问题
+    - 管理资源库和安装命令
+    - 跟踪问题和尝试历史
+    - 自动安装缺失的组件
+
+2026 M03 规范：
+    - __init__ 接受 node 和 **kwargs
+    - get_required_config() 返回完整配置
+    - auto_load() 初始化资源和启动工作线程
+    - close() 清理资源
+    - 所有操作线程安全
+"""
 import argparse
 import json
 import queue
@@ -9,12 +25,45 @@ from pathlib import Path
 
 from opensynaptic.utils import (
     os_log,
+    LogMsg,
     EnvironmentMissingError,
 )
+from opensynaptic.services.display_api import DisplayProvider, get_display_registry
+
+
+class EnvGuardDisplayProvider(DisplayProvider):
+    """Display env_guard state with compact issue/attempt summary."""
+
+    def __init__(self, plugin_ref):
+        super().__init__(plugin_name='env_guard', section_id='status', display_name='Environment Guard Status')
+        self.category = 'plugin'
+        self.priority = 64
+        self.refresh_interval_s = 4.0
+        self._plugin = plugin_ref
+
+    def extract_data(self, node=None, **kwargs):
+        _ = node, kwargs
+        plugin = self._plugin
+        payload = plugin._status_payload()
+        issues = payload.get('issues', []) if isinstance(payload.get('issues', []), list) else []
+        attempts = payload.get('attempts', []) if isinstance(payload.get('attempts', []), list) else []
+        return {
+            'initialized': bool(getattr(plugin, '_initialized', False)),
+            'auto_install': bool((getattr(plugin, 'config', {}) or {}).get('auto_install', False)),
+            'issues_total': int(payload.get('issues_total', len(issues)) or 0),
+            'attempts_total': int(payload.get('attempts_total', len(attempts)) or 0),
+            'latest_issue': issues[-1] if issues else None,
+            'latest_attempt': attempts[-1] if attempts else None,
+            'resource_summary': payload.get('resource_summary', {}),
+        }
 
 
 class EnvironmentGuardService:
-    """Watches error stream and auto-remediates environment-missing issues."""
+    """监视错误流并自动修复环境问题
+    
+    线程安全：是（使用 self._lock）
+    Display Providers：env_guard:status
+    """
 
     DEFAULT_RESOURCE_LIBRARY = {
         'resources': {
@@ -43,27 +92,42 @@ class EnvironmentGuardService:
         },
     }
 
-    def __init__(self, node=None):
+    def __init__(self, node=None, **kwargs):
+        """初始化环境守卫插件（按 2026 规范）
+        
+        参数：
+            node: OpenSynaptic 节点实例
+            **kwargs: 配置字典
+        """
         self.node = node
+        self.config = kwargs or {}
+        self._lock = threading.RLock()
+        
         self._worker_thread = None
         self._stop_event = threading.Event()
         self._install_queue = queue.Queue()
         self._issues = []
         self._attempts = []
-        self._lock = threading.RLock()
+        self._initialized = False
+        
         self._base_dir = Path(getattr(node, 'base_dir', Path(__file__).resolve().parents[4]))
-
-        cfg = {}
-        try:
-            resources = (getattr(node, 'config', {}) or {}).get('RESOURCES', {})
-            cfg = (resources.get('service_plugins', {}) or {}).get('env_guard', {}) or {}
-        except Exception:
-            cfg = {}
-        self.config = cfg
+        
+        # 如果从 kwargs 没有获得配置，尝试从 node.config 获得
+        if not self.config and node:
+            try:
+                resources = (getattr(node, 'config', {}) or {}).get('RESOURCES', {})
+                self.config = (resources.get('service_plugins', {}) or {}).get('env_guard', {}) or {}
+            except Exception:
+                pass
+        
         self._load_state_from_status_json()
+        
+        os_log.log_with_const('info', LogMsg.PLUGIN_INIT, 
+                             plugin='EnvironmentGuard')
 
     @staticmethod
     def get_required_config():
+        """返回默认配置（按 2026 规范）"""
         return {
             'enabled': True,
             'mode': 'manual',
@@ -75,26 +139,50 @@ class EnvironmentGuardService:
             'status_json_path': 'data/env_guard/status.json',
         }
 
-    def auto_load(self):
-        self.ensure_resource_library()
-        os_log.add_error_listener(self._on_error)
-        auto_start = bool(self.config.get('auto_start', True))
-        if auto_start:
-            self.start()
+    def auto_load(self, config=None):
+        """自动加载钩子（按 2026 规范）"""
+        if config:
+            self.config = config
+        
+        if not self.config.get('enabled', True):
+            return self
+        
+        try:
+            with self._lock:
+                self.ensure_resource_library()
+                os_log.add_error_listener(self._on_error)
+                
+                auto_start = bool(self.config.get('auto_start', True))
+                if auto_start:
+                    self.start()
+                
+                self._initialized = True
+                reg = get_display_registry()
+                reg.unregister('env_guard', 'status')
+                reg.register(EnvGuardDisplayProvider(self))
+                os_log.log_with_const('info', LogMsg.PLUGIN_READY, 
+                                     plugin='EnvironmentGuard')
+        except Exception as exc:
+            os_log.err('ENV_GUARD', 'LOAD_FAILED', exc, {})
+            self._initialized = False
+        
         return self
 
-    def start(self):
-        self.ensure_resource_library()
-        if self._worker_thread is None or not self._worker_thread.is_alive():
-            self._stop_event.clear()
-            self._worker_thread = threading.Thread(target=self._install_worker, daemon=True, name='os-env-guard-worker')
-            self._worker_thread.start()
-        self._write_status_json()
-
     def close(self):
-        self._stop_event.set()
-        os_log.remove_error_listener(self._on_error)
-        self._write_status_json()
+        """清理资源（按 2026 规范）"""
+        with self._lock:
+            if self._initialized:
+                try:
+                    self._stop_event.set()
+                    os_log.remove_error_listener(self._on_error)
+                    self._write_status_json()
+                    get_display_registry().unregister('env_guard', 'status')
+                    
+                    self._initialized = False
+                    os_log.log_with_const('info', LogMsg.PLUGIN_CLOSED, 
+                                         plugin='EnvironmentGuard')
+                except Exception as exc:
+                    os_log.err('ENV_GUARD', 'CLOSE_FAILED', exc, {})
 
     def _resolve_path(self, config_key, default_rel_path):
         raw = self.config.get(config_key)
@@ -340,3 +428,15 @@ class EnvironmentGuardService:
             'resource-init': _resource_init,
         }
 
+    def start(self):
+        """启动环境守卫工作线程"""
+        self.ensure_resource_library()
+        if self._worker_thread is None or not self._worker_thread.is_alive():
+            self._stop_event.clear()
+            self._worker_thread = threading.Thread(
+                target=self._install_worker, 
+                daemon=True, 
+                name='os-env-guard-worker'
+            )
+            self._worker_thread.start()
+        self._write_status_json()

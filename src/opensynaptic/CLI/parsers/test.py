@@ -119,9 +119,27 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     plugin_test.add_argument(
         '--chain-mode',
-        choices=['core', 'e2e'],
+        choices=['core', 'e2e', 'e2e_inproc', 'e2e_loopback'],
         default='core',
-        help='Stress chain mode: core=standardize/compress/fuse, e2e=send->receive->process loopback',
+        help='Stress chain mode: core=standardize/compress/fuse, e2e(=e2e_loopback)=local UDP forward + receive, e2e_inproc=direct receive/decompress',
+    )
+    plugin_test.add_argument(
+        '--pipeline-mode',
+        choices=['legacy', 'batch_fused'],
+        default='legacy',
+        help='Encoding pipeline mode: legacy=per-packet, batch_fused=batch Rust codec (stress/compare only)',
+    )
+    plugin_test.add_argument(
+        '--use-real-udp',
+        action='store_true',
+        default=False,
+        help='For e2e_loopback: use actual UDP socket I/O instead of in-process queue (deprecated, use --use-transport udp)',
+    )
+    plugin_test.add_argument(
+        '--use-transport',
+        choices=['udp', 'tcp', 'quic', 'uart', 'rs485', 'can', 'lora', 'bluetooth', 'mqtt', 'matter', 'zigbee'],
+        default=None,
+        help='For e2e_loopback: use actual transport driver instead of in-process queue (e.g. tcp, uart, mqtt)',
     )
     plugin_test.add_argument('--auto-profile', action='store_true', default=False,
                              help='Scan candidate stress concurrency combos, then run final with best config')

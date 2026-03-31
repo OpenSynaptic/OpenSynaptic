@@ -1,5 +1,8 @@
 
 (function () {
+  var __jsonVerbose = false;
+  var __visualCommandOptionMap = {};
+  var __visualCommandFieldsMap = {};
   function byId(id) { return document.getElementById(id); }
   function setText(id, v) { var el = byId(id); if (el) { el.textContent = String(v); } }
   function setHtml(id, html) { var el = byId(id); if (el) { el.innerHTML = String(html || ''); } }
@@ -16,6 +19,31 @@
     if (!el) { return; }
     el.className = 'conn-banner' + (state === 'ok' ? ' ok' : (state === 'bad' ? ' bad' : ''));
     el.textContent = msg;
+  }
+  function applyJsonModeState() {
+    var body = document.body;
+    if (body && body.classList) {
+      body.classList.toggle('json-collapsed', !__jsonVerbose);
+    }
+    var btn = byId('jsonToggleBtn');
+    if (btn) {
+      btn.textContent = __jsonVerbose ? 'JSON: ON' : 'JSON: OFF';
+      btn.classList.toggle('primary', __jsonVerbose);
+    }
+    try { window.localStorage.setItem('os_web_json_verbose', __jsonVerbose ? '1' : '0'); } catch (_e) {}
+  }
+  function initJsonMode() {
+    try {
+      var raw = window.localStorage.getItem('os_web_json_verbose');
+      __jsonVerbose = String(raw || '0') === '1';
+    } catch (_e) {
+      __jsonVerbose = false;
+    }
+    applyJsonModeState();
+  }
+  function toggleJsonMode() {
+    __jsonVerbose = !__jsonVerbose;
+    applyJsonModeState();
   }
   function flashButtonState(btn, stateClass) {
     if (!btn || !btn.classList || !stateClass) { return; }
@@ -80,7 +108,7 @@
     }
   }
   function renderOverview(payload) {
-    var d = payload && payload.overview ? payload.overview : {};
+    var d = payload && payload.dashboard ? payload.dashboard : (payload && payload.overview ? payload.overview : {});
     var idn = d.identity || {};
     var svc = d.service || {};
     var m = d.overview_metrics || {};
@@ -102,6 +130,289 @@
     setText('perfStatsView', JSON.stringify(perf, null, 2));
     renderHttpStats(httpStats);
     setText('jobStatsView', JSON.stringify({total: jobs.total || 0, recent: jobs.recent || []}, null, 2));
+    hydrateDisplaySections(d.display_providers || null, d.display_sections || null);
+  }
+  function renderUsersTable(rows) {
+    var data = rows || [];
+    var html = '';
+    for (var i = 0; i < data.length; i++) {
+      var u = data[i] || {};
+      var uname = String(u.username || '');
+      var role = String(u.role || 'user');
+      var checked = u.enabled ? 'checked' : '';
+      html += '<tr>' +
+        '<td>' + uname + '</td>' +
+        '<td><input id="role-' + uname + '" value="' + role + '"></td>' +
+        '<td><input id="on-' + uname + '" type="checkbox" ' + checked + '></td>' +
+        '<td><button data-user-action="update" data-username="' + uname + '">Update</button> <button data-user-action="delete" data-username="' + uname + '">Delete</button></td>' +
+        '</tr>';
+    }
+    var tb = byId('users');
+    if (tb) { tb.innerHTML = html; }
+  }
+  function displayValueHtml(value) {
+    if (value == null) { return '<span class="muted">null</span>'; }
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return '<div class="display-plain">' + escHtml(value) + '</div>';
+    }
+    return '<pre class="display-json">' + escHtml(JSON.stringify(value, null, 2)) + '</pre>';
+  }
+  function tableValueHtml(value) {
+    var rows = [];
+    if (Array.isArray(value)) {
+      rows = value;
+    } else if (value && typeof value === 'object') {
+      rows = [value];
+    }
+    if (!rows.length) {
+      return '<span class="muted">No table rows.</span>';
+    }
+    var cols = [];
+    if (rows[0] && typeof rows[0] === 'object' && !Array.isArray(rows[0])) {
+      for (var key in rows[0]) {
+        if (Object.prototype.hasOwnProperty.call(rows[0], key)) { cols.push(String(key)); }
+      }
+    }
+    if (!cols.length) {
+      return displayValueHtml(value);
+    }
+    var head = '';
+    for (var i = 0; i < cols.length; i++) {
+      head += '<th>' + escHtml(cols[i]) + '</th>';
+    }
+    var body = '';
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r] || {};
+      var cells = '';
+      for (var c = 0; c < cols.length; c++) {
+        cells += '<td>' + escHtml(row[cols[c]]) + '</td>';
+      }
+      body += '<tr>' + cells + '</tr>';
+    }
+    return '<table class="http-table"><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table>';
+  }
+  function sanitizeHtml(rawHtml) {
+    var host = document.createElement('div');
+    host.innerHTML = String(rawHtml == null ? '' : rawHtml);
+    var blockedTags = ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta'];
+    for (var i = 0; i < blockedTags.length; i++) {
+      var nodes = host.getElementsByTagName(blockedTags[i]);
+      while (nodes && nodes.length) {
+        var node = nodes[0];
+        if (node && node.parentNode) { node.parentNode.removeChild(node); }
+      }
+    }
+    var all = host.getElementsByTagName('*');
+    for (var j = 0; j < all.length; j++) {
+      var el = all[j];
+      if (!el || !el.attributes) { continue; }
+      var attrs = [];
+      for (var k = 0; k < el.attributes.length; k++) {
+        attrs.push(el.attributes[k].name);
+      }
+      for (var a = 0; a < attrs.length; a++) {
+        var name = String(attrs[a] || '').toLowerCase();
+        var value = String(el.getAttribute(attrs[a]) || '');
+        if (name.indexOf('on') === 0) {
+          el.removeAttribute(attrs[a]);
+          continue;
+        }
+        if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(value)) {
+          el.removeAttribute(attrs[a]);
+        }
+      }
+    }
+    return host.innerHTML;
+  }
+  function renderDisplayEntry(entry) {
+    var fmt = String((entry && entry.format) || 'json').toLowerCase();
+    var mode = String((entry && entry.render_mode) || 'safe_html').toLowerCase();
+    var data = entry ? entry.data : null;
+    if (fmt === 'html') {
+      if (mode === 'json_only') {
+        return displayValueHtml(data);
+      }
+      var html = String(data == null ? '' : data);
+      if (mode !== 'trusted_html') {
+        html = sanitizeHtml(html);
+      }
+      return '<div class="display-html">' + html + '</div>';
+    }
+    if (fmt === 'table') {
+      return tableValueHtml(data);
+    }
+    return displayValueHtml(data);
+  }
+  function renderDisplayCards(entries) {
+    var host = byId('displaySectionsView');
+    if (!host) { return; }
+    if (!entries || !entries.length) {
+      host.innerHTML = '<span class="muted">No display sections registered.</span>';
+      return;
+    }
+    var grouped = {};
+    for (var i = 0; i < entries.length; i++) {
+      var it = entries[i] || {};
+      var category = String(it.category || 'plugin');
+      if (!grouped[category]) { grouped[category] = []; }
+      grouped[category].push(it);
+    }
+    var html = '';
+    for (var cat in grouped) {
+      if (!Object.prototype.hasOwnProperty.call(grouped, cat)) { continue; }
+      var list = grouped[cat] || [];
+      var block = '';
+      for (var j = 0; j < list.length; j++) {
+        var item = list[j] || {};
+        var label = item.display_name || item.section_path || item.section_id || 'section';
+        var badge = '<span class="muted">format=' + escHtml(item.format || 'json') + ' mode=' + escHtml(item.render_mode || 'safe_html') + '</span>';
+        block += '<div class="display-card">' +
+          '<div class="display-title">' + escHtml(label) + ' ' + badge + '</div>' +
+          renderDisplayEntry(item) +
+          '</div>';
+      }
+      html += '<div class="opt-cat"><div class="opt-head">' + escHtml(cat) + ' (' + list.length + ')</div>' + block + '</div>';
+    }
+    host.innerHTML = html;
+  }
+  function renderDisplaySections(sectionMap) {
+    var entries = [];
+    if (sectionMap && typeof sectionMap === 'object') {
+      for (var category in sectionMap) {
+        if (!Object.prototype.hasOwnProperty.call(sectionMap, category)) { continue; }
+        var sections = sectionMap[category] || {};
+        for (var sid in sections) {
+          if (!Object.prototype.hasOwnProperty.call(sections, sid)) { continue; }
+          entries.push({
+            category: category,
+            section_id: sid,
+            section_path: category + ':' + sid,
+            display_name: sid,
+            format: 'json',
+            render_mode: 'safe_html',
+            data: sections[sid],
+          });
+        }
+      }
+    }
+    renderDisplayCards(entries);
+  }
+  function renderDisplayProviders(meta) {
+    var host = byId('displayProvidersView');
+    if (!host) { return; }
+    var providers = meta && meta.providers ? meta.providers : [];
+    host.textContent = JSON.stringify({
+      total_providers: meta && meta.total_providers ? meta.total_providers : providers.length,
+      categories: (meta && meta.categories) || [],
+      providers: providers,
+    }, null, 2);
+  }
+  function requestDisplaySection(path, fmt, cb) {
+    req('GET', '/api/display/render/' + path + '?format=' + encodeURIComponent(fmt), null, function (err, payload) {
+      if (err || !payload || !payload.ok) {
+        cb(err || new Error('render failed'), null);
+        return;
+      }
+      cb(null, payload);
+    });
+  }
+  function normalizeFormatOrder(provider) {
+    var mode = String((provider && provider.render_mode) || 'safe_html').toLowerCase();
+    if (mode === 'json_only') { return ['json']; }
+    var preferred = String((provider && provider.preferred_format) || 'json').toLowerCase();
+    var supported = (provider && provider.supported_formats && provider.supported_formats.length) ? provider.supported_formats.slice(0) : ['json'];
+    var seen = {};
+    var order = [];
+    function addFmt(v) {
+      var token = String(v || '').toLowerCase();
+      if (!token || seen[token]) { return; }
+      seen[token] = true;
+      order.push(token);
+    }
+    addFmt(preferred);
+    for (var i = 0; i < supported.length; i++) { addFmt(supported[i]); }
+    addFmt('json');
+    return order;
+  }
+  function fetchProviderSection(provider, cb) {
+    var sectionPath = String((provider && provider.section_path) || ((provider && provider.plugin_name ? provider.plugin_name : '') + ':' + (provider && provider.section_id ? provider.section_id : '')));
+    if (!sectionPath || sectionPath.indexOf(':') < 0) {
+      cb({
+        category: (provider && provider.category) || 'plugin',
+        section_path: sectionPath,
+        display_name: (provider && provider.display_name) || sectionPath,
+        format: 'json',
+        render_mode: (provider && provider.render_mode) || 'safe_html',
+        data: {error: 'invalid section path'},
+      });
+      return;
+    }
+    var formatOrder = normalizeFormatOrder(provider);
+    function tryAt(idx) {
+      if (idx >= formatOrder.length) {
+        cb({
+          category: (provider && provider.category) || 'plugin',
+          section_path: sectionPath,
+          display_name: (provider && provider.display_name) || sectionPath,
+          format: 'json',
+          render_mode: (provider && provider.render_mode) || 'safe_html',
+          data: {error: 'render failed'},
+        });
+        return;
+      }
+      var fmt = formatOrder[idx];
+      requestDisplaySection(sectionPath, fmt, function (err, payload) {
+        if (err || !payload) {
+          tryAt(idx + 1);
+          return;
+        }
+        cb({
+          category: (provider && provider.category) || 'plugin',
+          section_path: sectionPath,
+          section_id: provider && provider.section_id,
+          display_name: (provider && provider.display_name) || sectionPath,
+          format: payload.resolved_format || payload.format || fmt,
+          render_mode: (provider && provider.render_mode) || payload.render_mode || 'safe_html',
+          data: payload.data,
+        });
+      });
+    }
+    tryAt(0);
+  }
+  function loadDisplaySectionsFromProviders(meta, fallbackSectionMap) {
+    var providers = meta && meta.providers ? meta.providers : [];
+    if (!providers.length) {
+      renderDisplaySections(fallbackSectionMap || null);
+      return;
+    }
+    var out = [];
+    var pending = providers.length;
+    function doneOne(entry) {
+      out.push(entry);
+      pending -= 1;
+      if (pending <= 0) {
+        renderDisplayCards(out);
+      }
+    }
+    for (var i = 0; i < providers.length; i++) {
+      fetchProviderSection(providers[i], doneOne);
+    }
+  }
+  function hydrateDisplaySections(meta, fallbackSectionMap) {
+    if (meta && meta.providers && meta.providers.length) {
+      renderDisplayProviders(meta);
+      loadDisplaySectionsFromProviders(meta, fallbackSectionMap);
+      return;
+    }
+    req('GET', '/api/display/providers', null, function (pErr, providerPayload) {
+      var resolvedMeta = (!pErr && providerPayload && providerPayload.metadata) ? providerPayload.metadata : null;
+      renderDisplayProviders(resolvedMeta || {});
+      if (resolvedMeta && resolvedMeta.providers && resolvedMeta.providers.length) {
+        loadDisplaySectionsFromProviders(resolvedMeta, fallbackSectionMap);
+        return;
+      }
+      renderDisplaySections(fallbackSectionMap || null);
+    });
   }
   function renderHttpStats(httpStats) {
     var s = httpStats || {};
@@ -167,25 +478,22 @@
       navs[j].classList.toggle('active', v === targetName);
     }
   }
+  function switchPluginPane(name) {
+    var target = String(name || '').trim();
+    if (!target) { return; }
+    var panes = ['config', 'commands', 'visual'];
+    for (var i = 0; i < panes.length; i++) {
+      var k = panes[i];
+      var paneEl = byId('pluginPane-' + k);
+      var btnEl = byId('pluginPaneBtn-' + k);
+      if (paneEl && paneEl.classList) { paneEl.classList.toggle('show', k === target); }
+      if (btnEl && btnEl.classList) { btnEl.classList.toggle('active', k === target); }
+    }
+  }
   function reloadUsers() {
     req('GET', '/users', null, function (err, usersPayload) {
       if (err || !usersPayload) { return; }
-      var rows = usersPayload.users || [];
-      var html = '';
-      for (var i = 0; i < rows.length; i++) {
-        var u = rows[i] || {};
-        var uname = String(u.username || '');
-        var role = String(u.role || 'user');
-        var checked = u.enabled ? 'checked' : '';
-        html += '<tr>' +
-          '<td>' + uname + '</td>' +
-          '<td><input id="role-' + uname + '" value="' + role + '"></td>' +
-          '<td><input id="on-' + uname + '" type="checkbox" ' + checked + '></td>' +
-          '<td><button data-user-action="update" data-username="' + uname + '">Update</button> <button data-user-action="delete" data-username="' + uname + '">Delete</button></td>' +
-          '</tr>';
-      }
-      var tb = byId('users');
-      if (tb) { tb.innerHTML = html; }
+      renderUsersTable(usersPayload.users || []);
     });
   }
   function loadUiOptions() {
@@ -244,37 +552,33 @@
       setButtonBusy(refreshBtn, false);
       flashButtonState(refreshBtn, ok ? 'btn-success' : 'btn-fail');
     }
-    req('GET', '/api/overview', null, function (err, payload) {
+    req('GET', '/api/dashboard', null, function (err, payload) {
       if (err || !payload) {
-        setText('perfStatsView', 'Failed to load overview.');
-        setHtml('httpStatsView', '<span class="muted">Failed to load HTTP stats.</span>');
-        done(false);
+        req('GET', '/api/overview', null, function (legacyErr, legacyPayload) {
+          if (legacyErr || !legacyPayload) {
+            setText('perfStatsView', 'Failed to load overview/dashboard.');
+            setHtml('httpStatsView', '<span class="muted">Failed to load HTTP stats.</span>');
+            done(false);
+            return;
+          }
+          renderOverview(legacyPayload);
+          reloadUsers();
+          req('GET', '/api/display/all?format=json', null, function (_dErr, displayPayload) {
+            hydrateDisplaySections(null, !(_dErr || !displayPayload) ? (displayPayload.sections || {}) : null);
+          });
+          done(true);
+        });
         return;
       }
       renderOverview(payload);
-      req('GET', '/users', null, function (_e, usersPayload) {
-        if (_e || !usersPayload) {
-          done(false);
-          return;
-        }
-        var rows = usersPayload.users || [];
-        var html = '';
-        for (var i = 0; i < rows.length; i++) {
-          var u = rows[i] || {};
-          var uname = String(u.username || '');
-          var role = String(u.role || 'user');
-          var checked = u.enabled ? 'checked' : '';
-          html += '<tr>' +
-            '<td>' + uname + '</td>' +
-            '<td><input id="role-' + uname + '" value="' + role + '"></td>' +
-            '<td><input id="on-' + uname + '" type="checkbox" ' + checked + '></td>' +
-            '<td><button data-user-action="update" data-username="' + uname + '">Update</button> <button data-user-action="delete" data-username="' + uname + '">Delete</button></td>' +
-            '</tr>';
-        }
-        var tb = byId('users');
-        if (tb) { tb.innerHTML = html; }
-        done(true);
-      });
+      var dashboard = payload.dashboard || {};
+      if (dashboard.users && dashboard.users.length != null) {
+        renderUsersTable(dashboard.users);
+      } else {
+        reloadUsers();
+      }
+      hydrateDisplaySections(dashboard.display_providers || null, dashboard.display_sections || null);
+      done(true);
     });
   }
   function setCmd(text) {
@@ -299,19 +603,40 @@
     if (!view) { return; }
     var items = payload && payload.items ? payload.items : [];
     if (!items.length) { view.textContent = 'No plugin entries found.'; return; }
-    var html = '<div class="opt-cat"><div class="opt-head">Service Plugins (' + items.length + ')</div>';
+    var html = '<div class="plugin-list">';
     for (var i = 0; i < items.length; i++) {
       var it = items[i] || {};
-      var selectedTrue = it.enabled ? 'selected' : '';
-      var selectedFalse = it.enabled ? '' : 'selected';
-      html += '<div class="opt-row">' +
-        '<div><div><strong>' + String(it.name || '') + '</strong></div><div class="opt-meta">mode=' + String(it.mode || 'manual') + ' | ' + (it.mounted ? 'mounted' : 'not-mounted') + ' | ' + (it.loaded ? 'loaded' : 'idle') + '</div></div>' +
-        '<div><select data-plugin-name="' + String(it.name || '') + '"><option value="true" ' + selectedTrue + '>true</option><option value="false" ' + selectedFalse + '>false</option></select></div>' +
-        '<div><button data-plugin-apply="' + String(it.name || '') + '">Apply</button></div>' +
+      var name = String(it.name || '');
+      var mode = String(it.mode || 'manual');
+      var mounted = it.mounted ? 'mounted' : 'not-mounted';
+      var loaded = it.loaded ? 'loaded' : 'idle';
+      var enableBtn = it.enabled
+        ? '<button data-plugin-set-enabled="false" data-plugin-name="' + name + '">Disable</button>'
+        : '<button class="primary" data-plugin-set-enabled="true" data-plugin-name="' + name + '">Enable</button>';
+      html += '<div class="plugin-card">' +
+        '<div class="plugin-card-head"><strong>' + name + '</strong><span class="plugin-badge">' + (it.enabled ? 'enabled' : 'disabled') + '</span></div>' +
+        '<div class="opt-meta"><span class="plugin-badge">mode=' + mode + '</span><span class="plugin-badge">' + mounted + '</span><span class="plugin-badge">' + loaded + '</span></div>' +
+        '<div class="plugin-actions">' +
+        enableBtn + ' <button data-plugin-config-open="' + name + '">Config</button> <button data-plugin-visual-open="' + name + '">Visual</button>' +
+        '</div>' +
         '</div>';
     }
     html += '</div>';
     view.innerHTML = html;
+  }
+  function updatePluginConfigPicker(items) {
+    var select = byId('pluginConfigName');
+    if (!select) { return; }
+    var rows = items || [];
+    var html = '';
+    for (var i = 0; i < rows.length; i++) {
+      var name = String((rows[i] || {}).name || '');
+      if (!name) { continue; }
+      html += '<option value="' + escHtml(name) + '">' + escHtml(name) + '</option>';
+    }
+    select.innerHTML = html || '<option value="">(no plugins)</option>';
+    var cmdSelect = byId('pluginCommandName');
+    if (cmdSelect) { cmdSelect.innerHTML = select.innerHTML; }
   }
   function loadPluginControl() {
     req('GET', '/api/plugins', null, function (err, payload) {
@@ -320,7 +645,21 @@
         return;
       }
       renderPluginItems(payload);
+      updatePluginConfigPicker(payload.items || []);
       setText('pluginResult', JSON.stringify(payload, null, 2));
+      var picker = byId('pluginConfigName');
+      var selected = String(picker ? picker.value : '').trim();
+      if (!selected) {
+        var rows = payload.items || [];
+        if (rows.length) { selected = String((rows[0] || {}).name || '').trim(); }
+      }
+      if (selected) {
+        if (picker) { picker.value = selected; }
+        var cmdPicker = byId('pluginCommandName');
+        if (cmdPicker) { cmdPicker.value = selected; }
+        loadPluginConfigSchema(selected);
+        loadPluginCommands(selected);
+      }
     });
   }
   function setPluginEnabled(name, enabled, onComplete) {
@@ -333,6 +672,485 @@
       if (!err && payload) { renderPluginItems(payload); }
       reloadAll();
       if (typeof onComplete === 'function') { onComplete(result); }
+    });
+  }
+  var __pluginOptionDraft = {};
+  function renderPluginConfigSchema(payload) {
+    var host = byId('pluginConfigSchemaView');
+    if (!host) { return; }
+    var schema = payload && payload.schema ? payload.schema : {categories: []};
+    var cats = schema.categories || [];
+    if (!cats.length) {
+      host.textContent = 'No plugin config fields available.';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < cats.length; i++) {
+      var c = cats[i] || {};
+      var fields = c.fields || [];
+      html += '<div class="opt-cat"><div class="opt-head">' + escHtml(c.title || c.id || 'Plugin Config') + ' (' + fields.length + ')</div>';
+      for (var j = 0; j < fields.length; j++) {
+        var f = fields[j] || {};
+        var ek = encodeURIComponent(String(f.key || ''));
+        html += '<div class="opt-row">' +
+          '<div><div><strong>' + escHtml(f.label || f.key || 'field') + '</strong></div><div class="opt-meta">' + escHtml(f.description || '') + '</div><div class="opt-key">' + escHtml(f.key || '') + ' (' + escHtml(f.type || 'json') + ')</div></div>' +
+          '<div>' + optionControlHtml(f) + '</div>' +
+          '<div><button data-plugin-opt-apply-enc="' + ek + '">Apply</button></div>' +
+          '</div>';
+      }
+      html += '</div>';
+    }
+    host.innerHTML = html;
+    __pluginOptionDraft = {};
+    autoSizeAllOptionTextAreas();
+  }
+  function loadPluginConfigSchema(pluginName) {
+    var select = byId('pluginConfigName');
+    var name = String(pluginName || (select ? select.value : '') || '').trim();
+    if (!name) {
+      setText('pluginConfigResult', JSON.stringify({ok: false, error: 'plugin is required'}, null, 2));
+      return;
+    }
+    req('GET', '/api/plugins/config?plugin=' + encodeURIComponent(name) + '&only_writable=1', null, function (err, payload) {
+      if (err || !payload) {
+        setText('pluginConfigResult', JSON.stringify(payload || {ok: false, error: String(err || 'request failed')}, null, 2));
+        return;
+      }
+      renderPluginConfigSchema(payload);
+      setText('pluginConfigResult', JSON.stringify(payload, null, 2));
+    });
+  }
+  function openPluginConfig(pluginName) {
+    var name = String(pluginName || '').trim();
+    if (!name) { return; }
+    switchSection('plugins');
+    switchPluginPane('config');
+    var picker = byId('pluginConfigName');
+    if (picker) { picker.value = name; }
+    setText('pluginConfigResult', 'Loading plugin config: ' + name + ' ...');
+    loadPluginConfigSchema(name);
+    loadPluginCommands(name);
+    var panel = byId('pluginConfigSchemaView');
+    if (panel && panel.scrollIntoView) {
+      panel.scrollIntoView({behavior: 'smooth', block: 'start'});
+    }
+  }
+  function openPluginVisual(pluginName) {
+    var name = String(pluginName || '').trim();
+    if (!name) { return; }
+    switchSection('plugins');
+    switchPluginPane('visual');
+    var picker = byId('pluginConfigName');
+    if (picker) { picker.value = name; }
+    var cmdPicker = byId('pluginCommandName');
+    if (cmdPicker) { cmdPicker.value = name; }
+    loadPluginCommands(name);
+    loadPluginVisualSchema(name);
+  }
+  function parsePluginCmdArgs(raw) {
+    var text = String(raw || '').trim();
+    if (!text) { return []; }
+    if (text.charAt(0) === '[') {
+      try {
+        var arr = JSON.parse(text);
+        return Array.isArray(arr) ? arr : [];
+      } catch (_e) {
+        return [];
+      }
+    }
+    return text.split(/\s+/).filter(function (x) { return !!x; });
+  }
+  function renderPluginCommands(plugin, commands) {
+    var host = byId('pluginCommandListView');
+    if (!host) { return; }
+    var rows = commands || [];
+    if (!rows.length) {
+      host.innerHTML = '<span class="muted">No commands found for plugin: ' + escHtml(plugin || '') + '</span>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < rows.length; i++) {
+      var it = rows[i] || {};
+      var name = String(it.name || '');
+      var desc = String(it.description || '');
+      html += '<div class="plugin-command-row">' +
+        '<div><strong>' + escHtml(name) + '</strong><div class="opt-meta">' + escHtml(desc || 'No description') + '</div></div>' +
+        '<div><button data-plugin-cmd-run="' + escHtml(name) + '">Run</button></div>' +
+        '</div>';
+    }
+    host.innerHTML = html;
+  }
+  function loadPluginCommands(pluginName) {
+    var select = byId('pluginCommandName');
+    var name = String(pluginName || (select ? select.value : '') || '').trim();
+    if (!name) {
+      setText('pluginCommandResult', JSON.stringify({ok: false, error: 'plugin is required'}, null, 2));
+      return;
+    }
+    req('GET', '/api/plugins/commands?plugin=' + encodeURIComponent(name), null, function (err, payload) {
+      if (err || !payload) {
+        setText('pluginCommandResult', JSON.stringify(payload || {ok: false, error: String(err || 'request failed')}, null, 2));
+        return;
+      }
+      renderPluginCommands(name, payload.commands || []);
+      setText('pluginCommandResult', JSON.stringify(payload, null, 2));
+      loadPluginVisualSchema(name);
+    });
+  }
+  function visualFieldControl(plugin, cmdName, field, idx) {
+    var f = field || {};
+    var fType = String(f.type || 'str').toLowerCase();
+    var fName = String(f.name || '');
+    var key = escHtml(String(plugin + '|' + cmdName + '|' + idx));
+    var val = f.default == null ? '' : String(f.default);
+    
+    if (fType === 'bool') {
+      var isChecked = val === 'true' || val === true || val === 1 || val === '1';
+      return '<input type="checkbox" ' + (isChecked ? 'checked' : '') + ' data-vf-key="' + key + '" data-vf-name="' + escHtml(fName) + '" data-vf-type="' + escHtml(fType) + '" style="height:auto;width:auto;">';
+    }
+    
+    if (fType === 'select') {
+      var options = '';
+      var choices = Array.isArray(f.choices) ? f.choices : [];
+      for (var i = 0; i < choices.length; i++) {
+        var ch = String(choices[i]);
+        options += '<option value="' + escHtml(ch) + '" ' + (ch === val ? 'selected' : '') + '>' + escHtml(ch) + '</option>';
+      }
+      return '<select data-vf-key="' + key + '" data-vf-name="' + escHtml(fName) + '" data-vf-type="' + escHtml(fType) + '">' + options + '</select>';
+    }
+    var inputType = (fType === 'int' || fType === 'float') ? 'number' : 'text';
+    return '<input type="' + inputType + '" value="' + escHtml(val) + '" data-vf-key="' + key + '" data-vf-name="' + escHtml(fName) + '" data-vf-type="' + escHtml(fType) + '">';
+  }
+  function visualPresetStorageKey(plugin, cmd) {
+    return 'os_web_plugin_preset_' + String(plugin || '') + '__' + String(cmd || '');
+  }
+  function listVisualPresets(plugin, cmd) {
+    try {
+      var raw = window.localStorage.getItem(visualPresetStorageKey(plugin, cmd));
+      var parsed = JSON.parse(String(raw || '[]'));
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_e) {
+      return [];
+    }
+  }
+  function saveVisualPreset(plugin, cmd, name, args) {
+    var title = String(name || '').trim();
+    if (!title) { return {ok: false, error: 'preset name required'}; }
+    var rows = listVisualPresets(plugin, cmd);
+    var filtered = [];
+    for (var i = 0; i < rows.length; i++) {
+      var it = rows[i] || {};
+      if (String(it.name || '') !== title) { filtered.push(it); }
+    }
+    // Clean up args: remove any standalone "false" values that shouldn't be there
+    var cleanedArgs = [];
+    for (var i = 0; i < args.length; i++) {
+      var arg = String(args[i] || '').trim();
+      if (arg && (arg === 'false' || arg === 'true')) {
+        // Skip boolean literal values that shouldn't be in args
+        continue;
+      }
+      if (arg.indexOf('--') === 0) {
+        // This is a flag - check if next item is "false"
+        if (i + 1 < args.length) {
+          var nxt = String(args[i + 1] || '').trim();
+          if (nxt === 'false') {
+            // Skip the "false" value and skip this flag too
+            i += 1;
+            continue;
+          }
+        }
+        cleanedArgs.push(arg);
+      } else {
+        // Regular value
+        cleanedArgs.push(arg);
+      }
+    }
+    filtered.push({name: title, args: cleanedArgs});
+    try {
+      window.localStorage.setItem(visualPresetStorageKey(plugin, cmd), JSON.stringify(filtered));
+      return {ok: true};
+    } catch (e) {
+      return {ok: false, error: String(e)};
+    }
+  }
+  function deleteVisualPreset(plugin, cmd, name) {
+    var title = String(name || '').trim();
+    var rows = listVisualPresets(plugin, cmd);
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var it = rows[i] || {};
+      if (String(it.name || '') !== title) { out.push(it); }
+    }
+    try {
+      window.localStorage.setItem(visualPresetStorageKey(plugin, cmd), JSON.stringify(out));
+      return {ok: true};
+    } catch (e) {
+      return {ok: false, error: String(e)};
+    }
+  }
+  function renderPresetControls(plugin, cmd) {
+    var presets = listVisualPresets(plugin, cmd);
+    var options = '<option value="">(preset)</option>';
+    for (var i = 0; i < presets.length; i++) {
+      var it = presets[i] || {};
+      var name = String(it.name || '').trim();
+      if (!name) { continue; }
+      options += '<option value="' + escHtml(name) + '">' + escHtml(name) + '</option>';
+    }
+    return '' +
+      '<div class="visual-preset-row">' +
+      '<select data-visual-preset-select="' + escHtml(plugin + '|' + cmd) + '">' + options + '</select>' +
+      '<input data-visual-preset-name="' + escHtml(plugin + '|' + cmd) + '" placeholder="Preset name">' +
+      '<button data-visual-preset-save="' + escHtml(plugin) + '" data-visual-preset-cmd="' + escHtml(cmd) + '">Save</button>' +
+      '<button data-visual-preset-load="' + escHtml(plugin) + '" data-visual-preset-cmd="' + escHtml(cmd) + '">Load</button>' +
+      '<button data-visual-preset-delete="' + escHtml(plugin) + '" data-visual-preset-cmd="' + escHtml(cmd) + '">Delete</button>' +
+      '</div>';
+  }
+  function renderPluginVisualActions(plugin, schema) {
+    var host = byId('pluginVisualActionsView');
+    if (!host) { return; }
+    var sections = schema && schema.sections ? schema.sections : [];
+    if (!sections.length) {
+      host.innerHTML = '<span class="muted">No visual actions for plugin: ' + escHtml(plugin || '') + '</span>';
+      return;
+    }
+    var html = '';
+    __visualCommandOptionMap = {};
+    __visualCommandFieldsMap = {};
+    for (var i = 0; i < sections.length; i++) {
+      var sec = sections[i] || {};
+      var cmds = sec.commands || [];
+      html += '<div class="opt-cat"><div class="opt-head">' + escHtml(sec.title || sec.id || 'Section') + '</div>';
+      for (var j = 0; j < cmds.length; j++) {
+        var cmd = cmds[j] || {};
+        var cName = String(cmd.name || '');
+        var fields = cmd.fields || [];
+        var advanced = cmd.advanced_fields || [];
+        var key = String(plugin + '|' + cName);
+        var known = [];
+        for (var a = 0; a < fields.length; a++) {
+          var f0 = fields[a] || {};
+          if (f0.name) { known.push(String(f0.name)); }
+        }
+        for (var b = 0; b < advanced.length; b++) {
+          var f1 = advanced[b] || {};
+          if (f1.name && known.indexOf(String(f1.name)) < 0) { known.push(String(f1.name)); }
+        }
+        var extras = Array.isArray(cmd.extra_options) ? cmd.extra_options : [];
+        for (var c = 0; c < extras.length; c++) {
+          var opt = String(extras[c] || '').trim();
+          if (opt && known.indexOf(opt) < 0) { known.push(opt); }
+        }
+        __visualCommandOptionMap[key] = known;
+        __visualCommandFieldsMap[key] = known.slice(0);
+        var fieldsHtml = '';
+        for (var k = 0; k < fields.length; k++) {
+          var field = fields[k] || {};
+          fieldsHtml += '<div class="visual-field-grid"><span class="muted">' + escHtml(field.name || 'arg') + '</span>' + visualFieldControl(plugin, cName, field, k) + '</div>';
+        }
+        var advancedHtml = '';
+        if (advanced.length) {
+          var advRows = '';
+          for (var m = 0; m < advanced.length; m++) {
+            var advField = advanced[m] || {};
+            advRows += '<div class="visual-field-grid"><span class="muted">' + escHtml(advField.name || 'arg') + '</span>' + visualFieldControl(plugin, cName, advField, fields.length + m) + '</div>';
+          }
+          advancedHtml = '<details><summary>Advanced</summary>' + advRows + '</details>';
+        }
+        html += '<div class="visual-command-card">' +
+          '<div class="display-title">' + escHtml(cmd.label || cName) + '</div>' +
+          '<div class="opt-meta">' + escHtml(cmd.description || '') + '</div>' +
+          (fieldsHtml || '<div class="opt-meta">No additional fields</div>') +
+          advancedHtml +
+          renderPresetControls(plugin, cName) +
+          '<div class="visual-extra-list" data-visual-extra-list="' + escHtml(plugin + '|' + cName) + '"></div>' +
+          '<div class="visual-action-bar"><button data-visual-add-plugin="' + escHtml(plugin) + '" data-visual-add-cmd="' + escHtml(cName) + '">New Param</button> <button data-visual-run-plugin="' + escHtml(plugin) + '" data-visual-run-cmd="' + escHtml(cName) + '">Run</button></div>' +
+          '</div>';
+      }
+      html += '</div>';
+    }
+    host.innerHTML = html;
+  }
+  function appendVisualExtraArgRow(host, plugin, cmd, keyValue, rawValue) {
+    if (!host) { return; }
+    var key = String(plugin + '|' + cmd);
+    var list = host.querySelector('[data-visual-extra-list="' + key + '"]');
+    if (!list) { return; }
+    var options = __visualCommandOptionMap[key] || [];
+    var optionsHtml = '<option value="">--arg-name</option>';
+    for (var i = 0; i < options.length; i++) {
+      var token = String(options[i] || '').trim();
+      if (!token) { continue; }
+      optionsHtml += '<option value="' + escHtml(token) + '" ' + (token === String(keyValue || '') ? 'selected' : '') + '>' + escHtml(token) + '</option>';
+    }
+    var row = document.createElement('div');
+    row.className = 'visual-extra-row';
+    row.innerHTML = '' +
+      '<select data-visual-extra-name="1" data-visual-extra-plugin="' + escHtml(plugin) + '" data-visual-extra-cmd="' + escHtml(cmd) + '">' + optionsHtml + '</select>' +
+      '<input data-visual-extra-value="1" data-visual-extra-plugin="' + escHtml(plugin) + '" data-visual-extra-cmd="' + escHtml(cmd) + '" placeholder="value" value="' + escHtml(rawValue || '') + '">' +
+      '<button data-visual-remove-extra="1">Remove</button>';
+    list.appendChild(row);
+  }
+  function parseVisualArgs(host, plugin, cmd) {
+    var args = [];
+    if (!host) { return args; }
+    var keyPrefix = String(plugin + '|' + cmd + '|');
+    var inputs = host.querySelectorAll('[data-vf-key]');
+    for (var i = 0; i < inputs.length; i++) {
+      var node = inputs[i];
+      var key = String(node.getAttribute('data-vf-key') || '');
+      if (key.indexOf(keyPrefix) !== 0) { continue; }
+      var argName = String(node.getAttribute('data-vf-name') || '').trim();
+      var typ = String(node.getAttribute('data-vf-type') || 'str').trim();
+      
+      if (typ === 'bool') {
+        // For boolean flags, only include the flag if checkbox is checked
+        if (node.checked) {
+          args.push(argName);
+        }
+      } else {
+        var raw = String(node.value || '').trim();
+        if (!argName || !raw) { continue; }
+        args.push(argName);
+        if (typ === 'int') { args.push(String(parseInt(raw, 10))); }
+        else if (typ === 'float') { args.push(String(parseFloat(raw))); }
+        else { args.push(raw); }
+      }
+    }
+    var extraNames = host.querySelectorAll('[data-visual-extra-name="1"][data-visual-extra-plugin="' + plugin + '"][data-visual-extra-cmd="' + cmd + '"]');
+    for (var j = 0; j < extraNames.length; j++) {
+      var nameNode = extraNames[j];
+      var valueNode = null;
+      var row = nameNode.parentNode;
+      if (row && row.querySelector) {
+        valueNode = row.querySelector('[data-visual-extra-value="1"]');
+      }
+      var argName = String(nameNode.value || '').trim();
+      if (!argName) { continue; }
+      args.push(argName);
+      var argValue = String(valueNode && valueNode.value != null ? valueNode.value : '').trim();
+      // Skip if value is empty or literally "false" (likely user error)
+      if (argValue && argValue.toLowerCase() !== 'false') { 
+        args.push(argValue); 
+      }
+    }
+    return args;
+  }
+  function loadPluginVisualSchema(pluginName) {
+    var select = byId('pluginCommandName');
+    var name = String(pluginName || (select ? select.value : '') || '').trim();
+    if (!name) {
+      setText('pluginVisualResult', JSON.stringify({ok: false, error: 'plugin is required'}, null, 2));
+      return;
+    }
+    req('GET', '/api/plugins/visual-schema?plugin=' + encodeURIComponent(name), null, function (err, payload) {
+      if (err || !payload) {
+        setText('pluginVisualResult', JSON.stringify(payload || {ok: false, error: String(err || 'request failed')}, null, 2));
+        return;
+      }
+      renderPluginVisualActions(name, payload);
+      setText('pluginVisualResult', JSON.stringify(payload, null, 2));
+    });
+  }
+  function runPluginVisualAction(plugin, cmd) {
+    var host = byId('pluginVisualActionsView');
+    var args = parseVisualArgs(host, String(plugin || ''), String(cmd || ''));
+    runPluginCommand(plugin, cmd, args);
+  }
+  function applyVisualPreset(host, plugin, cmd, presetArgs) {
+    var key = String(plugin + '|' + cmd);
+    var tokens = Array.isArray(presetArgs) ? presetArgs : [];
+    var fieldNodes = host.querySelectorAll('[data-vf-key]');
+    for (var i = 0; i < fieldNodes.length; i++) {
+      var n = fieldNodes[i];
+      var argName = String(n.getAttribute('data-vf-name') || '');
+      if (!argName) { continue; }
+      var typ = String(n.getAttribute('data-vf-type') || 'str');
+      if (typ === 'bool') {
+        n.checked = false;
+      } else {
+        n.value = '';
+      }
+    }
+    var list = host.querySelector('[data-visual-extra-list="' + key + '"]');
+    if (list) { list.innerHTML = ''; }
+    for (var j = 0; j < tokens.length; j++) {
+      var token = String(tokens[j] || '').trim();
+      if (!token || token.indexOf('--') !== 0) { continue; }
+      var val = '';
+      if (j + 1 < tokens.length) {
+        var nxt = String(tokens[j + 1] || '');
+        if (nxt.indexOf('--') !== 0) { val = nxt; j += 1; }
+      }
+      var target = null;
+      for (var k = 0; k < fieldNodes.length; k++) {
+        var node = fieldNodes[k];
+        if (String(node.getAttribute('data-vf-name') || '') === token) { target = node; break; }
+      }
+      if (target) {
+        var targetType = String(target.getAttribute('data-vf-type') || 'str');
+        if (targetType === 'bool') {
+          // For boolean flags, just set checked if token is present (presence = true)
+          target.checked = true;
+        } else {
+          target.value = val;
+        }
+      } else {
+        appendVisualExtraArgRow(host, plugin, cmd, token, val);
+      }
+    }
+  }
+  function runPluginCommand(pluginName, cmdName) {
+    var plugin = String(pluginName || '').trim();
+    var cmd = String(cmdName || '').trim();
+    var explicitArgs = arguments.length > 2 ? arguments[2] : null;
+    if (!plugin || !cmd) {
+      setText('pluginCommandResult', JSON.stringify({ok: false, error: 'plugin/cmd required'}, null, 2));
+      return;
+    }
+    var argsEl = byId('pluginCommandArgs');
+    var args = Array.isArray(explicitArgs) ? explicitArgs : parsePluginCmdArgs(argsEl ? argsEl.value : '');
+    setText('pluginCommandResult', 'Running ' + plugin + ' ' + cmd + ' ...');
+    req('POST', '/api/plugins', {plugin: plugin, action: 'cmd', sub_cmd: cmd, args: args}, function (err, payload) {
+      var out = payload || {ok: false, error: String(err || 'request failed')};
+      setText('pluginCommandResult', JSON.stringify(out, null, 2));
+      if (out && out.ok) { setBanner('ok', 'Command finished: ' + plugin + ' ' + cmd); }
+      else { setBanner('bad', 'Command failed: ' + plugin + ' ' + cmd); }
+    });
+  }
+  function applyPluginConfigChanges() {
+    var select = byId('pluginConfigName');
+    var name = String(select ? select.value : '').trim();
+    if (!name) {
+      setText('pluginConfigResult', JSON.stringify({ok: false, error: 'plugin is required'}, null, 2));
+      return;
+    }
+    var updates = [];
+    for (var key in __pluginOptionDraft) {
+      if (!Object.prototype.hasOwnProperty.call(__pluginOptionDraft, key)) { continue; }
+      var it = __pluginOptionDraft[key];
+      try {
+        updates.push({key: it.key, value_type: it.value_type, value: parseOptionValue(it.raw_value, it.value_type)});
+      } catch (e) {
+        setText('pluginConfigResult', JSON.stringify({ok: false, key: it.key, error: String(e)}, null, 2));
+        return;
+      }
+    }
+    if (!updates.length) {
+      setText('pluginConfigResult', JSON.stringify({ok: true, changed: [], info: 'no plugin config changes'}, null, 2));
+      return;
+    }
+    req('PUT', '/api/plugins/config', {plugin: name, updates: updates}, function (err, payload) {
+      var out = payload || {ok: false, error: String(err || 'request failed')};
+      setText('pluginConfigResult', JSON.stringify(out, null, 2));
+      if (out && out.ok) {
+        __pluginOptionDraft = {};
+        setBanner('ok', 'Plugin config updated: ' + name);
+        loadPluginConfigSchema(name);
+      } else {
+        setBanner('bad', 'Plugin config update failed: ' + name);
+      }
     });
   }
   function renderTransportItems(payload) {
@@ -526,6 +1344,30 @@
     }
     return '<textarea data-opt-key-enc="' + ek + '" data-opt-type="json">' + esc(JSON.stringify(f.value, null, 2)) + '</textarea>';
   }
+  function optionShortcutHtml(f) {
+    var key = String((f && f.key) || '');
+    var value = f ? f.value : null;
+    if (!Array.isArray(value) || !value.length) { return ''; }
+    if (key.indexOf('.expose_sections') >= 0) {
+      var parts = '';
+      for (var i = 0; i < value.length; i++) {
+        var sec = String(value[i] || '').trim();
+        if (!sec) { continue; }
+        parts += '<button data-jump-section="' + esc(sec) + '">' + esc(sec) + '</button> ';
+      }
+      return parts ? '<div class="row"><span class="muted">Jump to section:</span>' + parts + '</div>' : '';
+    }
+    if (key.indexOf('.writable_config_prefixes') >= 0) {
+      var rows = '';
+      for (var j = 0; j < value.length; j++) {
+        var prefix = String(value[j] || '').trim();
+        if (!prefix) { continue; }
+        rows += '<button data-jump-prefix="' + esc(prefix) + '">' + esc(prefix) + '</button> ';
+      }
+      return rows ? '<div class="row"><span class="muted">Quick open key prefix:</span>' + rows + '</div>' : '';
+    }
+    return '';
+  }
   function markOptionDirtyFromControl(ctrl) {
     if (!ctrl || !ctrl.getAttribute) { return; }
     var ek = ctrl.getAttribute('data-opt-key-enc');
@@ -645,7 +1487,7 @@
         var ek = encodeURIComponent(String(f.key || ''));
         html += '<div class="opt-row">' +
           '<div><div><strong>' + esc(f.label || f.key) + '</strong></div><div class="opt-meta">' + esc(f.description || '') + '</div><div class="opt-key">' + esc(f.key) + ' (' + esc(f.type) + ')</div></div>' +
-          '<div>' + optionControlHtml(f) + '</div>' +
+          '<div>' + optionControlHtml(f) + optionShortcutHtml(f) + '</div>' +
           '<div><button data-opt-apply-enc="' + ek + '">Apply</button>' +
           (String(f.type || '') === 'json' ? ' <button data-opt-subedit-enc="' + ek + '">Sub Edit</button>' : '') +
           '</div>' +
@@ -686,8 +1528,34 @@
       if (el && !(el.getAttribute && el.getAttribute('onclick'))) { el.addEventListener('click', fn); }
     }
     wire('refreshBtn', reloadAll);
+    wire('jsonToggleBtn', toggleJsonMode);
     wire('selfCheckBtn', runSelfCheck);
     wire('pluginRunBtn', loadPluginControl);
+    wire('pluginConfigLoadBtn', function () { loadPluginConfigSchema(); });
+    wire('pluginConfigApplyBtn', applyPluginConfigChanges);
+    wire('pluginCommandLoadBtn', function () { loadPluginCommands(); });
+    var cfgSelect = byId('pluginConfigName');
+    var cmdSelect = byId('pluginCommandName');
+    if (cfgSelect) {
+      cfgSelect.addEventListener('change', function () {
+        var v = String(cfgSelect.value || '').trim();
+        if (cmdSelect) { cmdSelect.value = v; }
+        if (v) {
+          loadPluginConfigSchema(v);
+          loadPluginCommands(v);
+        }
+      });
+    }
+    if (cmdSelect) {
+      cmdSelect.addEventListener('change', function () {
+        var v = String(cmdSelect.value || '').trim();
+        if (cfgSelect) { cfgSelect.value = v; }
+        if (v) {
+          loadPluginCommands(v);
+          loadPluginConfigSchema(v);
+        }
+      });
+    }
     wire('transportApplyBtn', loadTransportControl);
     wire('configGetBtn', getConfig);
     wire('configSetBtn', setConfig);
@@ -740,10 +1608,14 @@
       pview.addEventListener('click', function (evt) {
         var t = evt.target || evt.srcElement;
         if (!t || !t.getAttribute) { return; }
-        var name = t.getAttribute('data-plugin-apply');
+        var cfgName = t.getAttribute('data-plugin-config-open');
+        if (cfgName) { openPluginConfig(cfgName); return; }
+        var visName = t.getAttribute('data-plugin-visual-open');
+        if (visName) { openPluginVisual(visName); return; }
+        var name = t.getAttribute('data-plugin-name') || t.getAttribute('data-plugin-apply');
         if (!name) { return; }
-        var sel = pview.querySelector('select[data-plugin-name="' + name + '"]');
-        var enabled = sel ? String(sel.value) === 'true' : true;
+        var enabledAttr = t.getAttribute('data-plugin-set-enabled');
+        var enabled = enabledAttr == null ? true : String(enabledAttr) === 'true';
         var btn = t;
         setButtonBusy(btn, true, 'Applying...');
         setText('pluginResult', 'Applying plugin: ' + name + '...');
@@ -751,6 +1623,140 @@
           setButtonBusy(btn, false);
           flashButtonState(btn, result && result.ok ? 'btn-success' : 'btn-fail');
         });
+      });
+    }
+    var pconf = byId('pluginConfigSchemaView');
+    if (pconf) {
+      pconf.addEventListener('input', function (evt) {
+        var t = evt.target || evt.srcElement;
+        if (!t || !t.getAttribute) { return; }
+        var ek = t.getAttribute('data-opt-key-enc');
+        var tp = t.getAttribute('data-opt-type') || 'json';
+        if (!ek) { return; }
+        __pluginOptionDraft[ek] = {key: decodeURIComponent(ek), value_type: tp, raw_value: t.value};
+        autoSizeOptionTextArea(t);
+      });
+      pconf.addEventListener('change', function (evt) {
+        var t = evt.target || evt.srcElement;
+        if (!t || !t.getAttribute) { return; }
+        var ek = t.getAttribute('data-opt-key-enc');
+        var tp = t.getAttribute('data-opt-type') || 'json';
+        if (!ek) { return; }
+        __pluginOptionDraft[ek] = {key: decodeURIComponent(ek), value_type: tp, raw_value: t.value};
+        autoSizeOptionTextArea(t);
+      });
+      pconf.addEventListener('click', function (evt) {
+        var t = evt.target || evt.srcElement;
+        if (!t || !t.getAttribute) { return; }
+        var ak = t.getAttribute('data-plugin-opt-apply-enc');
+        if (!ak) { return; }
+        var q = pconf.querySelector('[data-opt-key-enc="' + ak + '"]');
+        if (!q) { return; }
+        var tp = q.getAttribute('data-opt-type') || 'json';
+        var select = byId('pluginConfigName');
+        var plugin = String(select ? select.value : '').trim();
+        if (!plugin) {
+          setText('pluginConfigResult', JSON.stringify({ok: false, error: 'plugin is required'}, null, 2));
+          return;
+        }
+        var upd = null;
+        try {
+          upd = {key: decodeURIComponent(ak), value_type: tp, value: parseOptionValue(q.value, tp)};
+        } catch (e) {
+          setText('pluginConfigResult', JSON.stringify({ok: false, error: String(e)}, null, 2));
+          return;
+        }
+        req('PUT', '/api/plugins/config', {plugin: plugin, updates: [upd]}, function (err, payload) {
+          var out = payload || {ok: false, error: String(err || 'request failed')};
+          setText('pluginConfigResult', JSON.stringify(out, null, 2));
+          if (out && out.ok) {
+            setBanner('ok', 'Plugin config updated: ' + plugin);
+            loadPluginConfigSchema(plugin);
+          } else {
+            setBanner('bad', 'Plugin config update failed: ' + plugin);
+          }
+        });
+      });
+    }
+    var pcmd = byId('pluginCommandListView');
+    if (pcmd) {
+      pcmd.addEventListener('click', function (evt) {
+        var t = evt.target || evt.srcElement;
+        if (!t || !t.getAttribute) { return; }
+        var cmd = t.getAttribute('data-plugin-cmd-run');
+        if (!cmd) { return; }
+        var select = byId('pluginCommandName');
+        var plugin = String(select ? select.value : '').trim();
+        runPluginCommand(plugin, cmd);
+      });
+    }
+    var pvisual = byId('pluginVisualActionsView');
+    if (pvisual) {
+      pvisual.addEventListener('click', function (evt) {
+        var t = evt.target || evt.srcElement;
+        if (!t || !t.getAttribute) { return; }
+        var psPlugin = t.getAttribute('data-visual-preset-save');
+        var psCmd = t.getAttribute('data-visual-preset-cmd');
+        if (psPlugin && psCmd) {
+          var argsForSave = parseVisualArgs(pvisual, psPlugin, psCmd);
+          var nameInput = pvisual.querySelector('[data-visual-preset-name="' + psPlugin + '|' + psCmd + '"]');
+          var presetName = String(nameInput && nameInput.value ? nameInput.value : '').trim();
+          var sv = saveVisualPreset(psPlugin, psCmd, presetName, argsForSave);
+          if (!sv.ok) {
+            setText('pluginVisualResult', JSON.stringify(sv, null, 2));
+            return;
+          }
+          loadPluginVisualSchema(psPlugin);
+          setText('pluginVisualResult', JSON.stringify({ok: true, plugin: psPlugin, command: psCmd, preset: presetName}, null, 2));
+          return;
+        }
+        var plPlugin = t.getAttribute('data-visual-preset-load');
+        var plCmd = t.getAttribute('data-visual-preset-cmd');
+        if (plPlugin && plCmd) {
+          var select = pvisual.querySelector('[data-visual-preset-select="' + plPlugin + '|' + plCmd + '"]');
+          var targetName = String(select && select.value ? select.value : '').trim();
+          if (!targetName) { return; }
+          var rows = listVisualPresets(plPlugin, plCmd);
+          var match = null;
+          for (var i = 0; i < rows.length; i++) {
+            if (String((rows[i] || {}).name || '') === targetName) { match = rows[i]; break; }
+          }
+          if (!match) { return; }
+          applyVisualPreset(pvisual, plPlugin, plCmd, match.args || []);
+          setText('pluginVisualResult', JSON.stringify({ok: true, plugin: plPlugin, command: plCmd, preset: targetName, loaded: true}, null, 2));
+          return;
+        }
+        var pdPlugin = t.getAttribute('data-visual-preset-delete');
+        var pdCmd = t.getAttribute('data-visual-preset-cmd');
+        if (pdPlugin && pdCmd) {
+          var sel = pvisual.querySelector('[data-visual-preset-select="' + pdPlugin + '|' + pdCmd + '"]');
+          var delName = String(sel && sel.value ? sel.value : '').trim();
+          if (!delName) { return; }
+          var dv = deleteVisualPreset(pdPlugin, pdCmd, delName);
+          if (!dv.ok) {
+            setText('pluginVisualResult', JSON.stringify(dv, null, 2));
+            return;
+          }
+          loadPluginVisualSchema(pdPlugin);
+          setText('pluginVisualResult', JSON.stringify({ok: true, plugin: pdPlugin, command: pdCmd, preset: delName, deleted: true}, null, 2));
+          return;
+        }
+        var addPlugin = t.getAttribute('data-visual-add-plugin');
+        var addCmd = t.getAttribute('data-visual-add-cmd');
+        if (addPlugin && addCmd) {
+          appendVisualExtraArgRow(pvisual, addPlugin, addCmd, '', '');
+          return;
+        }
+        var removeExtra = t.getAttribute('data-visual-remove-extra');
+        if (removeExtra) {
+          var row = t.parentNode;
+          if (row && row.parentNode) { row.parentNode.removeChild(row); }
+          return;
+        }
+        var plugin = t.getAttribute('data-visual-run-plugin');
+        var cmd = t.getAttribute('data-visual-run-cmd');
+        if (!plugin || !cmd) { return; }
+        runPluginVisualAction(plugin, cmd);
       });
     }
     var tview = byId('transportItemsView');
@@ -794,6 +1800,18 @@
       opts.addEventListener('click', function (evt) {
         var t = evt.target || evt.srcElement;
         if (!t || !t.getAttribute) { return; }
+        var jumpSection = t.getAttribute('data-jump-section');
+        if (jumpSection) {
+          switchSection(jumpSection);
+          return;
+        }
+        var jumpPrefix = t.getAttribute('data-jump-prefix');
+        if (jumpPrefix) {
+          switchSection('config');
+          var keyInput = byId('cfgKey');
+          if (keyInput) { keyInput.value = String(jumpPrefix); }
+          return;
+        }
         var sk = t.getAttribute('data-opt-subedit-enc');
         if (sk) {
           openSubEditor(sk);
@@ -845,6 +1863,7 @@
   }
   window.reloadAll = window.reloadAll || reloadAll;
   window.switchSection = window.switchSection || switchSection;
+  window.switchPluginPane = window.switchPluginPane || switchPluginPane;
   window.reloadUsers = window.reloadUsers || reloadUsers;
   window.loadUiOptions = window.loadUiOptions || loadUiOptions;
   window.saveUiOptions = window.saveUiOptions || saveUiOptions;
@@ -854,6 +1873,14 @@
   window.loadCommandHelp = window.loadCommandHelp || loadCommandHelp;
   window.loadPluginControl = window.loadPluginControl || loadPluginControl;
   window.setPluginEnabled = window.setPluginEnabled || setPluginEnabled;
+  window.loadPluginConfigSchema = window.loadPluginConfigSchema || loadPluginConfigSchema;
+  window.applyPluginConfigChanges = window.applyPluginConfigChanges || applyPluginConfigChanges;
+  window.openPluginConfig = window.openPluginConfig || openPluginConfig;
+  window.openPluginVisual = window.openPluginVisual || openPluginVisual;
+  window.loadPluginCommands = window.loadPluginCommands || loadPluginCommands;
+  window.runPluginCommand = window.runPluginCommand || runPluginCommand;
+  window.loadPluginVisualSchema = window.loadPluginVisualSchema || loadPluginVisualSchema;
+  window.runPluginVisualAction = window.runPluginVisualAction || runPluginVisualAction;
   window.loadTransportControl = window.loadTransportControl || loadTransportControl;
   window.setTransportEnabled = window.setTransportEnabled || setTransportEnabled;
   window.loadOptionSchema = window.loadOptionSchema || loadOptionSchema;
@@ -864,7 +1891,44 @@
   window.updateUser = window.updateUser || updateUser;
   window.delUser = window.delUser || delUser;
   window.runSelfCheck = window.runSelfCheck || runSelfCheck;
+  window.toggleJsonMode = window.toggleJsonMode || toggleJsonMode;
   window.__OS_WEB_RUNTIME_LOADED = true;
+  
+  // Clean up any corrupted visual presets from localStorage
+  function cleanupVisualPresets() {
+    try {
+      for (var i = 0; i < window.localStorage.length; i++) {
+        var key = window.localStorage.key(i);
+        if (key && key.indexOf('os_web_plugin_preset_') === 0) {
+          var val = window.localStorage.getItem(key);
+          var parsed = JSON.parse(val);
+          if (Array.isArray(parsed)) {
+            var cleaned = false;
+            for (var j = 0; j < parsed.length; j++) {
+              var preset = parsed[j] || {};
+              var args = preset.args || [];
+              // Check for and remove "false" values from args
+              for (var k = 0; k < args.length; k++) {
+                if (String(args[k]).trim() === 'false') {
+                  args.splice(k, 1);
+                  cleaned = true;
+                  k--;
+                }
+              }
+            }
+            if (cleaned) {
+              window.localStorage.setItem(key, JSON.stringify(parsed));
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Silently ignore cleanup errors
+    }
+  }
+  cleanupVisualPresets();
+  
+  initJsonMode();
   setBanner('warn', 'Connecting to web service...');
   setTimeout(bindUiHandlers, 100);
   setTimeout(function () { reloadAll(true); }, 50);

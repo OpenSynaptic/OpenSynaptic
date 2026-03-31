@@ -1,4 +1,5 @@
 import threading
+import json
 from opensynaptic.utils import os_log
 
 class ServiceManager:
@@ -125,14 +126,28 @@ class ServiceManager:
             return 1
         try:
             cmds = svc.get_cli_commands()
-            sub_cmd = argv[0] if argv else ''
+            argv_tokens = [str(x) for x in list(argv or [])]
+            sub_cmd = argv_tokens[0] if argv_tokens else ''
             handler = cmds.get(sub_cmd)
             if handler is None:
                 print(f'Unknown sub-command "{sub_cmd}" for plugin "{key}". Available: {sorted(cmds.keys())}')
                 return 1
-            return handler(argv[1:]) or 0
+            result = handler(argv_tokens[1:])
+            # Conventional CLI handlers return int exit code.
+            if isinstance(result, int):
+                return int(result)
+            # Dict payload handlers are treated as successful command responses.
+            if isinstance(result, dict):
+                print(json.dumps(result, ensure_ascii=False, default=str))
+                return 0
+            # Boolean/None fallback for older handlers.
+            if result is None:
+                return 0
+            if isinstance(result, bool):
+                return 0 if result else 1
+            return 0
         except Exception as exc:
-            os_log.err('SVC', 'PLUGIN_DISPATCH', exc, {'plugin': key, 'argv': argv})
+            os_log.err('SVC', 'PLUGIN_DISPATCH', exc, {'plugin': key, 'argv': list(argv or [])})
             return 1
 
     def _is_enabled(self, name):

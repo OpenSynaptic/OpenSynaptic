@@ -85,6 +85,24 @@ PLUGIN_SPECS = {
             'status_json_path': 'data/env_guard/status.json',
         },
     },
+    'port_forwarder': {
+        'module': 'opensynaptic.services.port_forwarder',
+        'class': 'PortForwarder',
+        'defaults': {
+            'enabled': True,
+            'mode': 'auto',
+            'rule_sets': [
+                {
+                    'name': 'default',
+                    'description': 'Default forwarding rules',
+                    'enabled': True,
+                    'rules': [],
+                }
+            ],
+            'persist_rules': True,
+            'rules_file': 'data/port_forwarder_rules.json',
+        },
+    },
 }
 
 ALIASES = {
@@ -92,6 +110,7 @@ ALIASES = {
     'deps': 'dependency_manager',
     'dependency': 'dependency_manager',
     'env-guard': 'env_guard',
+    'port-forwarder': 'port_forwarder',
 }
 
 

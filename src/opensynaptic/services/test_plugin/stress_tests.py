@@ -6,7 +6,9 @@ Run via:
 """
 import json
 import math
+import heapq
 import queue
+import socket
 import sys
 import time
 import threading
@@ -30,6 +32,7 @@ if _ROOT and _ROOT not in sys.path:
 from opensynaptic.utils import (
     has_native_library,
     read_json,
+    os_log,
 )
 from opensynaptic.services.test_plugin.metrics import (
     PERCENTILE_KEYS,
@@ -336,19 +339,20 @@ def _resolve_stress_runtime_options(node=None, config_path=None) -> dict[str, An
     if not isinstance(runtime_cfg, dict):
         runtime_cfg = {}
 
-    raw_mode = str(runtime_cfg.get('collector_mode', 'legacy') or 'legacy').strip().lower()
+    raw_mode = str(runtime_cfg.get('collector_mode', 'batched') or 'batched').strip().lower()
     mode_alias = {
         'legacy': 'legacy',
         'batched': 'batched',
         'thread_local': 'batched',
         'sharded': 'batched',
     }
-    mode = mode_alias.get(raw_mode, 'legacy')
+    mode = mode_alias.get(raw_mode, 'batched')
     flush_explicit = isinstance(runtime_cfg, dict) and ('collector_flush_every' in runtime_cfg)
     flush_every = max(1, int(runtime_cfg.get('collector_flush_every', 256) or 256))
 
-    raw_pipeline = str(runtime_cfg.get('pipeline_mode', 'legacy') or 'legacy').strip().lower()
+    raw_pipeline = str(runtime_cfg.get('pipeline_mode', 'auto') or 'auto').strip().lower()
     pipeline_alias = {
+        'auto': 'auto',
         'legacy': 'legacy',
         # pre_std is now fully merged into the same batch-fused ABI path.
         'pre_std': 'batch_fused',
@@ -358,7 +362,7 @@ def _resolve_stress_runtime_options(node=None, config_path=None) -> dict[str, An
         'fused': 'batch_fused',
         'batch': 'batch_fused',
     }
-    pipeline = pipeline_alias.get(raw_pipeline, 'legacy')
+    pipeline = pipeline_alias.get(raw_pipeline, 'auto')
 
     raw_gc = str(runtime_cfg.get('gc_mode', 'auto') or 'auto').strip().lower()
     gc_mode = raw_gc if raw_gc in {'auto', 'on', 'off'} else 'auto'
@@ -433,6 +437,14 @@ class StressResult:
         self._worst_topk_limit = 5
         self.worst_topk: list[dict[str, Any]] = []
         self._lock = threading.Lock()
+        # Compressed timing buckets for uniform batch_fused chunks.
+        # Key: rounded latency value; Value: sample count
+        self._uniform_total_counts: dict[float, int] = {}
+        self._uniform_stage_counts: dict[str, dict[float, int]] = {
+            'standardize_ms': {},
+            'compress_ms': {},
+            'fuse_ms': {},
+        }
 
     @staticmethod
     def _make_worst_sample(latency_ms, stage_ms, task_id=None, chain_mode='core'):
@@ -466,10 +478,14 @@ class StressResult:
     def _update_worst_nolock(self, latency_ms, stage_ms, task_id=None, chain_mode='core'):
         lat = float(latency_ms or 0.0)
         sample = self._make_worst_sample(lat, stage_ms, task_id=task_id, chain_mode=chain_mode)
-        self.worst_topk.append(sample)
-        self.worst_topk.sort(key=lambda it: float(it.get('total_latency_ms', 0.0) or 0.0), reverse=True)
-        if len(self.worst_topk) > self._worst_topk_limit:
-            self.worst_topk = self.worst_topk[:self._worst_topk_limit]
+        if len(self.worst_topk) < self._worst_topk_limit:
+            self.worst_topk.append(sample)
+            self.worst_topk.sort(key=lambda it: float(it.get('total_latency_ms', 0.0) or 0.0), reverse=True)
+        else:
+            current_min = float(self.worst_topk[-1].get('total_latency_ms', 0.0) or 0.0)
+            if lat > current_min:
+                self.worst_topk[-1] = sample
+                self.worst_topk.sort(key=lambda it: float(it.get('total_latency_ms', 0.0) or 0.0), reverse=True)
         if lat > float(self.worst_sample.get('total_latency_ms', 0.0) or 0.0):
             self.worst_sample = sample
 
@@ -506,7 +522,7 @@ class StressResult:
                 for key in self.stage_latencies:
                     self.stage_latencies[key].extend(stage_lists.get(key, []))
                 top_n = min(self._worst_topk_limit, ok_n)
-                top_idx = sorted(range(ok_n), key=lambda i: float(latencies[i] or 0.0), reverse=True)[:top_n]
+                top_idx = heapq.nlargest(top_n, range(ok_n), key=lambda i: float(latencies[i] or 0.0))
                 std_list = stage_lists.get('standardize_ms', []) or [0.0] * ok_n
                 cmp_list = stage_lists.get('compress_ms', []) or [0.0] * ok_n
                 fus_list = stage_lists.get('fuse_ms', []) or [0.0] * ok_n
@@ -520,9 +536,91 @@ class StressResult:
             if fail_n > 0:
                 self.errors.extend(errors)
 
+    def merge_uniform_chunk(self, ok_n, latency_ms, stage_ms, errors=None, chain_mode='core'):
+        """Merge a chunk where all successful samples share the same timing values."""
+        ok_n = int(ok_n or 0)
+        errors = errors or []
+        fail_n = len(errors)
+        if ok_n == 0 and fail_n == 0:
+            return
+        lat = float(latency_ms or 0.0)
+        std = float((stage_ms or {}).get('standardize_ms', 0.0) or 0.0)
+        cmpv = float((stage_ms or {}).get('compress_ms', 0.0) or 0.0)
+        fus = float((stage_ms or {}).get('fuse_ms', 0.0) or 0.0)
+        with self._lock:
+            self.total += ok_n + fail_n
+            self.ok += ok_n
+            self.fail += fail_n
+            if ok_n > 0:
+                # Keep uniform chunks compressed; this avoids huge list churn at 10M+ scale.
+                self._uniform_total_counts[lat] = int(self._uniform_total_counts.get(lat, 0) + ok_n)
+                std_counts = self._uniform_stage_counts['standardize_ms']
+                cmp_counts = self._uniform_stage_counts['compress_ms']
+                fus_counts = self._uniform_stage_counts['fuse_ms']
+                std_counts[std] = int(std_counts.get(std, 0) + ok_n)
+                cmp_counts[cmpv] = int(cmp_counts.get(cmpv, 0) + ok_n)
+                fus_counts[fus] = int(fus_counts.get(fus, 0) + ok_n)
+                self._update_worst_nolock(lat, {
+                    'standardize_ms': std,
+                    'compress_ms': cmpv,
+                    'fuse_ms': fus,
+                }, task_id=None, chain_mode=chain_mode)
+            if fail_n > 0:
+                self.errors.extend(errors)
+
+    @staticmethod
+    def _stats_from_weighted(counts: dict[float, int]) -> dict[str, float]:
+        total_n = int(sum(int(v or 0) for v in counts.values()))
+        if total_n <= 0:
+            return {
+                'avg': 0.0,
+                'p95': 0.0,
+                'p99': 0.0,
+                'p99_9': 0.0,
+                'p99_99': 0.0,
+                'min': 0.0,
+                'max': 0.0,
+            }
+        items = sorted((float(k), int(v)) for k, v in counts.items() if int(v or 0) > 0)
+        total_sum = sum(val * cnt for val, cnt in items)
+        min_v = items[0][0]
+        max_v = items[-1][0]
+
+        def _pick(q: float) -> float:
+            threshold = max(1, int(math.ceil(total_n * q)))
+            seen = 0
+            for val, cnt in items:
+                seen += cnt
+                if seen >= threshold:
+                    return val
+            return items[-1][0]
+
+        return {
+            'avg': round4(total_sum / float(total_n)),
+            'p95': round4(_pick(0.95)),
+            'p99': round4(_pick(0.99)),
+            'p99_9': round4(_pick(0.999)),
+            'p99_99': round4(_pick(0.9999)),
+            'min': round4(min_v),
+            'max': round4(max_v),
+        }
+
     def summary(self) -> dict[str, Any]:
-        stage_stats = {k: stats_from_values(v) for k, v in self.stage_latencies.items()}
-        total_stats = stats_from_values(self.latencies)
+        # Merge list-based stats (legacy path) with compressed uniform stats (batch_fused path).
+        total_counts: dict[float, int] = dict(self._uniform_total_counts)
+        for v in self.latencies:
+            fv = float(v or 0.0)
+            total_counts[fv] = int(total_counts.get(fv, 0) + 1)
+
+        stage_stats = {}
+        for key in self.stage_latencies:
+            stage_counts: dict[float, int] = dict(self._uniform_stage_counts.get(key, {}))
+            for v in self.stage_latencies[key]:
+                fv = float(v or 0.0)
+                stage_counts[fv] = int(stage_counts.get(fv, 0) + 1)
+            stage_stats[key] = self._stats_from_weighted(stage_counts)
+
+        total_stats = self._stats_from_weighted(total_counts)
         return {
             'total': self.total,
             'ok': self.ok,
@@ -571,7 +669,10 @@ def _pipeline_task(
     """Execute one stress iteration.
 
     core: standardize -> compress -> fuse
-    e2e : standardize -> compress -> fuse -> dispatch -> receive/process
+    e2e*: standardize -> compress -> fuse -> send/receive path (inproc/loopback)
+    
+    For e2e modes, send/receive overhead is tracked separately in latency_ms
+    but fuse_ms remains the pure run_engine() cost.
     """
     t_total_start = time.perf_counter_ns()
     try:
@@ -604,7 +705,7 @@ def _pipeline_task(
                 header_probe = {'attempted': True, 'parsed': False, 'crc16_ok': False}
 
         t_end = t3
-        if chain_mode == 'e2e':
+        if chain_mode != 'core':
             sender = e2e_send_fn if callable(e2e_send_fn) else (lambda packet: bool(node.dispatch(packet, medium='UDP')))
             if not sender(pkt):
                 raise ValueError('Loopback dispatch failed')
@@ -845,7 +946,8 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                core_name=None, expect_core=None, expect_codec_class=None,
                header_probe_rate=0.0, batch_size=1, processes=1,
                threads_per_process=None, progress_queue=None,
-               progress_step=0, chain_mode='core') -> tuple['StressResult', dict[str, Any]]:
+               progress_step=0, chain_mode='core', pipeline_mode='auto', 
+               use_real_udp=False, use_transport=None) -> tuple['StressResult', dict[str, Any]]:
     """
     Run a concurrent pipeline stress test.
 
@@ -863,18 +965,50 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     batch_size         : int        – tasks per future; >1 lowers scheduler overhead for very large totals
     processes          : int        – process count (1 = thread-only mode)
     threads_per_process: int | None – per-process thread count in hybrid mode (default=workers)
-    chain_mode         : str        – core (pipeline only) or e2e (dispatch->receive loopback)
+    chain_mode         : str        – core / e2e_inproc / e2e_loopback (e2e aliases loopback)
+    pipeline_mode      : str        – auto / legacy / batch_fused (encoding pipeline mode)
+    use_real_udp       : bool       – deprecated; use use_transport='udp' instead
+    use_transport      : str | None – for e2e_loopback only: use actual transport driver (tcp/uart/mqtt/etc)
 
     Returns
     -------
     (StressResult, summary_dict)
     """
+    # Global loopback queue for e2e_loopback mode (shared across all threads)
+    global _e2e_loopback_queue
+    _e2e_loopback_queue = queue.Queue(maxsize=2048)
+    
     preflight = _preflight(core_name=core_name)
-    chain_mode = str(chain_mode or 'core').strip().lower()
-    if chain_mode not in ('core', 'e2e'):
-        raise RuntimeError('unknown chain_mode [{}], expected core/e2e'.format(chain_mode))
+    requested_chain_mode = str(chain_mode or 'core').strip().lower()
+    chain_mode_alias = {
+        'e2e': 'e2e_loopback',
+        'loopback': 'e2e_loopback',
+        'inproc': 'e2e_inproc',
+    }
+    chain_mode = chain_mode_alias.get(requested_chain_mode, requested_chain_mode)
+    if chain_mode not in ('core', 'e2e_inproc', 'e2e_loopback'):
+        raise RuntimeError('unknown chain_mode [{}], expected core/e2e/e2e_inproc/e2e_loopback'.format(requested_chain_mode))
     process_count = max(1, int(processes or 1))
-    per_process_threads = max(1, int(threads_per_process if threads_per_process is not None else workers))
+    requested_tpp = None
+    if threads_per_process is not None:
+        try:
+            requested_tpp = int(threads_per_process)
+        except Exception:
+            requested_tpp = None
+    if requested_tpp is None or requested_tpp <= 0:
+        per_process_threads = max(1, int(workers or 1))
+    else:
+        per_process_threads = max(1, requested_tpp)
+    forced_thread_fallback = False
+    forced_thread_reason = ''
+
+    # Web-dispatched commands still run in this process, but on a request thread.
+    # On Windows, keep hybrid mode enabled and switch to safer spawn/no-progress settings.
+    if process_count > 1 and _os.name == 'nt' and threading.current_thread() is not threading.main_thread():
+        forced_thread_reason = 'windows_non_main_thread_spawn'
+        progress = False
+        if progress:
+            print('[stress] non-main Windows thread detected; using spawn-safe hybrid settings', flush=True)
 
     # Hybrid mode: split work across multiple processes, each running threaded stress.
     if process_count > 1:
@@ -908,15 +1042,26 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             with progress_lock:
                 print('\r' + _progress_line(completed_tasks, int(total), t_start), end='', flush=True)
 
-        _ppool = ProcessPoolExecutor(max_workers=process_count, initializer=_init_worker_ignore_sigint)
+        _mp_ctx = None
+        if _os.name == 'nt':
+            import multiprocessing as _mp
+            _mp_ctx = _mp.get_context('spawn')
+        _ppool = ProcessPoolExecutor(
+            max_workers=process_count,
+            initializer=_init_worker_ignore_sigint,
+            mp_context=_mp_ctx,
+        )
         _progress_manager = None
         _progress_queue = None
         _interrupted = False
         _proc_futures: list[Any] = []
         try:
             if progress:
-                import multiprocessing as _mp
-                _progress_manager = _mp.Manager()
+                if _mp_ctx is not None:
+                    _progress_manager = _mp_ctx.Manager()
+                else:
+                    import multiprocessing as _mp
+                    _progress_manager = _mp.Manager()
                 _progress_queue = _progress_manager.Queue()
             for shard_total in shard_totals:
                 kwargs = {
@@ -935,6 +1080,9 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                     'progress_queue': _progress_queue,
                     'progress_step': max(1024, int(batch_size or 1) * 4),
                     'chain_mode': chain_mode,
+                    'pipeline_mode': pipeline_mode,
+                    'use_real_udp': use_real_udp,
+                    'use_transport': use_transport,
                 }
                 _proc_futures.append(_ppool.submit(_process_worker_run_stress, kwargs))
 
@@ -1010,29 +1158,169 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             )
         )
 
-    def _build_e2e_sender(attached_node):
+    def _build_e2e_sender(attached_node, mode, use_udp=False, use_transport=None):
         receive_fn = getattr(attached_node, 'receive', None)
         fusion = getattr(attached_node, 'fusion', None)
         decompress_fn = getattr(fusion, 'decompress', None)
         dispatch_fn = getattr(attached_node, 'dispatch', None)
 
-        def _send(packet):
+        if mode == 'e2e_inproc':
+            def _send_inproc(packet):
+                try:
+                    if callable(receive_fn):
+                        decoded = receive_fn(packet)
+                        return not (isinstance(decoded, dict) and decoded.get('error'))
+                    if callable(decompress_fn):
+                        decoded = decompress_fn(packet)
+                        return not (isinstance(decoded, dict) and decoded.get('error'))
+                    if callable(dispatch_fn):
+                        return bool(dispatch_fn(packet, medium='UDP'))
+                    return False
+                except Exception:
+                    return False
+
+            return _send_inproc
+
+        # e2e_loopback: two modes available
+        # 1. in-process Queue (default, fastest) - for pure protocol chain throughput
+        # 2. real transporter (use_transport or use_udp) - for measuring actual I/O cost
+        
+        # Support use_transport (preferred) or legacy use_udp (for backward compat)
+        transport_driver = use_transport or ('udp' if use_udp else None)
+        
+        if transport_driver:
+            # Real transport driver path - measures actual network I/O
+            def _send_transport(packet):
+                try:
+                    if callable(dispatch_fn):
+                        # Use actual transport driver via dispatch
+                        return bool(dispatch_fn(packet, medium=transport_driver.upper()))
+                    return False
+                except Exception:
+                    return False
+            
+            return _send_transport
+        
+        # Default: in-process Queue (fastest loopback mode).
+        # This bypasses socket I/O and shows true protocol chain throughput.
+        # For network cost measurement, compare with e2e_inproc latency delta.
+        
+        rx_queue = _e2e_loopback_queue  # Use global queue shared across all threads
+        loopback_ready = True
+
+        def _as_datagram(payload):
+            if isinstance(payload, bytes):
+                return payload
+            if isinstance(payload, memoryview):
+                return payload.tobytes()
+            if isinstance(payload, str):
+                return payload.encode('utf-8')
             try:
+                return bytes(payload)
+            except Exception:
+                return str(payload).encode('utf-8')
+
+        def _send_loopback(packet):
+            """
+            e2e_loopback using in-process Queue (fastest).
+            Measures pure protocol serialization/deserialization without I/O overhead.
+            Network cost = e2e_loopback_latency - e2e_inproc_latency.
+            """
+            try:
+                if not loopback_ready or rx_queue is None:
+                    return False
+                
+                data_gram = _as_datagram(packet)
+                if not data_gram:
+                    return False
+                
+                # Put into queue (simulates "send")
+                try:
+                    rx_queue.put_nowait(data_gram)
+                except queue.Full:
+                    return False
+                
+                # Get from queue (simulates "receive")
+                try:
+                    data = rx_queue.get_nowait()
+                except queue.Empty:
+                    return False
+                
+                # Validate (decompress)
                 if callable(receive_fn):
-                    decoded = receive_fn(packet)
+                    decoded = receive_fn(data)
                     return not (isinstance(decoded, dict) and decoded.get('error'))
                 if callable(decompress_fn):
-                    decoded = decompress_fn(packet)
+                    decoded = decompress_fn(data)
                     return not (isinstance(decoded, dict) and decoded.get('error'))
-                if callable(dispatch_fn):
-                    return bool(dispatch_fn(packet, medium='UDP'))
-                return False
+                return bool(data)
+                
             except Exception:
                 return False
 
-        return _send
+        def _send_loopback_wrapper(packet):
+            """Wrapper that calls _send_loopback."""
+            return _send_loopback(packet)
+        
+        # No cleanup needed for in-process Queue
+        _send_loopback_wrapper._cleanup = lambda: None
+        
+        return _send_loopback_wrapper
 
-    e2e_fast_sender = _build_e2e_sender(node) if chain_mode == 'e2e' else None
+    e2e_fast_sender = _build_e2e_sender(node, chain_mode, use_udp=use_real_udp, use_transport=use_transport) if chain_mode != 'core' else None
+    
+    # ── Receiver initialization for real transport mode ────────────────
+    # When using --use-transport, we need to listen on the receive port
+    # to simulate a complete request/response cycle
+    receiver_thread = None
+    receiver_stop_flag = threading.Event()
+    
+    if chain_mode == 'e2e_loopback' and use_transport:
+        # Start background listener for the transport driver
+        def _start_receiver():
+            try:
+                # Guard: use_transport must be set and valid
+                if not use_transport:
+                    return
+                
+                # Get listen configuration from config
+                transport_cfg_key = f'{use_transport}_config' if use_transport in ['uart', 'can', 'lora', 'bluetooth'] else (
+                    f'physical_config' if use_transport in ['uart', 'rs485', 'can', 'lora', 'bluetooth'] else 'transport_config'
+                )
+                cfg = node.config.get('RESOURCES', {}).get(transport_cfg_key, {}).get(use_transport, {})
+                
+                # Determine listen port based on transport
+                if use_transport in ['udp', 'tcp']:
+                    listen_port = int(cfg.get('listen_port', 10000))  # Different from send port
+                    listen_host = cfg.get('listen_host', '127.0.0.1')
+                    
+                    if use_transport == 'udp':
+                        # Start UDP listener
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        sock.bind((listen_host, listen_port))
+                        sock.settimeout(0.5)
+                        
+                        while not receiver_stop_flag.is_set():
+                            try:
+                                data, addr = sock.recvfrom(65535)
+                                # Data received, discard it (we got the response)
+                            except socket.timeout:
+                                continue
+                            except Exception:
+                                break
+                        sock.close()
+                    elif use_transport == 'tcp':
+                        # For TCP, we'd need accept() - skip for now as it's more complex
+                        pass
+                # For other transports (uart, mqtt, etc), no network listener needed
+            except Exception as e:
+                os_log.err('RECV', 'INIT', e, {'transport': use_transport})
+        
+        # Start receiver thread as daemon
+        receiver_thread = threading.Thread(target=_start_receiver, daemon=True)
+        receiver_thread.start()
+    
     _thread_node_tls = threading.local()
     # Pre-build sensor sets
     sensor_sets = []
@@ -1047,27 +1335,37 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     collector_mode = str(runtime_opts.get('collector_mode', 'legacy'))
     collector_flush_every = max(1, int(runtime_opts.get('collector_flush_every', 256) or 256))
     collector_flush_explicit = bool(runtime_opts.get('collector_flush_explicit', False))
-    pipeline_mode = str(runtime_opts.get('pipeline_mode', 'legacy'))
+    # Allow pipeline_mode parameter to override config
+    pipeline_mode = str(pipeline_mode or runtime_opts.get('pipeline_mode', 'auto')).strip().lower()
     gc_mode = str(runtime_opts.get('gc_mode', 'auto') or 'auto').strip().lower()
     flush_auto_tuned = False
-    if chain_mode == 'e2e':
-        # e2e mode must execute dispatch/receive processing per item; fused shortcut skips that path.
-        pipeline_mode = 'legacy'
-        if collector_mode == 'batched' and not collector_flush_explicit and int(total) >= 500_000 and collector_flush_every < 1024:
-            collector_flush_every = 1024
-            flush_auto_tuned = True
+    if chain_mode != 'core' and collector_mode == 'batched' and not collector_flush_explicit and int(total) >= 500_000 and collector_flush_every < 1024:
+        collector_flush_every = 1024
+        flush_auto_tuned = True
 
     gc_was_enabled = gc.isenabled()
-    disable_gc = (gc_mode == 'off') or (gc_mode == 'auto' and chain_mode == 'e2e')
+    disable_gc = (gc_mode == 'off') or (gc_mode == 'auto' and chain_mode != 'core')
     if disable_gc and gc_was_enabled:
         gc.disable()
 
+    # ── Pipeline mode refinement: both e2e_inproc and e2e_loopback can use batch_fused ──
+    # batch_fused is a batch encoding optimization, independent of send/recv mechanism.
+    # e2e_loopback can use batch_fused just as well as e2e_inproc.
+    # (No restriction here; pipeline_mode is set earlier based on --pipeline-mode flag)
+    
     # ── Optional batch pipeline setup ─────────────────────────────────────
     _pipeline_batch = None
     _pipeline_batch_tls = threading.local()
     _pipeline_batch_compressor = None
     _pipeline_fusion_factory = None
     pre_packed_facts: list[bytes] = []
+    if pipeline_mode == 'auto':
+        try:
+            from opensynaptic.core.rscore.codec import has_pipeline_batch
+            pipeline_mode = 'batch_fused' if has_pipeline_batch() else 'legacy'
+        except Exception:
+            pipeline_mode = 'legacy'
+
     if pipeline_mode == 'batch_fused':
         try:
             from opensynaptic.core.rscore.codec import RsPipelineBatch, has_pipeline_batch
@@ -1129,6 +1427,9 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     header_probe_stats = {'attempted': 0, 'parsed': 0, 'crc16_ok': 0}
 
     batch = max(1, int(batch_size or 1))
+    effective_batch = batch
+    if chain_mode == 'core' and pipeline_mode == 'batch_fused' and int(total) >= 500_000 and batch < 640:
+        effective_batch = 640
     # Pre-compute fixed assigned_id used in all pipeline calls
     _aid = int(getattr(node, 'assigned_id', 42) or 42)
     legacy_mode = (collector_mode == 'legacy')
@@ -1167,7 +1468,6 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                             local_batch = candidate
                     except Exception:
                         local_batch = _pipeline_batch
-                _pipeline_batch_tls.batch = local_batch
             batch_items = [
                 (pre_packed_facts[idx % sources], _aid, True)
                 for idx in range(start_idx, end_idx)
@@ -1177,15 +1477,28 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             t_b1 = time.perf_counter_ns()
             avg_ms = ((t_b1 - t_b0) / max(1, range_count)) / 1_000_000.0
             stage_avg = avg_ms / 3.0
-            b_latencies, b_stage, b_errors = [], {'standardize_ms': [], 'compress_ms': [], 'fuse_ms': []}, []
-            for pkt in packets:
-                if not pkt:
-                    b_errors.append('batch_pipeline_item_failed')
-                else:
-                    b_latencies.append(avg_ms)
-                    b_stage['standardize_ms'].append(stage_avg)
-                    b_stage['compress_ms'].append(stage_avg)
-                    b_stage['fuse_ms'].append(stage_avg)
+            b_stage = {'standardize_ms': [], 'compress_ms': [], 'fuse_ms': []}
+            b_errors: list[str] = []
+            # Fast path: batch ABI normally returns one packet per input and failures are rare.
+            if isinstance(packets, list) and len(packets) == range_count:
+                result.merge_uniform_chunk(
+                    range_count,
+                    avg_ms,
+                    {'standardize_ms': stage_avg, 'compress_ms': stage_avg, 'fuse_ms': stage_avg},
+                    chain_mode=chain_mode,
+                )
+                _commit_progress(range_count)
+                return
+            else:
+                b_latencies = []
+                for pkt in packets:
+                    if not pkt:
+                        b_errors.append('batch_pipeline_item_failed')
+                    else:
+                        b_latencies.append(avg_ms)
+                        b_stage['standardize_ms'].append(stage_avg)
+                        b_stage['compress_ms'].append(stage_avg)
+                        b_stage['fuse_ms'].append(stage_avg)
             result.merge_chunk(b_latencies, b_stage, b_errors, chain_mode=chain_mode)
             _commit_progress(range_count)
             return
@@ -1216,11 +1529,11 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         for idx in range(start_idx, end_idx):
             active_node = node
             active_sender = e2e_fast_sender
-            if chain_mode == 'e2e':
+            if chain_mode != 'core':
                 worker_ctx = getattr(_thread_node_tls, 'ctx', None)
                 if worker_ctx is None:
                     local_node = _make_node(config_path, core_name=core_name)
-                    worker_ctx = (local_node, _build_e2e_sender(local_node))
+                    worker_ctx = (local_node, _build_e2e_sender(local_node, chain_mode, use_udp=use_real_udp, use_transport=use_transport))
                     _thread_node_tls.ctx = worker_ctx
                 active_node, active_sender = worker_ctx
 
@@ -1272,7 +1585,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         ranges = []
         i = 0
         while i < total:
-            j = min(total, i + batch)
+            j = min(total, i + effective_batch)
             ranges.append((i, j))
             i = j
         _thread_futures = [_tpool.submit(_task_range, s, e) for (s, e) in ranges]
@@ -1283,6 +1596,13 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                 pass
         # Normal completion – wait for thread cleanup.
         _tpool.shutdown(wait=True)
+        
+        # Cleanup e2e_loopback receiver thread if active
+        if e2e_fast_sender and hasattr(e2e_fast_sender, '_cleanup'):
+            try:
+                e2e_fast_sender._cleanup()
+            except Exception:
+                pass
     except KeyboardInterrupt:
         _interrupted = True
         print('\n[stress] Ctrl+C – cancelling thread pool…', file=sys.stderr, flush=True)
@@ -1295,6 +1615,14 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     if progress_queue is not None and progress_emit_pending[0] > 0:
         _push_progress(progress_queue, progress_emit_pending[0])
         progress_emit_pending[0] = 0
+
+    # Stop receiver thread if active and wait for it to finish
+    if receiver_thread is not None:
+        try:
+            receiver_stop_flag.set()
+            receiver_thread.join(timeout=2.0)
+        except Exception:
+            pass
 
     elapsed = time.monotonic() - t_start
 
@@ -1316,10 +1644,14 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         'collector_flush_every': collector_flush_every,
         'collector_flush_auto_tuned': bool(flush_auto_tuned),
         'pipeline_mode': pipeline_mode,
+        'pipeline_effective_batch_size': int(effective_batch),
         'pipeline_batch_available': _pipeline_batch is not None and getattr(_pipeline_batch, 'available', False),
         'gc_mode': gc_mode,
         'gc_disabled_during_run': bool(disable_gc),
+        'chain_mode_requested': requested_chain_mode,
         'chain_mode': chain_mode,
+        'forced_thread_fallback': bool(forced_thread_fallback),
+        'forced_thread_reason': forced_thread_reason,
     }
     ws = summary.get('worst_sample') if isinstance(summary.get('worst_sample'), dict) else None
     if ws:

@@ -8,12 +8,12 @@
     },
     "Server_Core": {
         "port": 8080,
-        "host": "0.0.0.0",
+        "host": "127.0.0.1",
         "Start_ID": 1,
         "End_ID": 4294967294
     },
     "Client_Core": {
-        "server_host": "localhost",
+        "server_host": "127.0.0.1",
         "server_port": 8080
     },
     "Node_Core": {
@@ -69,7 +69,12 @@
             }
         },
         "transport_config": {
-            "udp": {},
+            "udp": {
+                "host": "127.0.0.1",
+                "port": 8080,
+                "listen_host": "127.0.0.1",
+                "listen_port": 8080
+            },
             "tcp": {},
             "quic": {
                 "port": 4433,
@@ -185,6 +190,20 @@
                 "install_commands": [],
                 "resource_library_json_path": "data/env_guard/resources.json",
                 "status_json_path": "data/env_guard/status.json"
+            },
+            "port_forwarder": {
+                "enabled": true,
+                "mode": "auto",
+                "rule_sets": [
+                    {
+                        "name": "default",
+                        "description": "Default forwarding rules",
+                        "enabled": true,
+                        "rules": []
+                    }
+                ],
+                "persist_rules": true,
+                "rules_file": "data/port_forwarder_rules.json"
             }
         }
     },
@@ -216,6 +235,12 @@
                 "max_items_min": 4,
                 "max_items_max": 64
             }
+        },
+        "zero_copy_transport": true,
+        "network_retry": {
+            "enabled": true,
+            "max_retries": 2,
+            "interval_seconds": 1.0
         }
     },
     "security_settings": {
@@ -277,6 +302,7 @@
     },
     "assigned_id": 4294967294,
     "config_version": 1,
-    "first_run": true,
-    "device_id": "DEMO_NODE"
+    "first_run": false,
+    "device_id": "DEMO_NODE",
+    "migrated_from": "E:\\新建文件夹 (2)\\Config.json"
 }

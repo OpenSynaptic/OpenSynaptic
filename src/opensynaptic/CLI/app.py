@@ -1043,7 +1043,11 @@ def _main_impl(argv=None):
         if svc is None:
             print(json.dumps({'ok': False, 'error': 'env_guard is disabled in config'}, ensure_ascii=False))
             return 1
-        sub_cmd = getattr(args, 'cmd', 'status')
+        # Support both positional subcommand and --cmd flag
+        # Priority: positional subcommand > --cmd flag > default 'status'
+        sub_cmd = (getattr(args, 'subcommand', None) or 
+                  getattr(args, 'cmd_flag', None) or 
+                  'status')
         extra_args = list(getattr(args, 'args', []) or [])
         if extra_args and extra_args[0] == '--':
             extra_args = extra_args[1:]
@@ -1730,13 +1734,23 @@ def _main_impl(argv=None):
                         'transporters_status': node.config.get('RESOURCES', {}).get('transporters_status', {}),
                     }
                 elif watch_module == 'pipeline':
+                    std_obj = getattr(node, 'standardizer', None)
+                    std_registry = getattr(std_obj, 'registry', None)
+                    if isinstance(std_registry, dict):
+                        std_cache_entries = len(std_registry)
+                    else:
+                        std_cache_entries = 0
+                    fusion_obj = getattr(node, 'fusion', None)
+                    ram_cache = getattr(fusion_obj, '_RAM_CACHE', {})
+                    if not isinstance(ram_cache, dict):
+                        ram_cache = {}
                     current = {
-                        'standardizer_cache_entries': len(node.standardizer.registry),
+                        'standardizer_cache_entries': std_cache_entries,
                         'engine_rev_unit_entries': len(getattr(node.engine, 'REV_UNIT', {})),
-                        'fusion_ram_cache_aids': list(node.fusion._RAM_CACHE.keys()),
+                        'fusion_ram_cache_aids': list(ram_cache.keys()),
                         'fusion_template_count': sum(
                             len(v.get('data', {}).get('templates', {}))
-                            for v in node.fusion._RAM_CACHE.values()
+                            for v in ram_cache.values()
                         ),
                     }
                 else:
@@ -1900,7 +1914,11 @@ def _main_impl(argv=None):
 
     if cmd in ('web-user', 'os-web-user', 'os-web'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='web-user')
-        sub_cmd = getattr(args, 'cmd', 'start')
+        # Support both positional subcommand and --cmd flag
+        # Priority: positional subcommand > --cmd flag > default 'start'
+        sub_cmd = (getattr(args, 'subcommand', None) or 
+                  getattr(args, 'cmd_flag', None) or 
+                  'start')
         extra_args = list(getattr(args, 'args', []) or [])
         if extra_args and extra_args[0] == '--':
             extra_args = extra_args[1:]
@@ -1908,7 +1926,11 @@ def _main_impl(argv=None):
 
     if cmd in ('deps', 'os-deps'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='deps')
-        sub_cmd = getattr(args, 'cmd', 'check')
+        # Support both positional subcommand and --cmd flag
+        # Priority: positional subcommand > --cmd flag > default 'check'
+        sub_cmd = (getattr(args, 'subcommand', None) or 
+                  getattr(args, 'cmd_flag', None) or 
+                  'check')
         extra_args = list(getattr(args, 'args', []) or [])
         if extra_args and extra_args[0] == '--':
             extra_args = extra_args[1:]
@@ -1948,6 +1970,9 @@ def _main_impl(argv=None):
         threads_hint_val = getattr(args, 'threads_hint', None)
         batch_hint_val = getattr(args, 'batch_hint', None)
         with_component = bool(getattr(args, 'with_component', False))
+        pipeline_mode = str(getattr(args, 'pipeline_mode', 'legacy') or 'legacy')
+        use_real_udp = bool(getattr(args, 'use_real_udp', False))
+        use_transport = getattr(args, 'use_transport', None) or None
         if suite == 'component':
             extra_args = ['--verbosity', verbosity]
             if parallel_component or component_processes > 0:
@@ -1965,7 +1990,12 @@ def _main_impl(argv=None):
                 '--batch-size', batch_size,
                 '--processes', processes,
                 '--chain-mode', chain_mode,
+                '--pipeline-mode', pipeline_mode,
             ]
+            if use_real_udp:
+                extra_args.append('--use-real-udp')
+            if use_transport:
+                extra_args += ['--use-transport', use_transport]
             if threads_per_process is not None:
                 extra_args += ['--threads-per-process', threads_per_process]
             if no_progress:
@@ -1996,7 +2026,10 @@ def _main_impl(argv=None):
                 '--batch-size', batch_size,
                 '--processes', processes,
                 '--chain-mode', chain_mode,
+                '--pipeline-mode', pipeline_mode,
             ]
+            if use_real_udp:
+                extra_args.append('--use-real-udp')
             if threads_per_process is not None:
                 extra_args += ['--threads-per-process', threads_per_process]
             if no_progress:
@@ -2011,6 +2044,7 @@ def _main_impl(argv=None):
                 '--sources', sources,
                 '--verbosity', verbosity,
                 '--chain-mode', chain_mode,
+                '--pipeline-mode', pipeline_mode,
             ]
             if no_progress:
                 extra_args.append('--no-progress')
@@ -2042,6 +2076,7 @@ def _main_impl(argv=None):
                 '--batch-size', batch_size,
                 '--processes', processes,
                 '--chain-mode', chain_mode,
+                '--pipeline-mode', pipeline_mode,
             ]
             if threads_per_process is not None:
                 extra_args += ['--threads-per-process', threads_per_process]

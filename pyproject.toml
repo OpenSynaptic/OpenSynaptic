@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.6,<2.0", "Cython>=3.0"]
+requires = ["maturin>=1.6,<2.0", "Cython>=3.0", "cffi>=1.16"]
 build-backend = "maturin"
 
 [project]
@@ -9,6 +9,7 @@ description = "2-N-2 high-performance protocol stack"
 authors = [{name = "OpenSynaptic Contributors"}]
 readme = "README.md"
 license = { text = "Apache-2.0" }
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 keywords = ["iot", "protocol", "ucum", "telemetry", "sensor"]
 classifiers = [
@@ -33,11 +34,13 @@ sql-mysql = ["mysql-connector-python>=9.0.0"]
 sql-postgresql = ["psycopg[binary]>=3.2.0"]
 transport-quic = ["aioquic>=1.2.0"]
 rscore = ["maturin>=1.6.0"]
+tui = ["textual>=0.40.0"]
 dev = [
     "twine>=5.1.1",
     "pytest>=8.3.0",
     "pytest-cov>=5.0.0",
     "maturin>=1.6.0",
+    "cffi>=1.16",
 ]
 
 [project.scripts]

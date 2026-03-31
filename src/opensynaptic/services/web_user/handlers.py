@@ -123,12 +123,73 @@ def create_handler(service):
                 snap = service._service_snapshot()
                 service._json_response(self, 200, {'ok': True, 'plugins': snap, 'items': service._plugin_items()})
                 return
+            if path == '/api/plugins/config':
+                ok, code, err = service._authorize_request(self.headers, write=False, management=True)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                plugin = str((query.get('plugin', [''])[0] or '')).strip()
+                if not plugin:
+                    service._json_response(self, 400, {'ok': False, 'error': 'plugin is required'})
+                    return
+                only_writable = str((query.get('only_writable', ['1'])[0] or '1')).strip().lower() in ('1', 'true', 'yes', 'on')
+                schema = service.build_plugin_option_schema(plugin_name=plugin, only_writable=only_writable)
+                service._json_response(self, 200, {'ok': True, 'plugin': plugin, 'schema': schema})
+                return
+            if path == '/api/plugins/commands':
+                ok, code, err = service._authorize_request(self.headers, write=False, management=True)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                plugin = str((query.get('plugin', [''])[0] or '')).strip()
+                if not plugin:
+                    service._json_response(self, 400, {'ok': False, 'error': 'plugin is required'})
+                    return
+                service._json_response(self, 200, service.get_plugin_commands_metadata(plugin))
+                return
+            if path == '/api/plugins/visual-schema':
+                ok, code, err = service._authorize_request(self.headers, write=False, management=True)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                plugin = str((query.get('plugin', [''])[0] or '')).strip()
+                if not plugin:
+                    service._json_response(self, 400, {'ok': False, 'error': 'plugin is required'})
+                    return
+                service._json_response(self, 200, service.get_plugin_visual_schema(plugin))
+                return
             if path == '/api/transport':
                 ok, code, err = service._authorize_request(self.headers, write=False, management=True)
                 if not ok:
                     service._json_response(self, code, {'error': err})
                     return
                 service._json_response(self, 200, {'ok': True, 'transport': service._transport_snapshot(), 'items': service._transport_items()})
+                return
+            if path == '/api/display/providers':
+                ok, code, err = service._authorize_request(self.headers, write=False, management=True)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                service._json_response(self, 200, service.get_display_providers_metadata())
+                return
+            if path.startswith('/api/display/render/'):
+                ok, code, err = service._authorize_request(self.headers, write=False, management=True)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                section_path = path.split('/api/display/render/', 1)[1]
+                fmt = str((query.get('format', ['json'])[0] or 'json')).strip().lower()
+                output = service.render_display_section(section_path, fmt=fmt)
+                service._json_response(self, 200 if output is not None else 404, output or {'error': 'section not found'})
+                return
+            if path == '/api/display/all':
+                ok, code, err = service._authorize_request(self.headers, write=False, management=True)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                fmt = str((query.get('format', ['json'])[0] or 'json')).strip().lower()
+                output = service.collect_all_display_sections(fmt=fmt)
+                service._json_response(self, 200, output)
                 return
             service._json_response(self, 404, {'error': 'not found'})
 
@@ -256,6 +317,19 @@ def create_handler(service):
                     return
                 payload = self._read_json()
                 ok, out = service.apply_option_updates(payload.get('updates', []))
+                service._json_response(self, 200 if ok else 400, out)
+                return
+            if path == '/api/plugins/config':
+                ok, code, err = service._authorize_request(self.headers, write=True, management=True)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                payload = self._read_json()
+                plugin = str(payload.get('plugin', '') or '').strip()
+                if not plugin:
+                    service._json_response(self, 400, {'ok': False, 'error': 'plugin is required'})
+                    return
+                ok, out = service.apply_plugin_option_updates(plugin_name=plugin, updates=payload.get('updates', []))
                 service._json_response(self, 200 if ok else 400, out)
                 return
             if not path.startswith('/users/'):

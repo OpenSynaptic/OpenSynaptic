@@ -1306,6 +1306,7 @@ class RsOSVisualFusionEngine:
             raw_input = str(raw_input)
 
         strategy = str(kwargs.get('strategy', 'DIFF')).upper()
+
         payload = json.dumps(
             {
                 'ctx_id': int(self._ctx_id),
@@ -1335,6 +1336,7 @@ class RsOSVisualFusionEngine:
         import json
 
         raw = _normalize_packet_bytes(packet)
+
         payload = json.dumps(
             {
                 'ctx_id': int(self._ctx_id),

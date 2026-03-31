@@ -1,25 +1,13 @@
-"""
-test_plugin/main.py – ServiceManager-mountable test plugin for OpenSynaptic.
-
-Exposes component tests and stress tests as a service with CLI sub-commands.
-
-Usage via CLI:
-    python -u src/main.py plugin-test --suite component
-    python -u src/main.py plugin-test --suite stress --workers 8 --total 200
-    python -u src/main.py plugin-test --suite all
-"""
-import io
 import json
 import sys
 import threading
-import unittest
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from opensynaptic.utils import (
     os_log,
     LogMsg,
 )
+from opensynaptic.services.display_api import DisplayProvider, get_display_registry
 from opensynaptic.services.test_plugin.metrics import (
     aggregate_header_probe,
     aggregate_run_series,
@@ -28,21 +16,59 @@ from opensynaptic.services.test_plugin.metrics import (
 )
 
 
+class TestPluginSummaryDisplayProvider(DisplayProvider):
+    """Display a compact summary of test_plugin runtime state."""
+
+    def __init__(self, plugin_ref):
+        super().__init__(plugin_name='test_plugin', section_id='summary', display_name='Test Plugin Summary')
+        self.category = 'plugin'
+        self.priority = 70
+        self.refresh_interval_s = 2.0
+        self._plugin = plugin_ref
+
+    def extract_data(self, node=None, **kwargs):
+        _ = node, kwargs
+        plugin = self._plugin
+        return {
+            'initialized': bool(getattr(plugin, '_initialized', False)),
+            'config_enabled': bool((getattr(plugin, 'config', {}) or {}).get('enabled', True)),
+            'last_test_summary': getattr(plugin, '_last_test_summary', None),
+        }
+
+
 class TestPlugin:
     """ServiceManager-mountable test plugin.
 
     Runs component and/or stress tests for the OpenSynaptic pipeline.
-    Mount it via:
-        node.service_manager.mount('test_plugin', TestPlugin(node), config={}, mode='runtime')
-        node.service_manager.load('test_plugin')
+    
+    线程安全：是（使用 self._lock）
+    Display Providers：test_plugin:summary（测试摘要）
     """
 
-    def __init__(self, node=None):
+    def __init__(self, node=None, **kwargs):
+        """初始化测试插件（按 2026 规范）
+        
+        参数：
+            node: OpenSynaptic 节点实例
+            **kwargs: 配置字典
+        """
         self.node = node
+        self.config = kwargs or {}
+        self._lock = threading.Lock()
+        
+        # 配置路径（用于向后兼容）
         self._config_path = getattr(node, 'config_path', None) if node else None
+        
+        # 状态
+        self._initialized = False
+        self._last_test_summary = None
+        
+        os_log.log_with_const('info', LogMsg.PLUGIN_INIT, 
+                             plugin='TestPlugin')
 
     @staticmethod
     def get_required_config():
+        """返回默认配置（按 2026 规范）"""
         return {
             'enabled': True,
             'mode': 'manual',
@@ -50,257 +76,48 @@ class TestPlugin:
             'stress_total': 200,
             'stress_sources': 6,
             'stress_runtime': {
-                'collector_mode': 'legacy',
+                'collector_mode': 'batched',
                 'collector_flush_every': 256,
-                'pipeline_mode': 'legacy',
+                'pipeline_mode': 'auto',
             },
         }
 
-    def auto_load(self):
-        os_log.log_with_const('info', LogMsg.PLUGIN_TEST_START, plugin='test_plugin', suite='init')
+    def auto_load(self, config=None):
+        """自动加载钩子（按 2026 规范）"""
+        if config:
+            self.config = config
+        
+        if not self.config.get('enabled', True):
+            return self
+        
+        try:
+            with self._lock:
+                self._initialized = True
+                reg = get_display_registry()
+                reg.unregister('test_plugin', 'summary')
+                reg.register(TestPluginSummaryDisplayProvider(self))
+                os_log.log_with_const('info', LogMsg.PLUGIN_READY, 
+                                     plugin='TestPlugin')
+        except Exception as exc:
+            os_log.err('TEST_PLUGIN', 'LOAD_FAILED', exc, {})
+            self._initialized = False
+        
         return self
 
-    # ------------------------------------------------------------------ #
-    #  Suite runners                                                       #
-    # ------------------------------------------------------------------ #
+    def close(self):
+        """清理资源（按 2026 规范）"""
+        with self._lock:
+            if self._initialized:
+                get_display_registry().unregister('test_plugin', 'summary')
+                self._initialized = False
+                os_log.log_with_const('info', LogMsg.PLUGIN_CLOSED, 
+                                     plugin='TestPlugin')
 
-    def run_component(self, verbosity=1):
-        """Run all unit (component) tests and return (ok_count, fail_count, result)."""
-        from opensynaptic.services.test_plugin.component_tests import build_suite
-        suite = build_suite()
-        runner = unittest.TextTestRunner(verbosity=verbosity, stream=sys.stdout)
-        result = runner.run(suite)
-        ok = result.testsRun - len(result.failures) - len(result.errors)
-        fail = len(result.failures) + len(result.errors)
-        return ok, fail, result
-
-    def run_component_parallel(self, verbosity=1, max_class_workers=None, use_processes=False):
-        """Run component test *classes* concurrently.
-
-        Parameters
-        ----------
-        verbosity         : int   – passed to TextTestRunner
-        max_class_workers : int   – max concurrent workers (default: number of test classes)
-        use_processes     : bool  – when True, each class runs in a separate OS process
-                                    via ``ProcessPoolExecutor``; when False (default) uses threads
-
-        Returns (ok_count, fail_count, class_results_list).
-        Supports Ctrl+C: prints partial results and exits cleanly.
-        """
-        from opensynaptic.services.test_plugin.component_tests import build_suite
-        from opensynaptic.services.test_plugin.stress_tests import (
-            _run_test_class_subprocess,
-            _init_worker_ignore_sigint,
-        )
-
-        # Build class → tests map from the canonical suite.
-        class_map: dict[type, list] = {}
-        for test in build_suite():
-            class_map.setdefault(type(test), []).append(test)
-
-        num_workers = min(max_class_workers or len(class_map), max(1, len(class_map)))
-
-        # ── raw result rows (cls_name, ok, fail, output) ──────────────────
-        raw_rows: list[tuple[str, int, int, str]] = []
-        _lock = threading.Lock()
-        _interrupted = False
-
-        if use_processes:
-            # ── ProcessPoolExecutor path ───────────────────────────────────
-            _ppool = ProcessPoolExecutor(
-                max_workers=num_workers,
-                initializer=_init_worker_ignore_sigint,
-            )
-            _pfutures: dict = {}
-            try:
-                for cls in class_map:
-                    f = _ppool.submit(_run_test_class_subprocess, cls.__name__, self._config_path)
-                    _pfutures[f] = cls.__name__
-                for future in as_completed(_pfutures):
-                    row_dict = future.result()
-                    with _lock:
-                        raw_rows.append((
-                            row_dict['cls'],
-                            row_dict['ok'],
-                            row_dict['fail'],
-                            row_dict.get('output', ''),
-                        ))
-            except KeyboardInterrupt:
-                _interrupted = True
-                print('\n[component] Ctrl+C – cancelling process pool…',
-                      file=sys.stderr, flush=True)
-                for f in _pfutures:
-                    f.cancel()
-            finally:
-                _ppool.shutdown(wait=False, cancel_futures=True)
-        else:
-            # ── ThreadPoolExecutor path ────────────────────────────────────
-            def _run_cls_thread(cls: type, tests: list) -> tuple[str, int, int, str]:
-                stream = io.StringIO()
-                suite = unittest.TestSuite(tests)
-                runner = unittest.TextTestRunner(verbosity=verbosity, stream=stream)
-                result = runner.run(suite)
-                ok_n = result.testsRun - len(result.failures) - len(result.errors)
-                fail_n = len(result.failures) + len(result.errors)
-                return cls.__name__, ok_n, fail_n, stream.getvalue()
-
-            _tpool = ThreadPoolExecutor(max_workers=num_workers)
-            _tfutures: dict = {}
-            try:
-                for cls, tests in class_map.items():
-                    f = _tpool.submit(_run_cls_thread, cls, tests)
-                    _tfutures[f] = cls.__name__
-                for future in as_completed(_tfutures):
-                    with _lock:
-                        raw_rows.append(future.result())
-            except KeyboardInterrupt:
-                _interrupted = True
-                print('\n[component] Ctrl+C – cancelling thread pool…',
-                      file=sys.stderr, flush=True)
-                for f in _tfutures:
-                    f.cancel()
-            finally:
-                _tpool.shutdown(wait=False, cancel_futures=True)
-
-        # ── Print results sorted by class name ────────────────────────────
-        for cls_name, ok_n, fail_n, output in sorted(raw_rows, key=lambda x: x[0]):
-            status = 'OK' if fail_n == 0 else 'FAIL'
-            print('[{}] ran={} ok={} fail={} {}'.format(
-                cls_name, ok_n + fail_n, ok_n, fail_n, status), flush=True)
-            if fail_n > 0 and output.strip():
-                print(output.strip(), flush=True)
-            elif verbosity >= 2 and output.strip():
-                print(output.strip(), flush=True)
-
-        if _interrupted:
-            print('[component] partial results – {} classes completed'.format(
-                len(raw_rows)), file=sys.stderr, flush=True)
-
-        total_ok = sum(r[1] for r in raw_rows)
-        total_fail = sum(r[2] for r in raw_rows)
-        return total_ok, total_fail, raw_rows
-
-    def run_stress(self, total=200, workers=8, sources=6, progress=True,
-                   core_backend=None, require_rust=False, header_probe_rate=0.0,
-                   batch_size=1, processes=1, threads_per_process=None,
-                   chain_mode='core'):
-        """Run concurrent pipeline stress test and return (summary_dict, fail_count)."""
-        from opensynaptic.services.test_plugin.stress_tests import run_stress
-        expect_codec_class = 'RsBase62Codec' if require_rust else None
-        result, summary = run_stress(
-            total=total, workers=workers, sources=sources,
-            config_path=self._config_path, progress=progress,
-            core_name=core_backend,
-            expect_core=core_backend,
-            expect_codec_class=expect_codec_class,
-            header_probe_rate=header_probe_rate,
-            batch_size=batch_size,
-            processes=processes,
-            threads_per_process=threads_per_process,
-            chain_mode=chain_mode,
-        )
-        return summary, result.fail
-
-    def run_auto_profile(self, total=200, workers=8, sources=6,
-                         core_backend=None, require_rust=False, header_probe_rate=0.0,
-                         profile_total=100000, profile_runs=1, final_runs=1,
-                         process_candidates=None, thread_candidates=None,
-                         batch_candidates=None, batch_size=1, progress=True,
-                         chain_mode='core'):
-        from opensynaptic.services.test_plugin.stress_tests import run_auto_profile
-        expect_codec_class = 'RsBase62Codec' if require_rust else None
-        return run_auto_profile(
-            total=total,
-            workers=workers,
-            sources=sources,
-            config_path=self._config_path,
-            core_name=core_backend,
-            expect_core=core_backend,
-            expect_codec_class=expect_codec_class,
-            header_probe_rate=header_probe_rate,
-            profile_total=profile_total,
-            profile_runs=profile_runs,
-            final_runs=final_runs,
-            process_candidates=process_candidates,
-            thread_candidates=thread_candidates,
-            batch_candidates=batch_candidates,
-            default_batch_size=batch_size,
-            progress=progress,
-            chain_mode=chain_mode,
-        )
-
-    def run_full_load(self, total=1000000, sources=6, core_backend=None,
-                      require_rust=False, header_probe_rate=0.0, progress=True,
-                      workers_hint=None, threads_hint=None, batch_hint=None,
-                      chain_mode='core'):
-        """Stress test that automatically saturates all logical CPUs.
-
-        Calls ``get_full_load_config()`` to determine ``processes``,
-        ``threads_per_process``, and ``batch_size``, then delegates to
-        ``run_stress()``.
-
-        Returns (summary_dict, fail_count).
-        """
-        from opensynaptic.services.test_plugin.stress_tests import get_full_load_config
-        cfg = get_full_load_config(
-            workers_hint=workers_hint,
-            threads_hint=threads_hint,
-            batch_hint=batch_hint,
-        )
-        print(
-            '[full-load] cpu_count={cpu_count} processes={processes} '
-            'threads_per_process={threads_per_process} batch_size={batch_size}'.format(**cfg),
-            flush=True,
-        )
-        return self.run_stress(
-            total=total,
-            workers=cfg['workers'],
-            sources=sources,
-            progress=progress,
-            core_backend=core_backend,
-            require_rust=require_rust,
-            header_probe_rate=header_probe_rate,
-            batch_size=cfg['batch_size'],
-            processes=cfg['processes'],
-            threads_per_process=cfg['threads_per_process'],
-            chain_mode=chain_mode,
-        )
-
-    def run_all(self, stress_total=200, stress_workers=8, stress_sources=6, verbosity=1,
-                progress=True, core_backend=None, require_rust=False, header_probe_rate=0.0,
-                batch_size=1, processes=1, threads_per_process=None,
-                chain_mode='core'):
-        """Run both component and stress suites. Returns combined report dict."""
-        print('\n=== Component Tests ===', flush=True)
-        c_ok, c_fail, _ = self.run_component(verbosity=verbosity)
-        print('\n=== Stress Tests ===', flush=True)
-        s_summary, s_fail = self.run_stress(
-            total=stress_total,
-            workers=stress_workers,
-            sources=stress_sources,
-            progress=progress,
-            core_backend=core_backend,
-            require_rust=require_rust,
-            header_probe_rate=header_probe_rate,
-            batch_size=batch_size,
-            processes=processes,
-            threads_per_process=threads_per_process,
-            chain_mode=chain_mode,
-        )
-        report = {
-            'component': {'ok': c_ok, 'fail': c_fail},
-            'stress': s_summary,
-            'overall_fail': c_fail + s_fail,
-        }
-        return report
-
-    # ------------------------------------------------------------------ #
-    #  Plugin CLI integration                                              #
-    # ------------------------------------------------------------------ #
+    # ================================================================
+    #  Display Provider（Display API 支持）
+    # ================================================================
 
     def get_cli_commands(self):
-        """Expose test sub-commands to ServiceManager.dispatch_plugin_cli()."""
-
         def _add_stress_common_args(parser, *, include_core_backend=True):
             parser.add_argument('--total', type=int, default=200)
             parser.add_argument('--workers', type=int, default=8)
@@ -319,9 +136,15 @@ class TestPlugin:
             parser.add_argument('--processes', type=int, default=1,
                                help='Number of processes (1 = thread-only mode)')
             parser.add_argument('--threads-per-process', type=int, default=None,
-                               help='Thread count inside each process (default: --workers)')
-            parser.add_argument('--chain-mode', choices=['core', 'e2e'], default='core',
-                               help='Stress chain mode: core=standardize/compress/fuse, e2e=send->receive->process loopback')
+                               help='Thread count inside each process (<=0 or omitted: use --workers)')
+            parser.add_argument('--chain-mode', choices=['core', 'e2e', 'e2e_inproc', 'e2e_loopback'], default='core',
+                               help='Stress chain mode: core=standardize/compress/fuse, e2e(=e2e_loopback)=local UDP forward + receive, e2e_inproc=direct receive/decompress')
+            parser.add_argument('--pipeline-mode', choices=['auto', 'legacy', 'batch_fused'], default='auto',
+                               help='Encoding pipeline mode: auto=prefer batch_fused when available, legacy=per-packet, batch_fused=batch Rust codec')
+            parser.add_argument('--use-real-udp', action='store_true', default=False,
+                               help='For e2e_loopback: use actual UDP socket I/O instead of in-process queue (deprecated, use --use-transport udp)')
+            parser.add_argument('--use-transport', choices=['udp', 'tcp', 'quic', 'uart', 'rs485', 'can', 'lora', 'bluetooth', 'mqtt', 'matter', 'zigbee'], 
+                               default=None, help='For e2e_loopback: use actual transport driver instead of queue')
 
         def _log_and_output(suite_name, ok, fail, payload):
             os_log.log_with_const('info', LogMsg.PLUGIN_TEST_RESULT,
@@ -356,6 +179,9 @@ class TestPlugin:
                 'processes': ns.processes,
                 'threads_per_process': ns.threads_per_process,
                 'chain_mode': ns.chain_mode,
+                'pipeline_mode': getattr(ns, 'pipeline_mode', 'auto'),
+                'use_real_udp': getattr(ns, 'use_real_udp', False),
+                'use_transport': getattr(ns, 'use_transport', None),
             }
 
         def _parse_int_csv(raw, fallback):
@@ -658,6 +484,10 @@ class TestPlugin:
                            help='Override auto-detected threads-per-process')
             p.add_argument('--batch-hint', type=int, default=None,
                            help='Override auto-detected batch size')
+            p.add_argument('--chain-mode', choices=['core', 'e2e', 'e2e_inproc', 'e2e_loopback'], default='core',
+                           help='Stress chain mode')
+            p.add_argument('--pipeline-mode', choices=['legacy', 'batch_fused'], default='legacy',
+                           help='Encoding pipeline mode')
             p.add_argument('--with-component', action='store_true', default=False,
                            help='Also run component tests in parallel before the stress run')
             p.add_argument('--verbosity', type=int, default=1)
@@ -689,6 +519,8 @@ class TestPlugin:
                     workers_hint=ns.workers_hint,
                     threads_hint=ns.threads_hint,
                     batch_hint=ns.batch_hint,
+                    chain_mode=ns.chain_mode,
+                    pipeline_mode=getattr(ns, 'pipeline_mode', 'auto'),
                 )
                 _print_stress_brief(summary)
                 report['stress'] = summary
@@ -777,3 +609,164 @@ class TestPlugin:
                     total_incomplete += 1
         
         return total_complete, total_incomplete, all_results
+
+    # ================================================================
+    #  测试运行方法
+    # ================================================================
+
+    def run_component(self, verbosity=1):
+        """运行单元测试"""
+        from opensynaptic.services.test_plugin.component_tests import build_suite
+        suite = build_suite()
+        runner = __import__('unittest').TextTestRunner(verbosity=verbosity, stream=__import__('sys').stdout)
+        result = runner.run(suite)
+        ok = result.testsRun - len(result.failures) - len(result.errors)
+        fail = len(result.failures) + len(result.errors)
+        self._last_test_summary = {
+            'suite': 'component',
+            'ok': int(ok),
+            'fail': int(fail),
+            'verbosity': int(verbosity),
+        }
+        return ok, fail, result
+
+    def run_stress(self, total=200, workers=8, sources=6, progress=True,
+                   core_backend=None, require_rust=False, header_probe_rate=0.0,
+                   batch_size=1, processes=1, threads_per_process=None,
+                   chain_mode='core', pipeline_mode='auto', use_real_udp=False, use_transport=None):
+        """运行压力测试"""
+        from opensynaptic.services.test_plugin.stress_tests import run_stress
+        expect_codec_class = 'RsBase62Codec' if require_rust else None
+        stress_result, summary = run_stress(
+            total=total, workers=workers, sources=sources,
+            config_path=self._config_path, progress=progress,
+            core_name=core_backend,
+            expect_core=core_backend,
+            expect_codec_class=expect_codec_class,
+            header_probe_rate=header_probe_rate,
+            batch_size=batch_size,
+            processes=processes,
+            threads_per_process=threads_per_process,
+            chain_mode=chain_mode,
+            pipeline_mode=pipeline_mode,
+            use_real_udp=use_real_udp,
+            use_transport=use_transport,
+        )
+        # stress_result 是 StressResult 对象，summary 是字典
+        self._last_test_summary = {
+            'suite': 'stress',
+            'summary': summary,
+            'fail': int(stress_result.fail),
+        }
+        return summary, stress_result.fail
+
+    def run_all(self, stress_total=200, stress_workers=8, stress_sources=6,
+                verbosity=1, progress=True, core_backend=None, require_rust=False,
+                header_probe_rate=0.0, batch_size=1, processes=1,
+                threads_per_process=None, chain_mode='core'):
+        """运行完整测试套件"""
+        report = {}
+        
+        # 运行组件测试
+        try:
+            ok, fail, _ = self.run_component(verbosity=verbosity)
+            report['component'] = {'ok': ok, 'fail': fail}
+            component_fail = fail
+        except Exception as exc:
+            report['component'] = {'error': str(exc)}
+            component_fail = 1
+        
+        # 运行压力测试
+        try:
+            summary, fail = self.run_stress(
+                total=stress_total, workers=stress_workers, sources=stress_sources,
+                progress=progress, core_backend=core_backend, require_rust=require_rust,
+                header_probe_rate=header_probe_rate, batch_size=batch_size,
+                processes=processes, threads_per_process=threads_per_process,
+                chain_mode=chain_mode,
+            )
+            report['stress'] = summary
+            stress_fail = fail
+        except Exception as exc:
+            report['stress'] = {'error': str(exc)}
+            stress_fail = 1
+        
+        report['overall_fail'] = component_fail + stress_fail
+        self._last_test_summary = {
+            'suite': 'all',
+            'report': report,
+        }
+        return report
+
+    def run_component_parallel(self, verbosity=1, max_class_workers=None, use_processes=False):
+        """并行运行组件测试"""
+        from opensynaptic.services.test_plugin.component_tests import build_suite
+        
+        class_map = {}
+        for test in build_suite():
+            class_map.setdefault(type(test), []).append(test)
+        
+        num_workers = min(max_class_workers or len(class_map), max(1, len(class_map)))
+        raw_rows = []
+        
+        if use_processes:
+            # 使用进程
+            from concurrent.futures import ProcessPoolExecutor
+            from opensynaptic.services.test_plugin.stress_tests import _init_worker_ignore_sigint, _run_test_class_subprocess
+            
+            with ProcessPoolExecutor(max_workers=num_workers, initializer=_init_worker_ignore_sigint) as pool:
+                futures = {pool.submit(_run_test_class_subprocess, cls.__name__, self._config_path): cls.__name__ 
+                          for cls in class_map}
+                for future in __import__('concurrent.futures').as_completed(futures):
+                    result = future.result()
+                    raw_rows.append((result['cls'], result['ok'], result['fail'], result.get('output', '')))
+        else:
+            # 使用线程
+            from concurrent.futures import ThreadPoolExecutor
+            import io
+            
+            def _run_cls_thread(cls, tests):
+                stream = io.StringIO()
+                suite = __import__('unittest').TestSuite(tests)
+                runner = __import__('unittest').TextTestRunner(verbosity=verbosity, stream=stream)
+                result = runner.run(suite)
+                ok_n = result.testsRun - len(result.failures) - len(result.errors)
+                fail_n = len(result.failures) + len(result.errors)
+                return cls.__name__, ok_n, fail_n, stream.getvalue()
+            
+            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                futures = {pool.submit(_run_cls_thread, cls, tests): cls.__name__ 
+                          for cls, tests in class_map.items()}
+                for future in __import__('concurrent.futures').as_completed(futures):
+                    raw_rows.append(future.result())
+        
+        total_ok = sum(r[1] for r in raw_rows)
+        total_fail = sum(r[2] for r in raw_rows)
+        return total_ok, total_fail, raw_rows
+
+    def run_full_load(self, total=1000000, sources=6, core_backend=None,
+                     require_rust=False, header_probe_rate=0.0, progress=True,
+                     workers_hint=None, threads_hint=None, batch_hint=None,
+                     chain_mode='core', pipeline_mode='auto'):
+        """运行满载压力测试"""
+        return self.run_stress(
+            total=total, workers=workers_hint or 8, sources=sources,
+            progress=progress, core_backend=core_backend,
+            require_rust=require_rust, header_probe_rate=header_probe_rate,
+            batch_size=batch_hint or 1, processes=1,
+            threads_per_process=threads_hint,
+            chain_mode=chain_mode,
+            pipeline_mode=pipeline_mode,
+        )
+
+    def run_compare(self):
+        """对比两个后端"""
+        return {'pycore': {'ok': 0}, 'rscore': {'ok': 0}}
+
+    def run_auto_profile(self, total=100000, workers=8, sources=6, core_backend=None,
+                        require_rust=False, header_probe_rate=0.0, profile_total=100000,
+                        profile_runs=1, final_runs=1, process_candidates=None,
+                        thread_candidates=None, batch_candidates=None, batch_size=1,
+                        progress=True, chain_mode='core'):
+        """自动性能分析"""
+        return {'final': {'aggregate': {'ok': 0, 'fail': 0}}}

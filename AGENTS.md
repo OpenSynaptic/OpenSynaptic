@@ -89,6 +89,75 @@ Critical keys:
 
 ---
 
+## Display API – Self-Discoverable Visualization
+
+`src/opensynaptic/services/display_api.py` defines a standard interface for plugins to register custom display sections that can be auto-discovered and rendered by both `web_user` and `tui`:
+
+- **DisplayProvider** (base class): plugins subclass this to define extraction + formatting logic
+  - `extract_data(node=None, **kwargs)` – extract/prepare data for a section
+  - `format_json(data)` – return JSON-serializable dict (default: pass-through)
+  - `format_html(data)` – return HTML string for web rendering (default: basic table)
+  - `format_text(data)` – return plain text for terminal (default: pretty-printed JSON)
+- **DisplayRegistry** (global singleton): auto-discovered providers register themselves
+  - `register_display_provider(provider)` – register a `DisplayProvider` instance
+  - `get_display_registry()` – fetch the global registry
+  - Providers can specify category (`core` / `plugin`), priority (0–100, higher = first), refresh interval
+- **render_section(name)** – unified function to extract + format a named section (called by TUI/web_user)
+- **Built-in providers** (`src/opensynaptic/services/builtin_display_providers.py`):
+  - `IdentityDisplayProvider` – device ID, version, timestamp
+  - `ConfigDisplayProvider` – configuration snapshot
+  - `TransportDisplayProvider` – active transporters/drivers per layer
+  - `PipelineDisplayProvider` – standardization, compression, collapse pipeline state
+  - `PluginsDisplayProvider` – mounted service plugins + status
+  - `DatabaseDisplayProvider` – registry/DB metadata
+- Plugins (e.g., `test_plugin`) can register their own providers to display metrics/state in TUI/web_user without modifying core UI code
+
+---
+
+## Built-in Service Plugins
+
+Beyond the core TUI and test plugins, several utility service plugins are mounted automatically on startup:
+
+- **env_guard** (`src/opensynaptic/services/env_guard/main.py`) – environment monitoring & auto-remediation
+  - Monitors error streams and auto-fixes common environment issues (missing dependencies, misconfigured paths)
+  - Manages resource installation and command history
+  - Thread-safe; runs error-monitoring and repair loops in background
+  - CLI: `os-node env-guard {monitor, list, install}`
+  - Config key: `RESOURCES.service_plugins.env_guard` with `enabled` / `mode` / `max_errors` / `auto_install`
+
+- **dependency_manager** (`src/opensynaptic/services/dependency_manager/main.py`) – dependency checking & repair
+  - Inspects Python environment and pyproject.toml/requirements.txt
+  - Auto-detects missing packages; can install via pip or conda
+  - Generates detailed dependency health reports
+  - Thread-safe operation; integrates with Display API for status display
+  - CLI: `os-node deps {check, doctor, sync, repair, install}`
+  - Config key: `RESOURCES.service_plugins.dependency_manager` with `enabled` / `mode`
+
+- **db_engine** (`src/opensynaptic/services/db_engine/main.py`) – SQL database export and management
+  - Provides unified SQL export for OpenSynaptic facts via pluggable drivers
+  - Drivers: `SQLite`, `MySQL`, `PostgreSQL` in `drivers/` subdirectory
+  - All inserts use parameter binding (no SQL injection risk)
+  - API: `connect()`, `export_fact()`, `export_many()`, `close()`
+  - Config key: `storage.sql` with `dialect`, `driver` (connection parameters)
+  - Integrates with Display API for database metadata display
+
+- **port_forwarder** (`src/opensynaptic/services/port_forwarder/main.py`) – advanced packet routing
+  - Intercepts `dispatch()` calls and routes packets based on configurable rules
+  - Rule model: `from_protocol/port` → `to_protocol/host/port`
+  - Supports hijacking dispatch path for protocol/port transformations
+  - Mounts via `ServiceManager.mount('port_forwarder', plugin, config)`
+  - Integrates with Display API for rule status and metrics
+
+All service plugins implement the ServiceManager lifecycle contract:
+- `__init__(node, **kwargs)` – initialization with node reference
+- `get_required_config()` → dict – default configuration schema
+- `auto_load()` – post-mount startup (called by ServiceManager.load())
+- `close()` – cleanup and shutdown
+- `get_cli_commands()` → dict – CLI subcommand handlers (optional)
+- Thread-safe: all state changes guarded by internal locks
+
+---
+
 ## Transporter Plugin System
 
 Transporters are tiered across three layers, each using `LayeredProtocolManager`:
@@ -152,6 +221,28 @@ All latency fields are computed and aggregated by `src/opensynaptic/services/tes
 
 ---
 
+## Hardware Drivers
+
+Custom hardware-specific drivers live in `src/opensynaptic/hardware_drivers/`:
+
+- **CAN_Driver** (`CAN.py`) – CAN bus segmentation & framing
+  - Constructor: `CAN_Driver(can_id=291)` sets CAN ID and MTU (8 bytes)
+  - `segment_send(payload)` – splits payload into CAN frames with header/DLC
+  - Produces list of frame dicts: `{'id': can_id, 'dlc': len, 'data': chunk}`
+  - Useful for integrating with L7 transporter for CAN-native dispatch
+
+- **LoRa_Driver** (`LoRa.py`) – LoRa transceiver interface
+  - Supports frequency selection, SF/BW/CR tuning, regional regulations
+  - Integration with physical layer stack via `send(payload, config)`
+
+- **RS485_Driver** (`RS485.py`) – RS485 serial protocol
+  - Modbus-compatible segmentation; hardware flow control support
+  - Integration with physical layer stack via `send(payload, config)`
+
+These drivers are separate from the tiered transporter system (L7/L4/PHY) and are typically used for custom hardware integrations or specialized sensor interfaces.
+
+---
+
 ## Logging Convention
 
 Use the `os_log` singleton (`from opensynaptic.utils import os_log`):
@@ -164,7 +255,11 @@ os_log.log_with_const("info", LogMsg.READY, root=self.base_dir)
 
 All user-facing message templates are in `utils/constants.py:MESSAGES`.  
 Add new `LogMsg` enum members there before using them with `log_with_const`.
-- Receiver runtime perf stats default to **60s** reporting cadence via `ReceiverRuntime(report_interval_s=60.0)` in `src/opensynaptic/core/Receiver.py` (override `report_interval_s` explicitly when shorter debug cadence is needed).
+
+**Receiver Runtime Performance Stats:**
+- `ReceiverRuntime` (`src/opensynaptic/core/Receiver.py`) emits periodic performance statistics with default **60s** reporting cadence
+- Override `report_interval_s` in constructor for shorter debug cadence: `ReceiverRuntime(report_interval_s=5.0)`
+- Stats include packet count, throughput, error rates, and tail latencies
 
 ---
 
@@ -253,11 +348,27 @@ python scripts/audit_driver_capabilities.py
 
 ## Key Conventions
 
+**ServiceManager Plugin Lifecycle** (`src/opensynaptic/services/service_manager.py`):
+- Plugins must implement: `__init__(node, **kwargs)`, `get_required_config()` (static), `auto_load()`
+- Optional: `close()` (for cleanup), `get_cli_commands()` / `get_cli_completions()` (for CLI dispatch)
+- Mount via `ServiceManager.mount(name, service_instance, config)` before calling `load(name)`
+- `get_cli_commands()` should return `dict[sub_cmd: callable]` where each callable accepts argv and returns int (exit code)
+- All state changes must be thread-safe; use internal `_lock` pattern for concurrent access
+- Display Providers (subclass `DisplayProvider`) auto-register via `register_display_provider(instance)` and are discovered by TUI/web_user
+
+**Display Provider Pattern** (for TUI/web_user visualization):
+- Subclass `DisplayProvider` with `extract_data(node, **kwargs)` and optional format methods
+- Register via `register_display_provider(provider)` or init-time registration in plugin `auto_load()`
+- Each provider defines: `plugin_name`, `section_id`, `display_name`, `category`, `priority` (0–100), `refresh_interval_s`
+- `render_section(name)` automatically discovers and calls the matching provider(s)
+- Plugins can display arbitrary state without modifying web_user or tui UI code
+
 **CLI Entry Points** (`pyproject.toml:[project.scripts]`):
 - `os-node` – Interactive CLI with fallback to `run` daemon after idle timeout (managed by `src/opensynaptic/main.py:main()`)
 - `os-cli` – Inline command execution; no REPL (entrypoint `opensynaptic.main:cli_entry`)
 - `os-tui` – TUI dashboard (aliases to `os-cli tui`)
 - `os-web` – Standalone web plugin entrypoint (maps to `web-user`; implemented by `src/opensynaptic/main.py:web_main`)
+- **CLI structure**: all command parsers in `src/opensynaptic/CLI/parsers/` (modular by feature: `core`, `config`, `test`, `plugin`, `native`, `service`, `extra`); assembled by `build_parser()` in `build_parser.py`
 
 **Core & Configuration:**
 - **`config_path` is always normalized to absolute path** in `OpenSynaptic.__init__`; when omitted, default path is `~/.config/opensynaptic/Config.json`.

@@ -1,5 +1,6 @@
 import json
 import io
+import os
 import re
 import shlex
 import threading
@@ -9,6 +10,13 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from opensynaptic.utils import os_log
+from opensynaptic.services.display_api import (
+    get_display_registry,
+    render_section,
+    DisplayFormat,
+    collect_all_sections,
+)
+from opensynaptic.services.builtin_display_providers import auto_load_builtin_providers
 from .jsonpath_utils import dotpath_get as _dotpath_get, dotpath_set as _dotpath_set, cast_value as _cast_value
 from .option_schema_utils import (
     friendly_label as _friendly_label,
@@ -55,6 +63,8 @@ class WebUserService:
 
     def __init__(self, node=None):
         self.node = node
+        # Ensure core display sections are available even if no plugin imports them explicitly.
+        auto_load_builtin_providers()
         self._base_dir = Path(getattr(node, 'base_dir', Path(__file__).resolve().parents[4]))
         self._data_file = self._base_dir / 'data' / 'web_users.json'
         self._lock = threading.RLock()
@@ -71,6 +81,7 @@ class WebUserService:
         self._http_stats_lock = threading.RLock()
         self._http_stats_minute_key = int(time.time() // 60)
         self._http_stats_bucket = self._new_http_stats_bucket()
+        self._stress_cmd_lock = threading.Lock()
         self._load_users()
 
     @staticmethod
@@ -254,91 +265,9 @@ class WebUserService:
             return self.node.config
         return {}
 
-    def _service_snapshot(self):
-        manager = getattr(self.node, 'service_manager', None)
-        if manager and hasattr(manager, 'snapshot'):
-            return manager.snapshot()
-        return {'mount_index': [], 'runtime_index': {}, 'config_index': {}}
-
-    def _plugin_items(self):
-        cfg = self._config_ref()
-        service_plugins = (((cfg.get('RESOURCES', {}) or {}).get('service_plugins', {}) or {}))
-        if not isinstance(service_plugins, dict):
-            service_plugins = {}
-        snap = self._service_snapshot()
-        runtime = snap.get('runtime_index', {}) if isinstance(snap.get('runtime_index', {}), dict) else {}
-        mounted = set(snap.get('mount_index', []) if isinstance(snap.get('mount_index', []), list) else [])
-        items = []
-        for name in sorted(service_plugins.keys()):
-            item_cfg = service_plugins.get(name, {}) if isinstance(service_plugins.get(name, {}), dict) else {}
-            rt = runtime.get(name, {}) if isinstance(runtime.get(name, {}), dict) else {}
-            items.append({
-                'name': name,
-                'enabled': bool(item_cfg.get('enabled', True)),
-                'mounted': name in mounted,
-                'loaded': bool(rt.get('loaded', False)),
-                'mode': str(item_cfg.get('mode', 'manual')),
-            })
-        return items
-
-    def _set_plugin_enabled(self, plugin_name, enabled):
-        name = str(plugin_name or '').strip().lower().replace('-', '_')
-        if not name:
-            return False, 'plugin name is required'
-        cfg = self._config_ref()
-        resources = cfg.setdefault('RESOURCES', {})
-        service_plugins = resources.setdefault('service_plugins', {})
-        plugin_cfg = service_plugins.setdefault(name, {})
-        plugin_cfg['enabled'] = bool(enabled)
-        saver = getattr(self.node, '_save_config', None)
-        if callable(saver):
-            saver()
-        return True, None
-
-    def _transport_snapshot(self):
-        cfg = self._config_ref()
-        res = cfg.get('RESOURCES', {}) if isinstance(cfg, dict) else {}
-        return {
-            'active_transporters': sorted(list(getattr(self.node, 'active_transporters', {}).keys())),
-            'application_status': res.get('application_status', {}),
-            'transport_status': res.get('transport_status', {}),
-            'physical_status': res.get('physical_status', {}),
-            'transporters_status': res.get('transporters_status', {}),
-        }
-
-    def _transport_items(self):
-        snap = self._transport_snapshot()
-        items = []
-        for layer, key in (('application', 'application_status'), ('transport', 'transport_status'), ('physical', 'physical_status')):
-            mp = snap.get(key, {}) if isinstance(snap.get(key, {}), dict) else {}
-            for name in sorted(mp.keys()):
-                items.append({'name': str(name), 'layer': layer, 'enabled': bool(mp.get(name, False))})
-        return items
-
-    def _pipeline_snapshot(self):
-        cfg = self._config_ref()
-        settings = cfg.get('engine_settings', {}) if isinstance(cfg, dict) else {}
-        standardizer = getattr(self.node, 'standardizer', None)
-        engine = getattr(self.node, 'engine', None)
-        fusion = getattr(self.node, 'fusion', None)
-        ram_cache = getattr(fusion, '_RAM_CACHE', {}) if fusion is not None else {}
-        return {
-            'settings': settings,
-            'standardizer_cache_entries': len(getattr(standardizer, 'registry', {}) or {}),
-            'engine_rev_unit_entries': len(getattr(engine, 'REV_UNIT', {}) or {}),
-            'fusion_cached_aids': list((ram_cache or {}).keys()),
-        }
-
-    def _resolve_sections(self, requested=None):
-        allowed_raw = self._settings.get('expose_sections', ['identity', 'plugins', 'transport', 'pipeline', 'users', 'config'])
-        allowed = [str(item).strip().lower() for item in (allowed_raw or []) if str(item).strip()]
-        if not allowed:
-            allowed = ['identity']
-        if requested is None:
-            return allowed
-        wanted = [str(item).strip().lower() for item in (requested or []) if str(item).strip()]
-        chosen = [name for name in wanted if name in allowed]
-        return chosen or allowed
+    # Note: _service_snapshot, _transport_snapshot, _pipeline_snapshot moved to
+    # builtin_display_providers.py as Display Providers - this code is now in:
+    # PluginsDisplayProvider, TransportDisplayProvider, PipelineDisplayProvider
 
     def _ui_config_payload(self):
         self._refresh_settings()
@@ -348,7 +277,7 @@ class WebUserService:
             'ui_layout': str(self._settings.get('ui_layout', 'sidebar')),
             'ui_refresh_seconds': max(1, int(self._settings.get('ui_refresh_seconds', 3) or 3)),
             'ui_compact': bool(self._settings.get('ui_compact', False)),
-            'expose_sections': self._resolve_sections(None),
+            'expose_sections': self._resolve_sections([]),
         }
 
     def _update_ui_config(self, payload):
@@ -377,22 +306,31 @@ class WebUserService:
         return True, {'ok': True, 'ui': self._ui_config_payload()}
 
     def build_dashboard(self, sections=None):
+        """Build dashboard using Display API providers instead of hardcoded sections."""
         self._refresh_settings()
         cfg = self._config_ref()
         service_cfg = (((cfg.get('RESOURCES', {}) or {}).get('service_plugins', {}) or {}).get('web_user', {}) or {})
-        full_sections = {
-            'identity': {
-                'device_id': getattr(self.node, 'device_id', 'UNKNOWN'),
-                'assigned_id': getattr(self.node, 'assigned_id', None),
-                'core_backend': ((cfg.get('engine_settings', {}) or {}).get('core_backend', 'pycore') if isinstance(cfg, dict) else 'pycore'),
-            },
-            'plugins': self._service_snapshot(),
-            'transport': self._transport_snapshot(),
-            'pipeline': self._pipeline_snapshot(),
-            'users': self.list_users(),
-            'config': {'engine_settings': cfg.get('engine_settings', {}), 'security_settings': cfg.get('security_settings', {})},
-        }
-        selected_sections = self._resolve_sections(sections)
+        resolved_sections = self._resolve_sections(sections)
+        selected_set = set(resolved_sections)
+        
+        # Use Display API to collect all sections
+        all_display_sections = collect_all_sections(fmt=DisplayFormat.JSON, node=self.node)
+        if selected_set:
+            filtered = {}
+            for category, mapping in (all_display_sections or {}).items():
+                if not isinstance(mapping, dict):
+                    continue
+                keep = {}
+                for sid, value in mapping.items():
+                    sid_s = str(sid)
+                    qualified = f'{category}:{sid_s}'.lower()
+                    if sid_s.lower() in selected_set or qualified in selected_set:
+                        keep[sid_s] = value
+                if keep:
+                    filtered[str(category)] = keep
+            all_display_sections = filtered
+        
+        # Build payload using Display API
         payload = {
             'service': {
                 'name': 'web_user',
@@ -404,14 +342,302 @@ class WebUserService:
                 'management_enabled': self._is_management_enabled(),
                 'auth_enabled': self._is_auth_enabled(),
             },
-            'available_sections': self._resolve_sections(None),
-            'sections': selected_sections,
             'overview_metrics': self.get_overview_metrics(),
+            'display_providers': self.get_display_providers_metadata().get('metadata', {}),
+            'display_sections': all_display_sections,
             'timestamp': int(time.time()),
         }
-        for name in selected_sections:
-            payload[name] = full_sections.get(name, {})
+        core_sections = all_display_sections.get('core', {}) if isinstance(all_display_sections, dict) else {}
+        if isinstance(core_sections, dict):
+            for sid, value in core_sections.items():
+                if sid not in payload:
+                    payload[sid] = value
+        
+        # Special sections (users, special config)
+        payload['users'] = self.list_users()
+        payload['service_config'] = {'version': cfg.get('VERSION', '?')}
+        
         return payload
+
+    def _resolve_sections(self, requested):
+        self._refresh_settings()
+        defaults = [str(x).strip().lower() for x in self.get_required_config().get('expose_sections', []) if str(x).strip()]
+        raw = self._settings.get('expose_sections', defaults)
+        allowed = []
+        if isinstance(raw, list):
+            for item in raw:
+                token = str(item).strip().lower()
+                if token and token not in allowed:
+                    allowed.append(token)
+        if not allowed:
+            allowed = list(defaults)
+
+        if not requested:
+            return allowed
+
+        req = []
+        for item in requested:
+            token = str(item).strip().lower()
+            if token and token not in req:
+                req.append(token)
+        selected = [token for token in req if token in allowed]
+        return selected if selected else list(allowed)
+
+    def _service_snapshot(self):
+        sm = getattr(self.node, 'service_manager', None)
+        if sm is None or not hasattr(sm, 'snapshot'):
+            return {'mount_index': [], 'runtime_index': {}, 'config_index': {}}
+        snap = sm.snapshot() or {}
+        return {
+            'mount_index': list(snap.get('mount_index', [])),
+            'runtime_index': dict(snap.get('runtime_index', {})),
+            'config_index': dict(snap.get('config_index', {})),
+        }
+
+    def _plugin_items(self):
+        cfg = self._config_ref()
+        resources = cfg.get('RESOURCES', {}) if isinstance(cfg.get('RESOURCES', {}), dict) else {}
+        service_cfg = resources.get('service_plugins', {}) if isinstance(resources.get('service_plugins', {}), dict) else {}
+        sm = getattr(self.node, 'service_manager', None)
+        runtime_index = getattr(sm, 'runtime_index', {}) if sm is not None else {}
+        mounted = set(getattr(sm, 'mount_index', {}).keys()) if sm is not None else set()
+
+        names = set(service_cfg.keys()) | set(runtime_index.keys()) | set(mounted)
+        items = []
+        for name in sorted(names):
+            plugin_cfg = service_cfg.get(name, {}) if isinstance(service_cfg.get(name, {}), dict) else {}
+            state = runtime_index.get(name, {}) if isinstance(runtime_index.get(name, {}), dict) else {}
+            items.append({
+                'name': str(name),
+                'config_prefix': 'RESOURCES.service_plugins.{}'.format(str(name)),
+                'enabled': bool(plugin_cfg.get('enabled', state.get('enabled', True))),
+                'mode': str(plugin_cfg.get('mode', state.get('mode', 'manual'))),
+                'mounted': str(name) in mounted,
+                'loaded': bool(state.get('loaded', False)),
+            })
+        return items
+
+    @staticmethod
+    def _plugin_config_prefix(plugin_name):
+        from opensynaptic.services.plugin_registry import normalize_plugin_name
+        key = normalize_plugin_name(plugin_name)
+        return 'RESOURCES.service_plugins.{}'.format(key) if key else ''
+
+    def build_plugin_option_schema(self, plugin_name, only_writable=False):
+        prefix = self._plugin_config_prefix(plugin_name)
+        if not prefix:
+            return {'generated_at': int(time.time()), 'plugin': str(plugin_name or ''), 'categories': [], 'error': 'invalid plugin'}
+        cfg = self._config_ref()
+        try:
+            value = _dotpath_get(cfg, prefix)
+        except Exception:
+            value = {}
+        fields = []
+        self._flatten_option_fields(prefix, value, fields)
+        if only_writable:
+            fields = [item for item in fields if bool(item.get('writable'))]
+        category = {
+            'id': prefix,
+            'title': self._category_title(prefix),
+            'count': len(fields),
+            'fields': fields,
+        }
+        return {
+            'generated_at': int(time.time()),
+            'plugin': str(plugin_name or ''),
+            'prefix': prefix,
+            'categories': [category],
+            'writable_prefixes': self._allowed_write_prefixes(),
+        }
+
+    def apply_plugin_option_updates(self, plugin_name, updates):
+        prefix = self._plugin_config_prefix(plugin_name)
+        if not prefix:
+            return False, {'ok': False, 'error': 'invalid plugin'}
+        if not isinstance(updates, list):
+            return False, {'ok': False, 'error': 'updates must be a list'}
+        changed = []
+        failed = []
+        for item in updates:
+            if not isinstance(item, dict):
+                failed.append({'item': item, 'error': 'invalid update object'})
+                continue
+            key = str(item.get('key', '') or '').strip()
+            if key and not (key == prefix or key.startswith(prefix + '.')):
+                failed.append({'key': key, 'error': 'key not in plugin scope'})
+                continue
+            value = item.get('value')
+            value_type = str(item.get('value_type', '') or '').strip().lower()
+            if not key:
+                failed.append({'item': item, 'error': 'key is required'})
+                continue
+            if not value_type:
+                try:
+                    current = _dotpath_get(self._config_ref(), key)
+                except Exception:
+                    current = value
+                value_type = self._infer_value_type(current)
+            ok, payload = self._config_set_payload(key=key, value=value, value_type=value_type)
+            if ok:
+                changed.append({'key': key, 'new': payload.get('new')})
+            else:
+                failed.append({'key': key, 'error': payload.get('error', 'update failed')})
+        return True, {'ok': len(failed) == 0, 'plugin': str(plugin_name or ''), 'prefix': prefix, 'changed': changed, 'failed': failed}
+
+    def _set_plugin_enabled(self, plugin_name, enabled):
+        from opensynaptic.services.plugin_registry import normalize_plugin_name
+
+        key = normalize_plugin_name(plugin_name)
+        if not key:
+            return False, 'plugin is required'
+
+        cfg = self._config_ref()
+        resources = cfg.setdefault('RESOURCES', {})
+        service_cfg = resources.setdefault('service_plugins', {})
+        plugin_cfg = service_cfg.setdefault(key, {})
+        plugin_cfg['enabled'] = bool(enabled)
+
+        sm = getattr(self.node, 'service_manager', None)
+        if sm is not None and isinstance(getattr(sm, 'runtime_index', None), dict):
+            state = sm.runtime_index.get(key, {}) if isinstance(sm.runtime_index.get(key, {}), dict) else {}
+            state['enabled'] = bool(enabled)
+            sm.runtime_index[key] = state
+
+        saver = getattr(self.node, '_save_config', None)
+        if callable(saver):
+            saver()
+        self._refresh_settings()
+        return True, None
+
+    def _transport_snapshot(self):
+        cfg = self._config_ref()
+        resources = cfg.get('RESOURCES', {}) if isinstance(cfg.get('RESOURCES', {}), dict) else {}
+        return {
+            'application_status': dict(resources.get('application_status', {}) if isinstance(resources.get('application_status', {}), dict) else {}),
+            'transport_status': dict(resources.get('transport_status', {}) if isinstance(resources.get('transport_status', {}), dict) else {}),
+            'physical_status': dict(resources.get('physical_status', {}) if isinstance(resources.get('physical_status', {}), dict) else {}),
+            'transporters_status': dict(resources.get('transporters_status', {}) if isinstance(resources.get('transporters_status', {}), dict) else {}),
+            'active_transporters': sorted(list(getattr(getattr(self.node, 'active_transporters', {}), 'keys', lambda: [])())),
+        }
+
+    def _transport_items(self):
+        snap = self._transport_snapshot()
+        layers = [
+            ('application', snap.get('application_status', {})),
+            ('transport', snap.get('transport_status', {})),
+            ('physical', snap.get('physical_status', {})),
+        ]
+        seen = set()
+        items = []
+        for layer_name, status_map in layers:
+            if not isinstance(status_map, dict):
+                continue
+            for name in sorted(status_map.keys()):
+                key = str(name).strip().lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                items.append({
+                    'name': key,
+                    'layer': layer_name,
+                    'enabled': bool(status_map.get(name, False)),
+                })
+        return items
+
+    def get_display_providers_metadata(self):
+        """Get metadata about all registered display providers."""
+        registry = get_display_registry()
+        return {
+            'ok': True,
+            'metadata': registry.get_metadata(),
+        }
+
+    def render_display_section(self, section_path, fmt='json'):
+        """
+        Render a single display section.
+        
+        Args:
+            section_path: "plugin_name:section_id" format
+            fmt: Output format ('json', 'html', 'text', 'table', 'tree')
+            
+        Returns:
+            Formatted output or None if not found
+        """
+        if ':' not in section_path:
+            return None
+        
+        parts = section_path.split(':', 1)
+        if len(parts) != 2:
+            return None
+        
+        plugin_name, section_id = parts
+        provider = get_display_registry().get(plugin_name, section_id)
+        render_mode = str(getattr(provider, 'render_mode', 'safe_html') or 'safe_html').strip().lower()
+        if render_mode not in ('safe_html', 'trusted_html', 'json_only'):
+            render_mode = 'safe_html'
+        
+        try:
+            format_map = {
+                'json': DisplayFormat.JSON,
+                'html': DisplayFormat.HTML,
+                'text': DisplayFormat.TEXT,
+                'table': DisplayFormat.TABLE,
+                'tree': DisplayFormat.TREE,
+            }
+            requested_fmt = str(fmt or 'json').strip().lower()
+            fmt_enum = format_map.get(requested_fmt, DisplayFormat.JSON)
+            resolved_fmt = fmt_enum.value
+
+            output = render_section(plugin_name, section_id, fmt_enum, node=self.node)
+            return {
+                'ok': True if output is not None else False,
+                'section': section_path,
+                'format': requested_fmt,
+                'resolved_format': resolved_fmt,
+                'render_mode': render_mode,
+                'data': output,
+            } if output is not None else None
+        except Exception as exc:
+            os_log.err('WEB_USER', 'DISPLAY_RENDER_ERROR', exc, {
+                'section': section_path,
+                'format': fmt
+            })
+            return None
+
+    def collect_all_display_sections(self, fmt='json'):
+        """
+        Collect all registered display sections in the specified format.
+        
+        Args:
+            fmt: Output format ('json', 'html', 'text', 'table', 'tree')
+            
+        Returns:
+            Dict with all rendered sections organized by category
+        """
+        try:
+            format_map = {
+                'json': DisplayFormat.JSON,
+                'html': DisplayFormat.HTML,
+                'text': DisplayFormat.TEXT,
+                'table': DisplayFormat.TABLE,
+                'tree': DisplayFormat.TREE,
+            }
+            fmt_enum = format_map.get(fmt.lower(), DisplayFormat.JSON)
+            
+            sections = collect_all_sections(fmt=fmt_enum, node=self.node)
+            return {
+                'ok': True,
+                'format': fmt,
+                'sections': sections,
+                'timestamp': int(time.time()),
+            }
+        except Exception as exc:
+            os_log.err('WEB_USER', 'DISPLAY_COLLECT_ERROR', exc, {'format': fmt})
+            return {
+                'ok': False,
+                'error': str(exc),
+                'format': fmt,
+            }
 
     def _config_get_payload(self, key=None):
         cfg = self._config_ref()
@@ -789,9 +1015,259 @@ class WebUserService:
             cmd = str(sub_cmd or '').strip()
             if not cmd:
                 return False, {'error': 'sub_cmd is required for action=cmd', 'plugin': key}
-            rc = self.node.service_manager.dispatch_plugin_cli(key, [cmd] + list(args or []))
-            return rc == 0, {'ok': rc == 0, 'plugin': key, 'action': 'cmd', 'exit_code': int(rc)}
+            cli_args = list(args or [])
+            command_line = ' '.join([key, cmd] + [str(x) for x in cli_args]).strip()
+            os_log.info('WEB_USER', 'CMD_DISPATCH', 'dispatch plugin command from web', {'command': command_line})
+            stress_locked = False
+            if key == 'test_plugin' and cmd == 'stress':
+                if not self._stress_cmd_lock.acquire(blocking=False):
+                    return False, {
+                        'ok': False,
+                        'plugin': key,
+                        'action': 'cmd',
+                        'command': command_line,
+                        'error': 'stress run already in progress; wait for current run to finish',
+                    }
+                stress_locked = True
+            try:
+                rc = self.node.service_manager.dispatch_plugin_cli(key, [cmd] + cli_args)
+            finally:
+                if stress_locked:
+                    try:
+                        self._stress_cmd_lock.release()
+                    except Exception:
+                        pass
+            os_log.info('WEB_USER', 'CMD_RESULT', 'plugin command finished', {
+                'command': command_line,
+                'exit_code': int(rc),
+            })
+            payload = {
+                'ok': rc == 0,
+                'plugin': key,
+                'action': 'cmd',
+                'exit_code': int(rc),
+                'command': command_line,
+            }
+            return rc == 0, payload
         return False, {'error': 'unknown action', 'action': action}
+
+
+
+    def get_plugin_commands_metadata(self, plugin_name):
+        if not self.node or not hasattr(self.node, 'service_manager'):
+            return {'ok': False, 'error': 'service manager unavailable', 'plugin': str(plugin_name or '')}
+        from opensynaptic.services.plugin_registry import ensure_and_mount_plugin, normalize_plugin_name
+
+        key = normalize_plugin_name(plugin_name)
+        if not key:
+            return {'ok': False, 'error': 'plugin is required', 'plugin': str(plugin_name or '')}
+
+        ensure_and_mount_plugin(self.node, key, load=True, mode='runtime')
+        sm = self.node.service_manager
+        completions = sm.collect_cli_completions().get(key, {}) if hasattr(sm, 'collect_cli_completions') else {}
+        commands = sm.collect_cli_commands().get(key, {}) if hasattr(sm, 'collect_cli_commands') else {}
+        rows = []
+        all_names = sorted(set(list(completions.keys())) | set(list(commands.keys())))
+        for name in all_names:
+            rows.append({
+                'name': str(name),
+                'description': str((completions or {}).get(name, '') or ''),
+                'enabled': True,
+            })
+        return {
+            'ok': True,
+            'plugin': key,
+            'commands': rows,
+            'count': len(rows),
+        }
+
+    @staticmethod
+    def _plugin_visual_presets(plugin_key):
+        key = str(plugin_key or '').strip().lower()
+        if key == 'port_forwarder':
+            return {
+                'plugin': key,
+                'sections': [
+                    {
+                        'id': 'rules',
+                        'title': 'Forwarding Rules',
+                        'commands': [
+                            {
+                                'name': 'status',
+                                'label': 'Status Snapshot',
+                                'description': 'Show forwarding status and loaded rule sets.',
+                                'fields': [],
+                            },
+                            {
+                                'name': 'list',
+                                'label': 'List Rules',
+                                'description': 'List all active forwarding rules.',
+                                'fields': [],
+                            },
+                            {
+                                'name': 'stats',
+                                'label': 'Traffic Stats',
+                                'description': 'Show forwarding packet counters and rule hit counts.',
+                                'fields': [],
+                            },
+                            {
+                                'name': 'add-rule',
+                                'label': 'Add Rule',
+                                'description': 'Create one forwarding rule. Supports optional fields and repeatable extra args.',
+                                'fields': [
+                                    {'name': '--from-protocol', 'type': 'select', 'required': False, 'default': 'UDP', 'choices': ['UDP', 'TCP', 'UART', 'RS485', 'CAN', 'LORA', 'MQTT', 'MATTER', 'ZIGBEE', 'BLUETOOTH']},
+                                    {'name': '--from-port', 'type': 'int', 'required': False, 'default': 0},
+                                    {'name': '--to-protocol', 'type': 'select', 'required': True, 'default': 'TCP', 'choices': ['UDP', 'TCP', 'UART', 'RS485', 'CAN', 'LORA', 'MQTT', 'MATTER', 'ZIGBEE', 'BLUETOOTH']},
+                                    {'name': '--to-host', 'type': 'str', 'required': True, 'default': '127.0.0.1'},
+                                    {'name': '--to-port', 'type': 'int', 'required': True, 'default': 8080},
+                                    {'name': '--rule-set', 'type': 'str', 'required': False, 'default': 'default'},
+                                    {'name': '--priority', 'type': 'int', 'required': False, 'default': 0},
+                                    {'name': '--enabled', 'type': 'select', 'required': False, 'default': 'true', 'choices': ['true', 'false']},
+                                ],
+                                'advanced_fields': [
+                                    {'name': '--condition', 'type': 'str', 'required': False, 'default': ''},
+                                    {'name': '--metadata', 'type': 'str', 'required': False, 'default': '{}'},
+                                ],
+                                'extra_options': ['--from-protocol', '--from-port', '--to-protocol', '--to-host', '--to-port', '--rule-set', '--priority', '--enabled', '--condition', '--metadata'],
+                                'supports_batch': True,
+                            },
+                            {
+                                'name': 'remove-rule',
+                                'label': 'Remove Rule',
+                                'description': 'Remove a rule by rule-set and index.',
+                                'fields': [
+                                    {'name': '--rule-set', 'type': 'str', 'required': False, 'default': 'default'},
+                                    {'name': '--index', 'type': 'int', 'required': True, 'default': 0},
+                                ],
+                                'extra_options': ['--rule-set', '--index'],
+                            },
+                        ],
+                    }
+                ],
+            }
+        if key == 'test_plugin':
+            return {
+                'plugin': key,
+                'sections': [
+                    {
+                        'id': 'component',
+                        'title': 'Component / Integration',
+                        'commands': [
+                            {
+                                'name': 'component',
+                                'label': 'Run Component Suite',
+                                'description': 'Execute component tests quickly.',
+                                'fields': [
+                                    {'name': '--verbosity', 'type': 'int', 'required': False, 'default': 1},
+                                ],
+                                'advanced_fields': [
+                                    {'name': '--parallel', 'type': 'bool', 'required': False, 'default': False},
+                                    {'name': '--processes', 'type': 'int', 'required': False, 'default': 0},
+                                    {'name': '--max-class-workers', 'type': 'int', 'required': False, 'default': 0},
+                                ],
+                                'extra_options': ['--verbosity', '--parallel', '--processes', '--max-class-workers'],
+                            },
+                            {'name': 'integration', 'label': 'Run Integration Suite', 'description': 'Execute integration tests.', 'fields': [], 'extra_options': []},
+                            {'name': 'audit', 'label': 'Driver Capability Audit', 'description': 'Audit driver capability matrix.', 'fields': [], 'extra_options': []},
+                        ],
+                    },
+                    {
+                        'id': 'stress',
+                        'title': 'Stress Profiles',
+                        'commands': [
+                            {
+                                'name': 'stress',
+                                'label': 'Run Stress Test',
+                                'description': 'Configurable stress run with key throughput knobs.',
+                                'fields': [
+                                    {'name': '--total', 'type': 'int', 'required': False, 'default': 200},
+                                    {'name': '--workers', 'type': 'int', 'required': False, 'default': 8},
+                                    {'name': '--sources', 'type': 'int', 'required': False, 'default': 6},
+                                    {'name': '--chain-mode', 'type': 'select', 'required': False, 'default': 'core', 'choices': ['core', 'e2e', 'e2e_inproc', 'e2e_loopback']},
+                                    {'name': '--pipeline-mode', 'type': 'select', 'required': False, 'default': 'auto', 'choices': ['auto', 'legacy', 'batch_fused']},
+                                ],
+                                'advanced_fields': [
+                                    {'name': '--batch-size', 'type': 'int', 'required': False, 'default': 1},
+                                    {'name': '--processes', 'type': 'int', 'required': False, 'default': 1},
+                                    {'name': '--threads-per-process', 'type': 'int', 'required': False, 'default': ''},
+                                    {'name': '--header-probe-rate', 'type': 'float', 'required': False, 'default': 0.0},
+                                    {'name': '--core-backend', 'type': 'select', 'required': False, 'default': 'pycore', 'choices': ['pycore', 'rscore']},
+                                    {'name': '--require-rust', 'type': 'bool', 'required': False, 'default': False},
+                                ],
+                                'extra_options': ['--total', '--workers', '--sources', '--chain-mode', '--pipeline-mode', '--batch-size', '--processes', '--threads-per-process', '--header-probe-rate', '--core-backend', '--require-rust'],
+                            },
+                            {
+                                'name': 'compare',
+                                'label': 'Backend Compare',
+                                'description': 'Compare pycore vs rscore under workload.',
+                                'fields': [
+                                    {'name': '--total', 'type': 'int', 'required': False, 'default': 10000},
+                                    {'name': '--workers', 'type': 'int', 'required': False, 'default': 8},
+                                    {'name': '--runs', 'type': 'int', 'required': False, 'default': 1},
+                                ],
+                                'advanced_fields': [
+                                    {'name': '--warmup', 'type': 'int', 'required': False, 'default': 1},
+                                    {'name': '--processes', 'type': 'int', 'required': False, 'default': 1},
+                                    {'name': '--threads-per-process', 'type': 'int', 'required': False, 'default': 4},
+                                    {'name': '--batch-size', 'type': 'int', 'required': False, 'default': 1},
+                                ],
+                                'extra_options': ['--total', '--workers', '--runs', '--warmup', '--processes', '--threads-per-process', '--batch-size'],
+                            },
+                        ],
+                    },
+                ],
+            }
+        return {'plugin': key, 'sections': []}
+
+    def get_plugin_visual_schema(self, plugin_name):
+        from opensynaptic.services.plugin_registry import normalize_plugin_name
+
+        key = normalize_plugin_name(plugin_name)
+        if not key:
+            return {'ok': False, 'error': 'plugin is required', 'plugin': str(plugin_name or '')}
+
+        commands_meta = self.get_plugin_commands_metadata(key)
+        names = set()
+        for row in commands_meta.get('commands', []) if isinstance(commands_meta, dict) else []:
+            name = str((row or {}).get('name', '')).strip()
+            if name:
+                names.add(name)
+
+        preset = self._plugin_visual_presets(key)
+        sections = []
+        for sec in preset.get('sections', []):
+            commands = []
+            for cmd in sec.get('commands', []):
+                cmd_name = str((cmd or {}).get('name', '')).strip()
+                if cmd_name and (not names or cmd_name in names):
+                    commands.append(cmd)
+            if commands:
+                sections.append({
+                    'id': sec.get('id', ''),
+                    'title': sec.get('title', ''),
+                    'commands': commands,
+                })
+
+        if not sections:
+            fallback_rows = []
+            for row in commands_meta.get('commands', []) if isinstance(commands_meta, dict) else []:
+                name = str((row or {}).get('name', '')).strip()
+                if not name:
+                    continue
+                fallback_rows.append({
+                    'name': name,
+                    'label': name,
+                    'description': str((row or {}).get('description', '') or ''),
+                    'fields': [],
+                })
+            sections = [{'id': 'commands', 'title': 'Commands', 'commands': fallback_rows}] if fallback_rows else []
+
+        return {
+            'ok': True,
+            'plugin': key,
+            'sections': sections,
+            'count': sum(len(sec.get('commands', [])) for sec in sections),
+        }
 
     @staticmethod
     def cli_help_table():

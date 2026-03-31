@@ -1,0 +1,189 @@
+{
+  "total": 5000,
+  "ok": 5000,
+  "fail": 0,
+  "avg_latency_ms": 8.4379,
+  "p95_latency_ms": 12.0122,
+  "p99_latency_ms": 17.6188,
+  "p99_9_latency_ms": 38.73,
+  "p99_99_latency_ms": 49.8792,
+  "min_latency_ms": 4.0999,
+  "max_latency_ms": 49.8792,
+  "stage_timing_ms": {
+    "standardize_ms": {
+      "avg": 0.0435,
+      "min": 0.0128,
+      "max": 1.6743,
+      "p95": 0.0719,
+      "p99": 0.2791,
+      "p99_9": 0.9829,
+      "p99_99": 1.6743
+    },
+    "compress_ms": {
+      "avg": 0.0569,
+      "min": 0.0099,
+      "max": 1.5111,
+      "p95": 0.2649,
+      "p99": 0.5515,
+      "p99_9": 1.1942,
+      "p99_99": 1.5111
+    },
+    "fuse_ms": {
+      "avg": 4.1496,
+      "min": 1.6563,
+      "max": 25.1486,
+      "p95": 6.251,
+      "p99": 9.6347,
+      "p99_9": 15.9368,
+      "p99_99": 25.1486
+    }
+  },
+  "error_samples": [],
+  "core_backend": "rscore",
+  "codec_class": "RsBase62Codec",
+  "codec_module": "opensynaptic.core.rscore.codec",
+  "requested_core": "auto",
+  "execution_mode": "thread",
+  "processes": 1,
+  "threads_per_process": 8,
+  "batch_size": 1,
+  "header_probe": {
+    "enabled": false,
+    "rate": 0.0,
+    "parser_available": false,
+    "attempted": 0,
+    "parsed": 0,
+    "crc16_ok": 0,
+    "parse_hit_rate": 0.0,
+    "crc16_ok_rate": 0.0
+  },
+  "worst_sample": {
+    "total_latency_ms": 49.8792,
+    "task_id": null,
+    "chain_mode": "e2e",
+    "stage_timing_ms": {
+      "standardize_ms": 0.0368,
+      "compress_ms": 0.0242,
+      "fuse_ms": 12.9354
+    },
+    "stage_share_pct": {
+      "standardize_ms": 0.0738,
+      "compress_ms": 0.0485,
+      "fuse_ms": 25.9335
+    },
+    "dominant_stage": {
+      "name": "fuse_ms",
+      "latency_ms": 12.9354
+    }
+  },
+  "worst_topk": [
+    {
+      "total_latency_ms": 49.8792,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0368,
+        "compress_ms": 0.0242,
+        "fuse_ms": 12.9354
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.0738,
+        "compress_ms": 0.0485,
+        "fuse_ms": 25.9335
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 12.9354
+      }
+    },
+    {
+      "total_latency_ms": 48.6893,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.2884,
+        "compress_ms": 0.0233,
+        "fuse_ms": 12.6065
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.5923,
+        "compress_ms": 0.0479,
+        "fuse_ms": 25.8917
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 12.6065
+      }
+    },
+    {
+      "total_latency_ms": 41.9414,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0375,
+        "compress_ms": 0.2466,
+        "fuse_ms": 25.1486
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.0894,
+        "compress_ms": 0.588,
+        "fuse_ms": 59.9613
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 25.1486
+      }
+    },
+    {
+      "total_latency_ms": 39.5889,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0569,
+        "compress_ms": 0.3994,
+        "fuse_ms": 7.6969
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.1437,
+        "compress_ms": 1.0089,
+        "fuse_ms": 19.4421
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 7.6969
+      }
+    },
+    {
+      "total_latency_ms": 38.73,
+      "task_id": null,
+      "chain_mode": "e2e",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0193,
+        "compress_ms": 0.0104,
+        "fuse_ms": 8.7819
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.0498,
+        "compress_ms": 0.0269,
+        "fuse_ms": 22.6747
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 8.7819
+      }
+    }
+  ],
+  "elapsed_s": 5.366,
+  "throughput_pps": 931.9,
+  "chain_mode": "e2e",
+  "runtime_toggles": {
+    "collector_mode": "batched",
+    "collector_flush_every": 256,
+    "collector_flush_auto_tuned": false,
+    "pipeline_mode": "legacy",
+    "pipeline_batch_available": false,
+    "gc_mode": "auto",
+    "gc_disabled_during_run": true,
+    "chain_mode": "e2e"
+  }
+}

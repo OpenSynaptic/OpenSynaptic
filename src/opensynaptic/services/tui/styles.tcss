@@ -1,0 +1,126 @@
+/* OpenSynaptic Textual TUI Stylesheet */
+
+Screen {
+    background: $surface;
+    color: $text;
+}
+
+Header {
+    background: $primary;
+    color: $surface;
+    height: 3;
+    text-align: center;
+    border-bottom: solid $primary;
+}
+
+Footer {
+    background: $primary;
+    color: $surface;
+    height: 2;
+    border-top: solid $primary;
+}
+
+#main-container {
+    height: 1fr;
+    layout: horizontal;
+}
+
+#sidebar {
+    width: 20;
+    border-right: solid $primary;
+    background: $panel;
+    height: 1fr;
+    overflow-y: auto;
+}
+
+#content {
+    width: 1fr;
+    height: 1fr;
+    overflow: auto;
+    border: solid $primary;
+    padding: 1;
+}
+
+#status-bar {
+    height: 1;
+    background: $primary;
+    color: $surface;
+    dock: bottom;
+    text-align: left;
+    padding-left: 1;
+}
+
+.section-button {
+    margin: 0 1;
+    width: 100%;
+    border: none;
+    background: $panel;
+    color: $text;
+}
+
+.section-button:hover {
+    background: $boost;
+    color: $text;
+}
+
+.section-button.active {
+    background: $primary;
+    color: $surface;
+    border-left: solid $primary;
+}
+
+#json-container {
+    width: 80;
+    height: 24;
+    border: solid $primary;
+    background: $surface;
+    border-title-color: $primary;
+}
+
+#json-content {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    padding: 1;
+}
+
+#input-container {
+    width: 50;
+    height: 8;
+    border: solid $primary;
+    background: $surface;
+    border-title-color: $primary;
+}
+
+Input {
+    width: 100%;
+    margin: 1 0;
+}
+
+Button {
+    margin: 1 1;
+}
+
+Button.primary {
+    background: $primary;
+    color: $surface;
+}
+
+DataTable {
+    height: 100%;
+    border: none;
+}
+
+Tree {
+    height: 100%;
+    border: none;
+}
+
+Static {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background: $surface;
+    color: $text;
+}
+

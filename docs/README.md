@@ -1,90 +1,102 @@
-# OpenSynaptic Docs Hub
+# OpenSynaptic Documentation Hub
 
-This is the canonical navigation hub for project documentation.
-If you only open one docs file first, use this one.
+Use this page as the main entry point for repository documentation.
 
----
-
-## Core References
-
-- `../README.md` - project overview, installation, CLI quick reference
-- `ARCHITECTURE.md` - system architecture and processing pipeline
-- `CONFIG_SCHEMA.md` - `Config.json` schema and runtime keys
-- `API.md` - public API contracts and examples
-- `CORE_API.md` - core facade, backend discovery, and symbol resolution
+**Snapshot date**: 2026-04-01 (local workspace)  
+**Total docs under `docs/`**: 98 markdown files
 
 ---
 
-## Backend and Runtime Internals
+## Quick Navigation
 
-- `internal/PYCORE_INTERNALS.md` - Python core internals
-- `RSCORE_API.md` - Rust backend API behavior
-- `PYCORE_RUST_API.md` - Python and Rust boundary details
-- `internal/ZERO_COPY_CLOSEOUT.md` - zero-copy transport rollout and constraints
+### Start Here
+1. [../README.md](../README.md) - Project overview and installation.
+2. [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture and pipeline.
+3. [plugins/PLUGIN_STARTER_KIT.md](plugins/PLUGIN_STARTER_KIT.md) - Plugin starter workflow.
 
----
+### Core References
 
-## Plugins, Transporters, and Operations
+**Architecture and Design**
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [architecture/](architecture/)
 
-- `TRANSPORTER_PLUGIN.md` - transporter extension model and contract
-- `ID_LEASE_SYSTEM.md` - ID lifecycle and lease policy behavior
-- `ID_LEASE_CONFIG_REFERENCE.md` - lease tuning and config presets
+**API and Configuration**
+- [API.md](API.md)
+- [CORE_API.md](CORE_API.md)
+- [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md)
+- [api/](api/)
 
----
+**Python and Rust Integration**
+- [PYCORE_RUST_API.md](PYCORE_RUST_API.md)
+- [RSCORE_API.md](RSCORE_API.md)
 
-## Release and Change Documents
+### Plugins and Features
 
-- `../CHANGELOG.md` - full project changelog
-- `releases/v0.1.1.md`
-- `releases/v0.2.0.md`
-- `releases/v1.1.0.md`
-- `releases/v0.3.0_announcement.md`
-- `releases/announcement-summary-v0.3.0.md`
-- `reports/releases/v0.2.0-v0.3.0-comparison.md`
-- `guides/upgrade/v0.3.0.md`
-- `guides/drivers/quick-reference.md`
+**Plugin Development**
+- [plugins/PLUGIN_DEVELOPMENT_SPECIFICATION.md](plugins/PLUGIN_DEVELOPMENT_SPECIFICATION.md)
+- [plugins/PLUGIN_DEVELOPMENT_SPECIFICATION_2026.md](plugins/PLUGIN_DEVELOPMENT_SPECIFICATION_2026.md)
+- [plugins/PLUGIN_QUICK_REFERENCE.md](plugins/PLUGIN_QUICK_REFERENCE.md)
+- [plugins/](plugins/)
 
----
+**Feature References**
+- [TRANSPORTER_PLUGIN.md](TRANSPORTER_PLUGIN.md)
+- [ID_LEASE_SYSTEM.md](ID_LEASE_SYSTEM.md)
+- [ID_LEASE_CONFIG_REFERENCE.md](ID_LEASE_CONFIG_REFERENCE.md)
+- [features/](features/)
 
-## Reading Paths
+### Guides and Tutorials
+- [guides/DISPLAY_API_GUIDE.md](guides/DISPLAY_API_GUIDE.md)
+- [guides/DISPLAY_API_QUICKSTART.md](guides/DISPLAY_API_QUICKSTART.md)
+- [guides/WEB_COMMANDS_REFERENCE.md](guides/WEB_COMMANDS_REFERENCE.md)
+- [guides/TUI_QUICK_REFERENCE.md](guides/TUI_QUICK_REFERENCE.md)
+- [guides/](guides/)
 
-### New team member
+### Reports and Change Tracking
+- [reports/CHANGELOG.md](reports/CHANGELOG.md)
+- [reports/CHANGELOG_2026M03_24.md](reports/CHANGELOG_2026M03_24.md)
+- [reports/IMPLEMENTATION_COMPLETE.md](reports/IMPLEMENTATION_COMPLETE.md)
+- [reports/COMPREHENSIVE_COMPLETION_SUMMARY.md](reports/COMPREHENSIVE_COMPLETION_SUMMARY.md)
+- [reports/](reports/)
 
-1. `../README.md`
-2. `ARCHITECTURE.md`
-3. `CONFIG_SCHEMA.md`
-
-### Backend maintainer
-
-1. `CORE_API.md`
-2. `internal/PYCORE_INTERNALS.md`
-3. `PYCORE_RUST_API.md`
-4. `RSCORE_API.md`
-
-### Integrations and drivers
-
-1. `TRANSPORTER_PLUGIN.md`
-2. `API.md`
-3. `guides/drivers/quick-reference.md`
-
-### Operations and deployment
-
-1. `ID_LEASE_SYSTEM.md`
-2. `ID_LEASE_CONFIG_REFERENCE.md`
-3. `guides/upgrade/v0.3.0.md`
+### Internal Documentation
+- [internal/AGENTS.md](internal/AGENTS.md)
+- [internal/](internal/)
 
 ---
 
-## Documentation Maintenance Rules
+## Browse by Category
 
-- Keep English as the canonical language for actively maintained docs.
-- Keep topic docs in `docs/`; keep release snapshots in `docs/releases/`.
-- Keep non-publish process and status documents in `docs/internal/`.
-- Avoid duplicate feature explanations across multiple files.
-- Prefer linking to one canonical doc instead of copy-pasting sections.
+| Category | Path | File Count |
+|---|---|---:|
+| Architecture | [architecture/](architecture/) | 4 |
+| API | [api/](api/) | 2 |
+| Features | [features/](features/) | 5 |
+| Plugins | [plugins/](plugins/) | 10 |
+| Guides | [guides/](guides/) | 10 |
+| Reports | [reports/](reports/) | 31 |
+| Internal | [internal/](internal/) | 12 |
+| Releases | [releases/](releases/) | 8 |
+
+---
+
+## Common Tasks
+
+- Build a plugin: [plugins/PLUGIN_DEVELOPMENT_SPECIFICATION.md](plugins/PLUGIN_DEVELOPMENT_SPECIFICATION.md)
+- Understand architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Integrate API: [API.md](API.md)
+- Configure runtime: [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md)
+- Tune performance: [reports/PERFORMANCE_OPTIMIZATION_REPORT.md](reports/PERFORMANCE_OPTIMIZATION_REPORT.md)
+- Review bug fixes: [reports/BUG_FIX_REPORT.md](reports/BUG_FIX_REPORT.md)
+
+---
+
+## Maintenance Rules
+
+- Keep English as the canonical language for maintained docs.
+- Keep topic docs in `docs/`; keep snapshots in `docs/releases/`.
+- Keep process/status notes in `docs/internal/`.
+- Prefer linking to canonical pages instead of duplicating content.
 - Keep command examples executable and tagged as `powershell`.
 
-For repository-wide navigation, see `INDEX.md`.
-
-Maintainer-only records are grouped under `internal/` (see `internal/README.md`).
+For full navigation, see [INDEX.md](INDEX.md).
 

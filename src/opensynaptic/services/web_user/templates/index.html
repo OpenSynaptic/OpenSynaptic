@@ -167,7 +167,7 @@
     .section.show { display: block; }
     .opt-cat { border: 1px solid var(--line); border-radius: 10px; margin-top: 10px; overflow: hidden; }
     .opt-head { background: rgba(56, 189, 248, .08); padding: 8px 10px; border-bottom: 1px solid var(--line); font-weight: 600; }
-    .opt-row { display: grid; grid-template-columns: 1fr 300px 108px; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); align-items: center; }
+    .opt-row { display: grid; grid-template-columns: 1fr minmax(120px, 300px) auto; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); align-items: center; }
     .opt-row:last-child { border-bottom: none; }
     .opt-meta { font-size: 12px; color: var(--muted); }
     .opt-key { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); }
@@ -220,12 +220,13 @@
     }
     #cmdOutputFull { height: 260px; min-height: 260px; max-height: 260px; }
     #pluginItemsView {
-      max-height: 420px;
-      min-height: 220px;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 8px;
-      background: rgba(0, 0, 0, .06);
+      min-height: 120px;
+      max-height: none;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      background: transparent;
+      overflow: visible;
     }
     #transportItemsView {
       min-height: 220px;
@@ -235,6 +236,152 @@
       padding: 10px;
       background: rgba(0, 0, 0, .04);
       overflow: visible;
+    }
+    #pluginConfigSchemaView,
+    #pluginResult,
+    #pluginConfigResult {
+      min-height: 120px;
+      max-height: none;
+      overflow: visible;
+      height: auto;
+    }
+    .plugin-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 10px;
+    }
+    .plugin-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
+      padding: 10px;
+    }
+    .plugin-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      gap: 10px;
+    }
+    .plugin-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .plugin-badge {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+      margin-right: 6px;
+      color: var(--muted);
+    }
+    .plugin-command-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      padding: 8px 0;
+    }
+    .plugin-command-row:last-child { border-bottom: none; }
+    body.json-collapsed .json-verbose { display: none; }
+    .plugin-workbench {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+      gap: 14px;
+      align-items: start;
+      min-width: 860px;
+      grid-auto-flow: column;
+      margin-top: 24px;
+    }
+    .plugin-workbench > div {
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+    }
+    .plugin-workbench .card { width: 100%; }
+    .plugin-right-stack {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      align-content: start;
+    }
+    .plugin-right-stack .opt-row {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+    .plugin-right-stack .opt-row > div {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .plugin-right-stack .opt-row > div:nth-child(3) button {
+      flex: 1;
+      min-width: 100px;
+    }
+    .plugin-workbench .opt-cat,
+    .plugin-workbench .visual-command-card,
+    .plugin-workbench .plugin-command-row {
+      width: 100%;
+      max-width: 100%;
+    }
+    .plugin-workbench .opt-row > div:nth-child(2) input,
+    .plugin-workbench .opt-row > div:nth-child(2) select,
+    .plugin-workbench .opt-row > div:nth-child(2) textarea {
+      width: 100%;
+      min-width: 0;
+    }
+    .visual-command-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
+      padding: 10px;
+      margin-top: 10px;
+    }
+    .visual-field-grid {
+      display: grid;
+      grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .visual-extra-list { margin-top: 8px; display: grid; gap: 8px; }
+    .visual-extra-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .visual-field-grid input,
+    .visual-field-grid select,
+    .visual-extra-row input,
+    .visual-extra-row select {
+      width: 100%;
+      min-width: 0;
+    }
+    .visual-preset-row {
+      display: grid;
+      grid-template-columns: minmax(130px, 180px) minmax(160px, 1fr) auto auto auto;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .visual-preset-row input,
+    .visual-preset-row select {
+      width: 100%;
+      min-width: 0;
+    }
+    .visual-action-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .main { overflow-x: auto; }
+    @media (max-width: 860px) {
+      .plugin-workbench {
+        min-width: 860px;
+      }
     }
     #optionSchemaView {
       min-height: 220px;
@@ -324,6 +471,13 @@
     .http-table { width: 100%; border-collapse: collapse; }
     .http-table th, .http-table td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; }
     .http-table .right { text-align: right; }
+    .display-card { border-top: 1px solid var(--line); padding: 10px 12px; }
+    .display-title { font-weight: 600; margin-bottom: 8px; }
+    .display-json { min-height: 120px; max-height: 240px; }
+    .display-plain { padding: 6px 0; }
+    .display-html { overflow: auto; }
+    .display-html table { width: 100%; border-collapse: collapse; }
+    .display-html td, .display-html th { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; }
   </style>
 </head>
 <body class='dark'>
@@ -333,6 +487,7 @@
       <span><span id='runningDot' class='status-dot'></span><span id='runningLabel'>service</span></span>
       <input id='token' placeholder='X-Admin-Token'>
       <button id='refreshBtn' class='primary' onclick='reloadAll()'>Refresh</button>
+      <button id='jsonToggleBtn' onclick='toggleJsonMode()'>JSON: OFF</button>
     </div>
   </div>
   <div id='connectionBanner' class='conn-banner'>Connecting to web service...</div>
@@ -340,12 +495,12 @@
   <div class='wrap'>
     <aside class='sidebar'>
       <button class='nav-btn active' data-target='overview' onclick='switchSection("overview")'>Overview</button>
+      <button class='nav-btn' data-target='display' onclick='switchSection("display")'>Display</button>
       <button class='nav-btn' data-target='plugins' onclick='switchSection("plugins")'>Plugins</button>
       <button class='nav-btn' data-target='transport' onclick='switchSection("transport")'>Transport</button>
       <button class='nav-btn' data-target='config' onclick='switchSection("config")'>Config</button>
       <button class='nav-btn' data-target='users' onclick='switchSection("users")'>Users</button>
       <button class='nav-btn' data-target='console' onclick='switchSection("console")'>Command Console</button>
-      <button class='nav-btn' data-target='options' onclick='switchSection("options")'>UI Options</button>
     </aside>
 
     <main class='main'>
@@ -373,14 +528,60 @@
         </div>
       </section>
 
+      <section id='sec-display' class='section'>
+        <div class='card'>
+          <div class='title'>Display Providers</div>
+          <pre id='displayProvidersView' class='muted'>loading providers...</pre>
+        </div>
+        <div class='card'>
+          <div class='title'>Display Sections</div>
+          <div id='displaySectionsView' class='muted'>loading sections...</div>
+        </div>
+      </section>
+
       <section id='sec-plugins' class='section'>
         <div class='card'>
-          <div class='title'>Plugin Control</div>
+          <div class='title'>All Plugins</div>
           <div class='row'>
             <button id='pluginRunBtn' class='primary' onclick='loadPluginControl()'>Reload Plugin List</button>
+            <span class='muted'>Select plugin, then configure and run actions below</span>
           </div>
           <div id='pluginItemsView' class='muted'>loading plugins...</div>
-          <pre id='pluginResult' class='muted'></pre>
+          <pre id='pluginResult' class='muted json-verbose'></pre>
+        </div>
+
+        <div class='plugin-workbench'>
+          <div class='plugin-right-stack'>
+            <div id='pluginPane-config' class='card'>
+              <div class='title'>Plugin Config Page</div>
+              <div class='row'>
+                <select id='pluginConfigName'></select>
+                <button id='pluginConfigLoadBtn' onclick='loadPluginConfigSchema()'>Load Plugin Config</button>
+                <button id='pluginConfigApplyBtn' class='primary' onclick='applyPluginConfigChanges()'>Apply Changed</button>
+              </div>
+              <div id='pluginConfigSchemaView' class='muted'>select plugin and load schema...</div>
+              <pre id='pluginConfigResult' class='muted json-verbose'></pre>
+            </div>
+
+            <div id='pluginPane-commands' class='card'>
+              <div class='title'>Plugin Commands</div>
+              <div class='row'>
+                <select id='pluginCommandName'></select>
+                <button id='pluginCommandLoadBtn' onclick='loadPluginCommands()'>Load Commands</button>
+              </div>
+              <div class='row'>
+                <input id='pluginCommandArgs' placeholder='args: space-separated or JSON array'>
+              </div>
+              <div id='pluginCommandListView' class='muted'>select plugin and load commands...</div>
+              <pre id='pluginCommandResult' class='muted json-verbose'></pre>
+            </div>
+          </div>
+
+          <div id='pluginPane-visual' class='card'>
+            <div class='title'>Plugin Visual Actions</div>
+            <div id='pluginVisualActionsView' class='muted'>select plugin to load visual actions...</div>
+            <pre id='pluginVisualResult' class='muted json-verbose'></pre>
+          </div>
         </div>
       </section>
 
@@ -391,7 +592,7 @@
             <button id='transportApplyBtn' class='primary' onclick='loadTransportControl()'>Reload Transport List</button>
           </div>
           <div id='transportItemsView' class='muted'>loading transporters...</div>
-          <pre id='transportResult' class='muted'></pre>
+          <pre id='transportResult' class='muted json-verbose'></pre>
         </div>
       </section>
 
@@ -411,7 +612,45 @@
             <button id='configSetBtn' class='primary' onclick='setConfig()'>Set</button>
           </div>
           <textarea id='cfgValue' placeholder='value'></textarea>
-          <pre id='configResult' class='muted'></pre>
+          <pre id='configResult' class='muted json-verbose'></pre>
+        </div>
+        <div class='card'>
+          <div class='title'>UI Options</div>
+          <div class='row'>
+            <select id='uiTheme'>
+              <option value='router-dark'>router-dark</option>
+              <option value='router-light'>router-light</option>
+            </select>
+            <select id='uiLayout'>
+              <option value='sidebar'>sidebar</option>
+            </select>
+            <input id='uiRefresh' type='number' min='1' value='3'>
+            <label><input id='uiCompact' type='checkbox' style='height:auto'> compact</label>
+            <button id='uiSaveBtn' class='primary' onclick='saveUiOptions()'>Save UI</button>
+          </div>
+          <pre id='uiResult' class='muted json-verbose'></pre>
+        </div>
+        <div class='card'>
+          <div class='title'>Option Studio (Config)</div>
+          <div class='row'>
+            <label><input id='onlyWritable' type='checkbox' checked style='height:auto'> writable only</label>
+            <button id='optionsReloadBtn' onclick='loadOptionSchema()'>Reload Options</button>
+            <button id='optionsApplyBtn' class='primary' onclick='applyDirtyOptions()'>Apply Changed</button>
+          </div>
+          <div id='optionSchemaView' class='muted'>loading option schema...</div>
+          <pre id='optionApplyResult' class='muted json-verbose'></pre>
+          <div id='optionSubEditor' class='sub-editor' hidden>
+            <div class='sub-editor-head'>
+              <div class='title' id='optionSubEditorTitle'>Sub Option Editor</div>
+              <div class='sub-editor-key' id='optionSubEditorKey'>-</div>
+            </div>
+            <div class='row'>
+              <button id='optionSubAddItemBtn'>Add Item</button>
+              <button id='optionSubApplyBtn' class='primary'>Apply To Field</button>
+              <button id='optionSubCloseBtn'>Close</button>
+            </div>
+            <div id='optionSubEditorBody' class='sub-editor-list'></div>
+          </div>
         </div>
       </section>
 
@@ -453,50 +692,11 @@
         </div>
       </section>
 
-      <section id='sec-options' class='section'>
-        <div class='card'>
-          <div class='title'>UI Options</div>
-          <div class='row'>
-            <select id='uiTheme'>
-              <option value='router-dark'>router-dark</option>
-              <option value='router-light'>router-light</option>
-            </select>
-            <select id='uiLayout'>
-              <option value='sidebar'>sidebar</option>
-            </select>
-            <input id='uiRefresh' type='number' min='1' value='3'>
-            <label><input id='uiCompact' type='checkbox' style='height:auto'> compact</label>
-            <button id='uiSaveBtn' class='primary' onclick='saveUiOptions()'>Save UI</button>
-          </div>
-          <pre id='uiResult' class='muted'></pre>
-        </div>
-        <div class='card'>
-          <div class='title'>Auto Option Studio</div>
-          <div class='row'>
-            <label><input id='onlyWritable' type='checkbox' checked style='height:auto'> writable only</label>
-            <button id='optionsReloadBtn' onclick='loadOptionSchema()'>Reload Options</button>
-            <button id='optionsApplyBtn' class='primary' onclick='applyDirtyOptions()'>Apply Changed</button>
-          </div>
-          <div id='optionSchemaView' class='muted'>loading option schema...</div>
-          <pre id='optionApplyResult' class='muted'></pre>
-          <div id='optionSubEditor' class='sub-editor' hidden>
-            <div class='sub-editor-head'>
-              <div class='title' id='optionSubEditorTitle'>Sub Option Editor</div>
-              <div class='sub-editor-key' id='optionSubEditorKey'>-</div>
-            </div>
-            <div class='row'>
-              <button id='optionSubAddItemBtn'>Add Item</button>
-              <button id='optionSubApplyBtn' class='primary'>Apply To Field</button>
-              <button id='optionSubCloseBtn'>Close</button>
-            </div>
-            <div id='optionSubEditorBody' class='sub-editor-list'></div>
-          </div>
-        </div>
-      </section>
+
     </main>
   </div>
 
-  <script src='/api/web_runtime.js?v=20260325-opsfix'></script>
+  <script src='/api/web_runtime.js?v=20260331-plugin-layout-2to1c'></script>
 
   <script>
     (function () {

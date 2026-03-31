@@ -10,6 +10,7 @@ import unittest
 import tempfile
 import shutil
 import json
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -542,6 +543,43 @@ class TestWebUserAdminService(unittest.TestCase):
     def _on_save(self):
         self.save_calls += 1
 
+    def _http_get_json(self, path):
+        if not self.svc.status().get('running'):
+            self.svc.start(host='127.0.0.1', port=0)
+        port = int(self.svc._server.server_address[1])
+        req = urllib.request.Request('http://127.0.0.1:{}{}'.format(port, path), method='GET')
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            body = resp.read().decode('utf-8')
+            return int(resp.status), json.loads(body or '{}')
+
+    def _http_put_json(self, path, payload):
+        if not self.svc.status().get('running'):
+            self.svc.start(host='127.0.0.1', port=0)
+        port = int(self.svc._server.server_address[1])
+        req = urllib.request.Request(
+            'http://127.0.0.1:{}{}'.format(port, path),
+            data=json.dumps(payload).encode('utf-8'),
+            method='PUT',
+            headers={'Content-Type': 'application/json'},
+        )
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            body = resp.read().decode('utf-8')
+            return int(resp.status), json.loads(body or '{}')
+
+    def _http_post_json(self, path, payload):
+        if not self.svc.status().get('running'):
+            self.svc.start(host='127.0.0.1', port=0)
+        port = int(self.svc._server.server_address[1])
+        req = urllib.request.Request(
+            'http://127.0.0.1:{}{}'.format(port, path),
+            data=json.dumps(payload).encode('utf-8'),
+            method='POST',
+            headers={'Content-Type': 'application/json'},
+        )
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            body = resp.read().decode('utf-8')
+            return int(resp.status), json.loads(body or '{}')
+
     def test_auto_load_starts_when_auto_start_enabled(self):
         self.svc.auto_load()
         self.assertTrue(self.svc.status().get('running'))
@@ -554,6 +592,114 @@ class TestWebUserAdminService(unittest.TestCase):
         self.assertIn('pipeline', dashboard)
         self.assertIn('users', dashboard)
 
+    def test_http_management_and_display_endpoints_are_healthy(self):
+        endpoints = [
+            '/api/health',
+            '/api/display/providers',
+            '/api/display/all',
+            '/api/dashboard',
+            '/api/plugins',
+            '/api/transport',
+        ]
+        for endpoint in endpoints:
+            status, payload = self._http_get_json(endpoint)
+            self.assertEqual(status, 200, msg='endpoint={} payload={}'.format(endpoint, payload))
+        status, providers = self._http_get_json('/api/display/providers')
+        self.assertEqual(status, 200)
+        self.assertTrue(providers.get('ok'))
+        metadata = providers.get('metadata', {})
+        self.assertGreaterEqual(int(metadata.get('total_providers', 0) or 0), 1)
+
+    def test_display_provider_metadata_includes_render_mode(self):
+        _status, providers = self._http_get_json('/api/display/providers')
+        metadata = providers.get('metadata', {}) if isinstance(providers, dict) else {}
+        rows = metadata.get('providers', []) if isinstance(metadata, dict) else []
+        self.assertTrue(rows)
+        first = rows[0] if rows else {}
+        self.assertIn('render_mode', first)
+        self.assertIn(first.get('render_mode'), ('safe_html', 'trusted_html', 'json_only'))
+
+    def test_display_render_endpoint_returns_render_mode(self):
+        _status, providers = self._http_get_json('/api/display/providers')
+        metadata = providers.get('metadata', {}) if isinstance(providers, dict) else {}
+        rows = metadata.get('providers', []) if isinstance(metadata, dict) else []
+        self.assertTrue(rows)
+        section_path = rows[0].get('section_path')
+        self.assertTrue(section_path)
+        status, payload = self._http_get_json('/api/display/render/{}?format=json'.format(section_path))
+        self.assertEqual(status, 200)
+        self.assertTrue(payload.get('ok'))
+        self.assertIn('render_mode', payload)
+        self.assertIn(payload.get('render_mode'), ('safe_html', 'trusted_html', 'json_only'))
+
+    def test_plugin_config_schema_and_update_api(self):
+        status, schema_payload = self._http_get_json('/api/plugins/config?plugin=web_user&only_writable=1')
+        self.assertEqual(status, 200)
+        self.assertTrue(schema_payload.get('ok'))
+        schema = schema_payload.get('schema', {})
+        cats = schema.get('categories', []) if isinstance(schema, dict) else []
+        self.assertTrue(cats)
+
+        status, update_payload = self._http_put_json('/api/plugins/config', {
+            'plugin': 'web_user',
+            'updates': [
+                {
+                    'key': 'RESOURCES.service_plugins.web_user.ui_compact',
+                    'value_type': 'bool',
+                    'value': True,
+                }
+            ],
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(update_payload.get('ok'))
+        self.assertTrue(
+            self.svc.node.config.get('RESOURCES', {}).get('service_plugins', {}).get('web_user', {}).get('ui_compact')
+        )
+
+    def test_plugin_config_update_blocks_out_of_scope_keys(self):
+        status, payload = self._http_put_json('/api/plugins/config', {
+            'plugin': 'web_user',
+            'updates': [
+                {'key': 'engine_settings.precision', 'value_type': 'int', 'value': 9},
+            ],
+        })
+        self.assertEqual(status, 200)
+        self.assertFalse(payload.get('ok'))
+        failed = payload.get('failed', [])
+        self.assertTrue(failed)
+
+    def test_plugin_commands_metadata_and_execute(self):
+        class _DummyPlugin:
+            def get_cli_commands(self):
+                return {'ping': lambda argv: 0 if argv == ['ok'] else 1}
+
+            def get_cli_completions(self):
+                return {'ping': 'health check'}
+
+        self.svc.node.service_manager.mount('dummy', _DummyPlugin(), config={'enabled': True}, mode='runtime')
+        status, meta = self._http_get_json('/api/plugins/commands?plugin=dummy')
+        self.assertEqual(status, 200)
+        self.assertTrue(meta.get('ok'))
+        commands = meta.get('commands', [])
+        self.assertTrue(any((row or {}).get('name') == 'ping' for row in commands))
+
+        status, out = self._http_post_json('/api/plugins', {
+            'plugin': 'dummy',
+            'action': 'cmd',
+            'sub_cmd': 'ping',
+            'args': ['ok'],
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(out.get('ok'))
+        self.assertEqual(int(out.get('exit_code', 1)), 0)
+
+    def test_plugin_visual_schema_endpoint(self):
+        status, payload = self._http_get_json('/api/plugins/visual-schema?plugin=test_plugin')
+        self.assertEqual(status, 200)
+        self.assertTrue(payload.get('ok'))
+        self.assertIn('sections', payload)
+        self.assertIsInstance(payload.get('sections', []), list)
+
     def test_plugin_cmd_action_dispatches_to_service_manager(self):
         class _DummyPlugin:
             def get_cli_commands(self):
@@ -563,6 +709,18 @@ class TestWebUserAdminService(unittest.TestCase):
         ok, payload = self.svc._run_plugin_action('dummy', 'cmd', sub_cmd='ping', args=['ok'])
         self.assertTrue(ok)
         self.assertEqual(payload.get('exit_code'), 0)
+
+    def test_plugin_cmd_action_stringifies_non_string_args(self):
+        class _DummyPlugin:
+            def get_cli_commands(self):
+                return {
+                    'echo': lambda argv: 0 if argv == ['123', 'True'] else 1,
+                }
+
+        self.svc.node.service_manager.mount('dummy_cast', _DummyPlugin(), config={'enabled': True}, mode='runtime')
+        ok, payload = self.svc._run_plugin_action('dummy_cast', 'cmd', sub_cmd='echo', args=[123, True])
+        self.assertTrue(ok)
+        self.assertEqual(int(payload.get('exit_code', 1)), 0)
 
     def test_read_only_and_auth_guards_and_config_write_whitelist(self):
         self.svc.node.config['RESOURCES']['service_plugins']['web_user']['read_only'] = True
@@ -1193,6 +1351,22 @@ class TestFullLoadConfig(unittest.TestCase):
         cfg = get_full_load_config()
         self.assertEqual(cfg['batch_size'], 128)
 
+    def test_threads_per_process_zero_uses_workers_in_hybrid_mode(self):
+        from opensynaptic.services.test_plugin.stress_tests import run_stress
+
+        _, summary = run_stress(
+            total=20,
+            workers=4,
+            sources=2,
+            progress=False,
+            core_name='pycore',
+            config_path=str(Path(_ROOT) / 'Config.json') if _ROOT else None,
+            processes=2,
+            threads_per_process=0,
+        )
+        self.assertEqual(int(summary.get('processes', 0) or 0), 2)
+        self.assertEqual(int(summary.get('threads_per_process', 0) or 0), 4)
+
 
 class TestStressAutoProfile(unittest.TestCase):
 
@@ -1337,7 +1511,18 @@ class TestRscoreFusionEngine(unittest.TestCase):
         from opensynaptic.core.rscore.api import OSVisualFusionEngine as RsFusion
         from opensynaptic.core.pycore.unified_parser import OSVisualFusionEngine as PyFusion
 
-        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        cfg_src = Path(_ROOT) / 'Config.json' if _ROOT else None
+        cls._tmp_dir = tempfile.mkdtemp(prefix='rs_fusion_component_')
+        cfg = str(Path(cls._tmp_dir) / 'Config.json')
+        if cfg_src and cfg_src.exists():
+            data = json.loads(cfg_src.read_text(encoding='utf-8'))
+        else:
+            data = {}
+        resources = data.setdefault('RESOURCES', {})
+        resources['registry'] = str(Path(cls._tmp_dir) / 'device_registry')
+        Path(resources['registry']).mkdir(parents=True, exist_ok=True)
+        Path(cfg).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        cls.cfg_path = cfg
         std = OpenSynapticStandardizer(cfg)
         eng = OpenSynapticEngine(cfg)
         cls.rs_fusion = RsFusion(cfg)
@@ -1348,6 +1533,12 @@ class TestRscoreFusionEngine(unittest.TestCase):
         cls.raw_input = '42;{}'.format(compressed)
         # Build a canonical FULL packet using pycore as reference
         cls.pkt_full = cls.py_fusion.run_engine(cls.raw_input, strategy='FULL')
+
+    @classmethod
+    def tearDownClass(cls):
+        tmp_dir = getattr(cls, '_tmp_dir', None)
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Rust header parser activation
@@ -1396,7 +1587,7 @@ class TestRscoreFusionEngine(unittest.TestCase):
         from opensynaptic.core.rscore.codec import parse_packet_header
         if not has_fusion_state():
             raise unittest.SkipTest('native fusion state ABI not available')
-        fusion = type(self.rs_fusion)(str(Path(_ROOT) / 'Config.json') if _ROOT else None)
+        fusion = type(self.rs_fusion)(self.cfg_path)
         decoded = fusion.decompress(self.pkt_full)
         self.assertNotIn('error', decoded)
         meta = parse_packet_header(self.pkt_full) or {}
@@ -1417,7 +1608,7 @@ class TestRscoreFusionEngine(unittest.TestCase):
 
     def test_decompress_heart_parity_with_pycore(self):
         """After a FULL learn, HEART receive should match pycore output."""
-        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        cfg = self.cfg_path
         py_fusion = type(self.py_fusion)(cfg)
         rs_fusion = type(self.rs_fusion)(cfg)
         py_fusion.run_engine(self.raw_input, strategy='FULL')
@@ -1434,7 +1625,7 @@ class TestRscoreFusionEngine(unittest.TestCase):
         """After a FULL learn, DIFF receive with changed values should match pycore output."""
         from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
         from opensynaptic.core.pycore.solidity import OpenSynapticEngine
-        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        cfg = self.cfg_path
         std = OpenSynapticStandardizer(cfg)
         eng = OpenSynapticEngine(cfg)
         fact = std.standardize('RS_FUS', 'ONLINE', [['V1', 'OK', 101326.0, 'Pa']])
@@ -1505,8 +1696,8 @@ class TestRscoreFusionEngine(unittest.TestCase):
 
     def test_run_engine_heart_parity(self):
         """After FULL warmup, DIFF on unchanged payload should match pycore HEART output."""
-        py_fusion = type(self.py_fusion)(str(Path(_ROOT) / 'Config.json') if _ROOT else None)
-        rs_fusion = type(self.rs_fusion)(str(Path(_ROOT) / 'Config.json') if _ROOT else None)
+        py_fusion = type(self.py_fusion)(self.cfg_path)
+        rs_fusion = type(self.rs_fusion)(self.cfg_path)
         py_fusion.run_engine(self.raw_input, strategy='FULL')
         rs_fusion.run_engine(self.raw_input, strategy='FULL')
         py_pkt = py_fusion.run_engine(self.raw_input, strategy='DIFF')
@@ -1517,7 +1708,7 @@ class TestRscoreFusionEngine(unittest.TestCase):
         """After FULL warmup, DIFF on changed payload should match pycore output."""
         from opensynaptic.core.pycore.standardization import OpenSynapticStandardizer
         from opensynaptic.core.pycore.solidity import OpenSynapticEngine
-        cfg = str(Path(_ROOT) / 'Config.json') if _ROOT else None
+        cfg = self.cfg_path
         std = OpenSynapticStandardizer(cfg)
         eng = OpenSynapticEngine(cfg)
         fact = std.standardize('RS_FUS', 'ONLINE', [['V1', 'OK', 101325.0, 'Pa']])  # Changed to same value as raw_input for HEART test

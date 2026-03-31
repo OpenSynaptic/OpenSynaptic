@@ -67,6 +67,9 @@ class LogMsg(Enum):
     CONFIG_SHOW = 'CONFIG_SHOW'
     CONFIG_GET = 'CONFIG_GET'
     CONFIG_SET = 'CONFIG_SET'
+    PLUGIN_INIT = 'PLUGIN_INIT'
+    PLUGIN_READY = 'PLUGIN_READY'
+    PLUGIN_CLOSED = 'PLUGIN_CLOSED'
     PLUGIN_CMD = 'PLUGIN_CMD'
     PLUGIN_TEST_START = 'PLUGIN_TEST_START'
     PLUGIN_TEST_RESULT = 'PLUGIN_TEST_RESULT'
@@ -83,6 +86,9 @@ MESSAGES.update({
     LogMsg.CONFIG_SHOW: 'Config show: {section}',
     LogMsg.CONFIG_GET: 'Config get: {key} = {value}',
     LogMsg.CONFIG_SET: 'Config set: {key} = {value}',
+    LogMsg.PLUGIN_INIT: 'Plugin initialized: {plugin}',
+    LogMsg.PLUGIN_READY: 'Plugin ready: {plugin}',
+    LogMsg.PLUGIN_CLOSED: 'Plugin closed: {plugin}',
     LogMsg.PLUGIN_CMD: 'Plugin command routing: {plugin}.{sub_cmd}',
     LogMsg.PLUGIN_TEST_START: 'Plugin test started: {plugin} suite={suite}',
     LogMsg.PLUGIN_TEST_RESULT: 'Plugin test completed: {plugin} suite={suite} ok={ok} fail={fail}',
