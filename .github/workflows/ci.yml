@@ -14,10 +14,11 @@ jobs:
     env:
       OPENSYNAPTIC_CORE: pycore
       PYTHONPATH: ${{ github.workspace }}/src
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/rscore
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         # PyO3 0.23.x supports up to Python 3.13.
         python-version: ["3.11", "3.12", "3.13"]
     steps:
@@ -124,6 +125,8 @@ jobs:
   build-python-dist:
     name: build-python-dist (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/rscore
     strategy:
       fail-fast: false
       matrix:
@@ -152,10 +155,12 @@ jobs:
   build-rust-wheel:
     name: build-rust-wheel (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/rscore
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Checkout

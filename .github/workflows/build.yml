@@ -87,11 +87,11 @@ jobs:
             cibw_archs_windows: "ARM64"
             artifact_suffix: "windows-arm64"
             experimental: true
-          - os: macos-13
+          - os: macos-latest
             cibw_archs_macos: "x86_64"
             artifact_suffix: "macos-x86_64"
             experimental: false
-          - os: macos-14
+          - os: macos-latest
             cibw_archs_macos: "arm64"
             artifact_suffix: "macos-arm64"
             experimental: false
@@ -119,7 +119,7 @@ jobs:
           CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
           CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
           CIBW_BEFORE_BUILD: "python -m pip install cffi"
-          CIBW_ENVIRONMENT: "OPENSYNAPTIC_REQUIRE_RSCORE=1 MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
+          CIBW_ENVIRONMENT: "OPENSYNAPTIC_REQUIRE_RSCORE=1 CARGO_TARGET_DIR=target/rscore MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
