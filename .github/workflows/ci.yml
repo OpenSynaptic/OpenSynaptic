@@ -18,7 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-13, macos-14, windows-latest]
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # PyO3 0.23.x supports up to Python 3.13.
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
