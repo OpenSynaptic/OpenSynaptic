@@ -1,0 +1,4 @@
+[build]
+# Keep Rust artifacts outside src/opensynaptic to avoid wheel self-inclusion.
+target-dir = "../../../../../target/rscore"
+
