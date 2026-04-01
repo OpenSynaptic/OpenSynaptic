@@ -4,24 +4,24 @@ on:
   workflow_dispatch:
 
 jobs:
-    upload-qodana-config:
+  upload-qodana-config:
     # Qodana workflow disabled - qodana-global-configurations.yaml not configured
     if: false
-        runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
 
-        steps:
+    steps:
       - name: Checkout repository
-              uses: actions/checkout@v4
+        uses: actions/checkout@v4
 
       - name: Verify Qodana config exists
-          run: |
-            if [ ! -f qodana-global-configurations.yaml ]; then
-              echo "qodana-global-configurations.yaml not found. Creating placeholder..."
-              cat > qodana-global-configurations.yaml << 'EOF'
-              # Placeholder Qodana global configuration
-              # Configure with actual settings when ready
-            EOF
-            fi
+        run: |
+          if [ ! -f qodana-global-configurations.yaml ]; then
+            echo "qodana-global-configurations.yaml not found. Creating placeholder..."
+            cat > qodana-global-configurations.yaml << 'EOF'
+          # Placeholder Qodana global configuration
+          # Configure with actual settings when ready
+          EOF
+          fi
 
       - name: Run Qodana Configuration Uploader
         env:

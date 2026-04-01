@@ -20,7 +20,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries",
 ]
 urls = { Documentation = "https://github.com/OpenSynaptic/OpenSynaptic#readme", Issues = "https://github.com/OpenSynaptic/OpenSynaptic/issues" }
@@ -51,9 +50,10 @@ os-tui = "opensynaptic.main:tui_main"
 os-web = "opensynaptic.main:web_main"
 
 [tool.cibuildwheel]
-build = "cp311-* cp312-* cp313-* cp314-*"
+build = "cp311-* cp312-* cp313-*"
 skip = "pp* *-musllinux_*"
 environment = { OPENSYNAPTIC_REQUIRE_RSCORE = "1" }
+before-all = "pip install cffi maturin"
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64", "aarch64"]
