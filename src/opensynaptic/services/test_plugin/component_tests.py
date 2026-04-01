@@ -104,10 +104,11 @@ class TestCoreManager(unittest.TestCase):
             manager.load_core('pycore')
 
     def test_rscore_has_no_direct_pycore_imports(self):
-        root = Path(_ROOT) if _ROOT else Path(__file__).resolve().parents[5]
-        rscore_dir = root / 'src' / 'opensynaptic' / 'core' / 'rscore'
+        # Resolve from the imported package to avoid repo-layout assumptions in CI.
+        from opensynaptic.core import rscore as rscore_pkg
+        rscore_dir = Path(rscore_pkg.__file__).resolve().parent
         py_files = list(rscore_dir.glob('*.py'))
-        self.assertTrue(py_files, 'rscore source files not found')
+        self.assertTrue(py_files, f'rscore source files not found under: {rscore_dir}')
         blocked = 'opensynaptic.core.pycore'
         violations = []
         for file_path in py_files:
