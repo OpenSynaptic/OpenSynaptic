@@ -10,6 +10,6 @@ Build wheel locally:
 
 ```powershell
 py -3 -m pip install maturin
-py -3 -m maturin build --manifest-path src/opensynaptic/core/rscore/rust/Cargo.toml --release
+py -3 -m maturin build --manifest-path src/opensynaptic/core/rscore/rust/Cargo.toml --release --features python-module
 ```
 

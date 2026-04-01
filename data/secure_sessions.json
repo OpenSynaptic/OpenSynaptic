@@ -1,0 +1,16 @@
+{
+  "updated_at": 1775040055,
+  "sessions": {
+    "4294967294": {
+      "last": 1775040055,
+      "peer_addr": null,
+      "first_plaintext_ts": null,
+      "pending_timestamp": null,
+      "pending_key_hex": null,
+      "key_hex": null,
+      "dict_ready": false,
+      "decrypt_confirmed": false,
+      "state": "INIT"
+    }
+  }
+}

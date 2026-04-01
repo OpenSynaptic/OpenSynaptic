@@ -14,7 +14,9 @@ name = "opensynaptic_rscore"
 crate-type = ["cdylib"]
 
 [features]
-default = []
+# Keep PyO3 enabled by default so direct `maturin build --manifest-path ...`
+# invocations cannot accidentally fall back to cffi autodetection.
+default = ["python-module"]
 python-module = ["dep:pyo3"]
 
 [dependencies]
