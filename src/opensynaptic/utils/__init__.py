@@ -31,7 +31,7 @@ from opensynaptic.utils.security.security_core import (
     xor_payload_into,
 )
 
-__version__ = '0.1.0'
+__version__ = '1.1.0rc1'
 crc16 = crc16_ccitt
 
 __all__ = [

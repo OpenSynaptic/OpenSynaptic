@@ -1,3 +1,3 @@
-__version__ = '0.1.0'
+__version__ = '1.1.0rc1'
 from .service_manager import ServiceManager
 __all__ = ['ServiceManager']

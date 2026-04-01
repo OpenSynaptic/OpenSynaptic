@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "opensynaptic"
-version = "1.0.0rc6"
+version = "1.1.0rc1"
 description = "2-N-2 high-performance protocol stack"
 authors = [{name = "OpenSynaptic Contributors"}]
 readme = "README.md"
@@ -20,6 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries",
 ]
 urls = { Documentation = "https://github.com/OpenSynaptic/OpenSynaptic#readme", Issues = "https://github.com/OpenSynaptic/OpenSynaptic/issues" }
@@ -49,6 +50,20 @@ os-cli = "opensynaptic.main:cli_entry"
 os-tui = "opensynaptic.main:tui_main"
 os-web = "opensynaptic.main:web_main"
 
+[tool.cibuildwheel]
+build = "cp311-* cp312-* cp313-* cp314-*"
+skip = "pp* *-musllinux_*"
+environment = { OPENSYNAPTIC_REQUIRE_RSCORE = "1" }
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64", "aarch64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64", "ARM64"]
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
@@ -70,7 +85,8 @@ python-packages = ["opensynaptic", "opensynaptic_rscore"]
 sdist-include = [
     "LICENSE", 
     "README.md",
-    "src/opensynaptic/", 
+    "src/opensynaptic/",
+    "src/opensynaptic_rscore/",
 ]
 license = "Apache-2.0"
 

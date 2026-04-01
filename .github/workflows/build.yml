@@ -1,0 +1,104 @@
+name: Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run tests
+        run: |
+          pytest -q
+
+  sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Build source distribution
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m build --sdist --outdir dist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  wheels:
+    name: Wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cibw_archs_linux: "x86_64 aarch64"
+          - os: windows-latest
+            cibw_archs_windows: "AMD64 ARM64"
+          - os: macos-13
+            cibw_archs_macos: "x86_64"
+          - os: macos-14
+            cibw_archs_macos: "arm64"
+    env:
+      OPENSYNAPTIC_REQUIRE_RSCORE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install cibuildwheel==3.4.0 build maturin
+
+      - name: Build wheels
+        run: |
+          cibuildwheel --output-dir dist
+        env:
+          CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs_linux }}
+          CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
+          CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+
