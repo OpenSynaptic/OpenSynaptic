@@ -7,13 +7,23 @@ def _config_path() -> str:
     return str(Path(__file__).resolve().parents[2] / "Config.json")
 
 
+def _require_native(*libs: str) -> None:
+    from opensynaptic.utils.c.native_loader import has_native_library
+
+    missing = [name for name in libs if not has_native_library(name)]
+    if missing:
+        pytest.skip(f"native runtime unavailable: missing {', '.join(missing)}")
+
+
 def test_crc16_reference_vector():
+    _require_native("os_security")
     from opensynaptic.utils import crc16_ccitt
 
     assert crc16_ccitt(b"123456789") == 0x29B1
 
 
 def test_base62_compress_decompress_roundtrip():
+    _require_native("os_base62")
     from opensynaptic.core.pycore.solidity import OpenSynapticEngine
 
     cfg = _config_path()
@@ -43,6 +53,7 @@ def test_base62_compress_decompress_roundtrip():
 
 
 def test_packet_encode_decode_roundtrip():
+    _require_native("os_base62", "os_security")
     from opensynaptic.core.pycore.solidity import OpenSynapticEngine
     from opensynaptic.core.pycore.unified_parser import OSVisualFusionEngine
 
@@ -71,4 +82,3 @@ def test_packet_encode_decode_roundtrip():
     assert isinstance(packet, (bytes, bytearray))
     assert str(decoded["id"]).split(";")[-1] == "N2"
     assert decoded["s1_id"] == "H1"
-
