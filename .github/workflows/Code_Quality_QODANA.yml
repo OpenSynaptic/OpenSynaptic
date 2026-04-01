@@ -1,19 +1,36 @@
 name: Qodana Configuration Upload
 
 on:
+  workflow_dispatch:
+
+# Qodana workflow disabled - qodana-global-configurations.yaml not configured yet
+# To enable: create qodana-global-configurations.yaml in project root, then remove this comment
+# and uncomment the triggers below:
+#
     push:
         branches: [ main, dev ]
     pull_request:
         branches: [ main ]
-    workflow_dispatch:
 
 jobs:
     upload-qodana-config:
+    # Disabled: only allow manual trigger for now
+    if: github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
 
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
+
+        - name: Verify Qodana config exists
+          run: |
+            if [ ! -f qodana-global-configurations.yaml ]; then
+              echo "qodana-global-configurations.yaml not found. Creating placeholder..."
+              cat > qodana-global-configurations.yaml << 'EOF'
+            # Placeholder Qodana global configuration
+            # Configure with actual settings when ready
+            EOF
+            fi
 
             - name: Run Qodana Configuration Uploader
               env:
