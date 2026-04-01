@@ -101,8 +101,9 @@ jobs:
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs_linux }}
           CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
           CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
-          CIBW_BEFORE_ALL: "pip install maturin"
-          CIBW_ENVIRONMENT: "OPENSYNAPTIC_REQUIRE_RSCORE=1"
+          CIBW_BEFORE_ALL: "pip install maturin cffi"
+          CIBW_BEFORE_BUILD: "python -m pip install cffi"
+          CIBW_ENVIRONMENT: "OPENSYNAPTIC_REQUIRE_RSCORE=1 MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
 

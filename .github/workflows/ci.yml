@@ -32,7 +32,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install maturin
-        run: pip install maturin
+        run: pip install maturin cffi
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
@@ -58,7 +58,7 @@ jobs:
           PROJECT_ROOT=$(pwd)
           cd src/opensynaptic/core/rscore/rust
           mkdir -p "$PROJECT_ROOT/dist"
-          maturin build --release --out "$PROJECT_ROOT/dist"
+          maturin build --release --bindings pyo3 --features python-module --out "$PROJECT_ROOT/dist"
           cd "$PROJECT_ROOT"
           
           echo "=== Rust extension files ==="
@@ -72,7 +72,7 @@ jobs:
           $projectRoot = (Get-Location).Path
           Set-Location 'src/opensynaptic/core/rscore/rust'
           New-Item -ItemType Directory -Path "$projectRoot/dist" -Force | Out-Null
-          maturin build --release --out "$projectRoot/dist"
+          maturin build --release --bindings pyo3 --features python-module --out "$projectRoot/dist"
           Set-Location $projectRoot
 
           Write-Host '=== Rust extension files ==='
@@ -190,6 +190,8 @@ jobs:
           manylinux: auto
           args: >-
             --release
+            --bindings pyo3
+            --features python-module
             --manifest-path src/opensynaptic/core/rscore/rust/Cargo.toml
             --interpreter python${{ matrix.python-version }}
             --out dist

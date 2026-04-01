@@ -52,8 +52,9 @@ os-web = "opensynaptic.main:web_main"
 [tool.cibuildwheel]
 build = "cp311-* cp312-* cp313-*"
 skip = "pp* *-musllinux_*"
-environment = { OPENSYNAPTIC_REQUIRE_RSCORE = "1" }
+environment = { OPENSYNAPTIC_REQUIRE_RSCORE = "1", MATURIN_PEP517_ARGS = "--bindings pyo3 --features python-module" }
 before-all = "pip install maturin cffi"
+before-build = "python -m pip install cffi"
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64", "aarch64"]
