@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.6,<2.0", "Cython>=3.0", "cffi>=1.16"]
+requires = ["maturin>=1.6,<2.0", "Cython>=3.0"]
 build-backend = "maturin"
 
 [project]
@@ -53,7 +53,7 @@ os-web = "opensynaptic.main:web_main"
 build = "cp311-* cp312-* cp313-*"
 skip = "pp* *-musllinux_*"
 environment = { OPENSYNAPTIC_REQUIRE_RSCORE = "1" }
-before-all = "pip install cffi maturin"
+before-all = "pip install maturin"
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64", "aarch64"]
