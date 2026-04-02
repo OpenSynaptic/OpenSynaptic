@@ -50,7 +50,7 @@ def listen(config, callback):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
             sock.settimeout(timeout)
-            os_log.log('PHY', f'Bluetooth gateway listen on {host}:{port}')
+            os_log.info('PHY', 'BT_LISTEN_START', f'Bluetooth gateway listen on {host}:{port}', {'host': host, 'port': port})
             while True:
                 try:
                     data, addr = sock.recvfrom(65535)
@@ -59,7 +59,7 @@ def listen(config, callback):
                 if data and callable(callback):
                     callback(data, addr)
     except KeyboardInterrupt:
-        os_log.log('PHY', 'Bluetooth listener interrupted')
+        os_log.info('PHY', 'BT_LISTEN_STOP', 'Bluetooth listener interrupted')
     except Exception as e:
         os_log.err('PHY', 'BT_LISTEN', e, {'host': host, 'port': port})
 

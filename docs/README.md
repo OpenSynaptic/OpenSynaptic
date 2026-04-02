@@ -2,12 +2,18 @@
 
 Use this page as the main entry point for repository documentation.
 
-**Snapshot date**: 2026-04-01 (local workspace)  
-**Total docs under `docs/`**: 98 markdown files
+**Snapshot date**: 2026-04-02 (local workspace)  
+**Total docs under `docs/`**: rolling; see [INDEX.md](INDEX.md) for current inventory
 
 ---
 
 ## Quick Navigation
+
+### Runtime Quick Start (validated)
+1. Install: `pip install -e .`
+2. Windows direct-start: `./run-main.cmd run --once --quiet`
+3. Generic entrypoint: `os-node run --once --quiet`
+4. First-run native recovery behavior: [../README.md#first-run-native-auto-repair](../README.md#first-run-native-auto-repair)
 
 ### Start Here
 1. [../README.md](../README.md) - Project overview and installation.
@@ -47,6 +53,7 @@ Use this page as the main entry point for repository documentation.
 ### Guides and Tutorials
 - [guides/DISPLAY_API_GUIDE.md](guides/DISPLAY_API_GUIDE.md)
 - [guides/DISPLAY_API_QUICKSTART.md](guides/DISPLAY_API_QUICKSTART.md)
+- [guides/QUICK_REFERENCE.md](guides/QUICK_REFERENCE.md)
 - [guides/WEB_COMMANDS_REFERENCE.md](guides/WEB_COMMANDS_REFERENCE.md)
 - [guides/TUI_QUICK_REFERENCE.md](guides/TUI_QUICK_REFERENCE.md)
 - [guides/](guides/)
@@ -54,9 +61,15 @@ Use this page as the main entry point for repository documentation.
 ### Reports and Change Tracking
 - [reports/CHANGELOG.md](reports/CHANGELOG.md)
 - [reports/CHANGELOG_2026M03_24.md](reports/CHANGELOG_2026M03_24.md)
+- [reports/DOC_FRESHNESS_AUDIT_2026-04-02.md](reports/DOC_FRESHNESS_AUDIT_2026-04-02.md)
+- [reports/root/](reports/root/)
 - [reports/IMPLEMENTATION_COMPLETE.md](reports/IMPLEMENTATION_COMPLETE.md)
 - [reports/COMPREHENSIVE_COMPLETION_SUMMARY.md](reports/COMPREHENSIVE_COMPLETION_SUMMARY.md)
 - [reports/](reports/)
+
+### Release Operations
+- [releases/RELEASE_CHECKLIST.md](releases/RELEASE_CHECKLIST.md)
+- [releases/RELEASE_1_1_0_RC1_COMPLETE.md](releases/RELEASE_1_1_0_RC1_COMPLETE.md)
 
 ### Internal Documentation
 - [internal/AGENTS.md](internal/AGENTS.md)
@@ -72,10 +85,10 @@ Use this page as the main entry point for repository documentation.
 | API | [api/](api/) | 2 |
 | Features | [features/](features/) | 5 |
 | Plugins | [plugins/](plugins/) | 10 |
-| Guides | [guides/](guides/) | 10 |
-| Reports | [reports/](reports/) | 31 |
+| Guides | [guides/](guides/) | 11 |
+| Reports | [reports/](reports/) | 36 |
 | Internal | [internal/](internal/) | 12 |
-| Releases | [releases/](releases/) | 8 |
+| Releases | [releases/](releases/) | 11 |
 
 ---
 

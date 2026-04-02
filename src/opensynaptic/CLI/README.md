@@ -1,6 +1,11 @@
 # OpenSynaptic CLI and TUI
 
-All commands are available via `os-node` (installed entry-point) or `python -u src/main.py`.
+All commands are available via `os-node` (installed entry-point), `./run-main.cmd` (Windows shortcut), or `python -u src/main.py`.
+
+Startup behavior note:
+
+- First run now auto-attempts native runtime repair when required C bindings are missing.
+- If auto-repair fails (for example, compiler missing), CLI returns structured guidance and keeps `native-check` / `native-build` as manual fallback.
 
 ---
 
@@ -42,6 +47,8 @@ All commands are available via `os-node` (installed entry-point) or `python -u s
 ---
 
 ## Examples
+
+Windows tip: replace the `python -u src/main.py` prefix below with `./run-main.cmd`.
 
 ```powershell
 # ── Basic node operations ───────────────────────────────────────────────────
@@ -206,6 +213,12 @@ py -3 -m pip install argcomplete
 powershell -ExecutionPolicy Bypass -File .\scripts\enable_argcomplete.ps1
 ```
 
+If your PowerShell blocks `Activate.ps1`, you do not need to activate venv for CLI commands:
+
+```powershell
+.\scripts\venv-python.cmd -u src/main.py --help
+```
+
 Manual activation:
 
 ```powershell
@@ -235,3 +248,4 @@ After restart, completion is available for:
 - Plugins can expose `get_cli_completions()` to provide `plugin-cmd --cmd` completion metadata (fallback: `get_cli_commands()` keys).
 - Required plugin settings are auto-added to `Config.json` under `RESOURCES.service_plugins.<plugin_name>`.
 - `web-user --cmd start -- --block` keeps the process in foreground so the browser UI stays available.
+- Native runtime repair is auto-attempted once during first-run startup and node-init native-load failure paths.

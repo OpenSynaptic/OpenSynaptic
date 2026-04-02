@@ -80,7 +80,7 @@ def listen(config, callback):
         
         try:
             async with serve(host, port, configuration=qconf, stream_handler=quic_handler):
-                os_log.log('L4', f'QUIC listening on {host}:{port}')
+                os_log.info('L4', 'QUIC_LISTEN_START', f'QUIC listening on {host}:{port}', {'host': host, 'port': port})
                 await asyncio.sleep(float('inf'))
         except KeyboardInterrupt:
             pass

@@ -52,7 +52,7 @@ def listen(config, callback):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
             sock.settimeout(timeout)
-            os_log.log('MTR', f'Matter UDP listen on {host}:{port}')
+            os_log.info('MTR', 'LISTEN_START', f'Matter UDP listen on {host}:{port}', {'host': host, 'port': port})
             while True:
                 try:
                     data, addr = sock.recvfrom(65535)
@@ -61,7 +61,7 @@ def listen(config, callback):
                 if data and callable(callback):
                     callback(data, addr)
     except KeyboardInterrupt:
-        os_log.log('MTR', 'Listener interrupted')
+        os_log.info('MTR', 'LISTEN_STOP', 'Listener interrupted')
     except Exception as e:
         os_log.err('MTR', 'LISTEN', e, {'host': host, 'port': port})
 

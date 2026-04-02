@@ -24,7 +24,7 @@ def listen(config, callback):
     opts = config.get('transport_options', {}) if isinstance(config, dict) else {}
     host = opts.get('listen_host', '127.0.0.1')
     port = int(opts.get('listen_port', 6001))
-    os_log.log('L4', f'UIP listening on {host}:{port} (simulator mode)')
+    os_log.info('L4', 'UIP_LISTEN_START', f'UIP listening on {host}:{port} (simulator mode)', {'host': host, 'port': port})
     # UIP simulator listener would integrate with Contiki-NG callback system
     # This is a placeholder for full implementation
 

@@ -363,7 +363,7 @@ class PortForwarder:
                             self.stats['rules_applied'][rule_key] = \
                                 self.stats['rules_applied'].get(rule_key, 0) + 1
                             
-                            os_log.log('DEBUG', f'Applied rule: {rule_key} → {rule.to_host}:{rule.to_port}')
+                            os_log.info('PORT_FWD', 'RULE_APPLIED', f'Applied rule: {rule_key} → {rule.to_host}:{rule.to_port}', {'rule': rule_key, 'to_host': rule.to_host, 'to_port': rule.to_port})
                             break
                 
                 # Dispatch using original method

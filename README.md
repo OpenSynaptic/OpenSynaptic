@@ -9,6 +9,12 @@ pip install -e .
 os-node demo --open-browser
 ```
 
+Windows (no `Activate.ps1` required):
+
+```powershell
+.\run-main.cmd demo --open-browser
+```
+
 - Default user config path: `~/.config/opensynaptic/Config.json`
 - First run launches onboarding wizard (`--yes` / `--no-wizard` supported)
 
@@ -125,6 +131,44 @@ Config.json                     # Single source of truth for all runtime setting
 pip install -e .
 ```
 
+### Windows PowerShell Startup Note
+
+If you see this error when activating a virtual environment:
+
+```text
+Activate.ps1 cannot be loaded because running scripts is disabled on this system.
+```
+
+Use the project wrappers and run without activation:
+
+```powershell
+.\scripts\venv-python.cmd -m pip install -e .
+.\scripts\venv-python.cmd -m pytest tests/unit tests/integration -q
+.\scripts\venv-python.cmd -u src/main.py --help
+.\run-main.cmd --help
+```
+
+If you need activation in the current shell only:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+& ".\.venv\Scripts\Activate.ps1"
+```
+
+### First-Run Native Auto Repair
+
+On first run, OpenSynaptic now auto-attempts native C binding repair if required runtime libraries are missing.
+
+- Trigger point: first run startup preflight and node initialization failure fallback.
+- What it does: runs the same native build pipeline as `native-build`, then retries node startup once.
+- If compiler/toolchain is missing, it returns structured guidance and records environment hints through `env_guard`.
+
+Disable this behavior only when needed:
+
+```powershell
+$env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR = "0"
+```
+
 ---
 
 ## Why OpenSynaptic?
@@ -230,7 +274,7 @@ OpenSynaptic = manager.get_symbol('OpenSynaptic')
 
 ## CLI Quick Reference
 
-All commands are available via `os-node` (installed entrypoint) or `python -u src/main.py`:
+All commands are available via `os-node` (installed entrypoint), `./run-main.cmd` (Windows), or `python -u src/main.py`:
 
 | Command | Description |
 |---|---|
@@ -286,6 +330,9 @@ Full schema → [`docs/CONFIG_SCHEMA.md`](docs/CONFIG_SCHEMA.md)
 ## Testing
 
 ```powershell
+# Windows shortcut (no Activate.ps1 needed)
+.\run-main.cmd plugin-test --suite component
+
 # Component tests
 python -u src/main.py plugin-test --suite component
 
@@ -314,6 +361,10 @@ python scripts/services_smoke_check.py
 ## Native And Rust Build
 
 ```powershell
+# Windows shortcut (no Activate.ps1 needed)
+.\run-main.cmd native-check
+.\run-main.cmd native-build
+
 python -u src/main.py native-check
 python -u src/main.py native-build
 python -u src/main.py rscore-build

@@ -262,7 +262,20 @@
             "ultra_force_release": true,
             "metrics_emit_interval_seconds": 5,
             "metrics_flush_seconds": 10,
-            "metrics": {}
+            "metrics": {
+                "base_lease_seconds": 2592000,
+                "effective_lease_seconds": 2592000,
+                "new_device_rate_per_hour": 1.0,
+                "ultra_rate_active": false,
+                "force_zero_lease_active": false,
+                "last_reclaim_count": 0,
+                "last_reclaim_at": 0,
+                "total_reclaimed": 0,
+                "updated_at": 1775114282,
+                "allocated_count": 2,
+                "released_count": 0
+            },
+            "metrics_updated_at": 1775114282
         }
     },
     "payload_switches": {

@@ -24,7 +24,7 @@ def listen(config, callback):
     opts = config.get('transport_options', {}) if isinstance(config, dict) else {}
     host = opts.get('listen_host', '127.0.0.1')
     port = int(opts.get('listen_port', 8000))
-    os_log.log('L4', f'IWIP listening on {host}:{port} (embedded stack mode)')
+    os_log.info('L4', 'IWIP_LISTEN_START', f'IWIP listening on {host}:{port} (embedded stack mode)', {'host': host, 'port': port})
     # IWIP embedded stack listener would integrate with lwIP callback system
     # This is a placeholder for full implementation
 

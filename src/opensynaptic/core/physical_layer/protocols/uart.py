@@ -42,7 +42,7 @@ def listen(config, callback):
     
     try:
         ser = serial.Serial(port, baudrate, timeout=1)
-        os_log.log('PHY', f'UART listening on {port} @ {baudrate} baud')
+        os_log.info('PHY', 'UART_LISTEN_START', f'UART listening on {port} @ {baudrate} baud', {'port': port, 'baudrate': baudrate})
         
         while True:
             try:

@@ -38,7 +38,7 @@ def listen(config, callback):
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind((host, port))
-        os_log.log('L4', f'UDP listening on {host}:{port}')
+        os_log.info('L4', 'UDP_LISTEN_START', f'UDP listening on {host}:{port}', {'host': host, 'port': port})
         
         while True:
             try:

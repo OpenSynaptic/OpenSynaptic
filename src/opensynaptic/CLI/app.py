@@ -25,6 +25,7 @@ from opensynaptic.utils import (
     os_log,
     LogMsg,
     NativeLibraryUnavailable,
+    has_native_library,
     ctx,
     get_user_config_path,
     classify_exception,
@@ -34,6 +35,7 @@ from opensynaptic.CLI.build_parser import build_parser
 
 
 _ENV_GUARD_STANDALONE = None
+_AUTO_NATIVE_REPAIR_ATTEMPTED = False
 
 
 
@@ -307,6 +309,98 @@ def _notify_env_guard_compiler_missing(config_path, report, guidance_text):
         },
     )
     os_log.err('NATIVE', 'PRECHECK_ENV_MISSING', exc, {'cmd': 'native-check'})
+
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = str(os.getenv(name, '') or '').strip().lower()
+    if not raw:
+        return bool(default)
+    if raw in ('1', 'true', 'yes', 'on'):
+        return True
+    if raw in ('0', 'false', 'no', 'off'):
+        return False
+    return bool(default)
+
+
+def _native_runtime_ready() -> bool:
+    try:
+        return bool(has_native_library('os_base62')) and bool(has_native_library('os_security'))
+    except Exception:
+        return False
+
+
+def _print_native_auto_status(payload: dict) -> None:
+    try:
+        summary = {
+            'reason': payload.get('reason'),
+            'attempted': bool(payload.get('attempted')),
+            'ok': bool(payload.get('ok')),
+            'selected': payload.get('selected'),
+            'elapsed_s': payload.get('elapsed_s'),
+            'skipped': payload.get('skipped'),
+        }
+        print('[native-auto] {}'.format(json.dumps(summary, ensure_ascii=False)), file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _auto_repair_native_runtime(config_path=None, reason='startup', force=False, quiet=False) -> dict:
+    global _AUTO_NATIVE_REPAIR_ATTEMPTED
+
+    if not _env_bool('OPENSYNAPTIC_AUTO_NATIVE_REPAIR', default=True):
+        return {'attempted': False, 'ok': _native_runtime_ready(), 'reason': reason, 'skipped': 'disabled-by-env'}
+
+    if _native_runtime_ready():
+        return {'attempted': False, 'ok': True, 'reason': reason, 'skipped': 'already-ready'}
+
+    if _AUTO_NATIVE_REPAIR_ATTEMPTED and (not force):
+        return {'attempted': False, 'ok': _native_runtime_ready(), 'reason': reason, 'skipped': 'already-attempted'}
+
+    _AUTO_NATIVE_REPAIR_ATTEMPTED = True
+    os.environ.setdefault('OPENSYNAPTIC_AUTO_BUILD_NATIVE', '1')
+    started = time.monotonic()
+
+    try:
+        result = build_native_all(
+            show_progress=not bool(quiet),
+            idle_timeout=15.0,
+            max_timeout=180.0,
+        )
+    except Exception as exc:
+        result = {
+            'ok': False,
+            'error': str(exc),
+            'guidance': 'Run `os-node native-check` and `os-node native-build` manually.',
+            'precheck': {},
+            'selected': None,
+            'targets': {},
+        }
+
+    if not isinstance(result, dict):
+        result = {
+            'ok': False,
+            'error': 'unexpected build result',
+            'guidance': 'Run `os-node native-check` and `os-node native-build` manually.',
+            'precheck': {},
+            'selected': None,
+            'targets': {},
+        }
+
+    ok = bool(result.get('ok')) and _native_runtime_ready()
+    precheck = result.get('precheck', {}) if isinstance(result.get('precheck', {}), dict) else {}
+    if not ok:
+        _notify_env_guard_compiler_missing(config_path, precheck, result.get('guidance'))
+
+    return {
+        'attempted': True,
+        'ok': ok,
+        'reason': reason,
+        'selected': result.get('selected'),
+        'guidance': result.get('guidance'),
+        'targets': result.get('targets', {}),
+        'error': result.get('error'),
+        'elapsed_s': round(time.monotonic() - started, 3),
+    }
 
 
 def _ensure_plugin(node, plugin_name, mode='runtime', load=True):
@@ -1063,6 +1157,8 @@ def _main_impl(argv=None):
         _ensure_demo_config(target_cfg)
         args.config_path = str(target_cfg)
 
+    first_run_state = _is_first_run_config(target_cfg)
+
     if cmd in ('wizard', 'init', 'os-wizard', 'os-init'):
         base_cfg = _read_json_file(target_cfg)
         if not isinstance(base_cfg, dict):
@@ -1114,7 +1210,7 @@ def _main_impl(argv=None):
         print(json.dumps(summary, indent=2, ensure_ascii=False))
         return 0
 
-    if cmd not in ('help', 'os-help', 'demo', 'os-demo', 'repair-config', 'os-repair-config', 'wizard', 'init', 'os-wizard', 'os-init') and _is_first_run_config(target_cfg):
+    if cmd not in ('help', 'os-help', 'demo', 'os-demo', 'repair-config', 'os-repair-config', 'wizard', 'init', 'os-wizard', 'os-init') and first_run_state:
         if bool(getattr(args, 'yes', False)):
             cmd = 'demo'
             args.command = 'demo'
@@ -1181,11 +1277,44 @@ def _main_impl(argv=None):
         demo_bootstrap = _ensure_demo_config(target_cfg)
         args.config_path = str(target_cfg)
 
+    if first_run_state:
+        preflight = _auto_repair_native_runtime(
+            config_path=args.config_path,
+            reason='first-run-preflight',
+            quiet=bool(getattr(args, 'quiet', False)),
+        )
+        if preflight.get('attempted'):
+            _print_native_auto_status(preflight)
+
+    node = None
     try:
         node = _make_node(args.config_path)
     except NativeLibraryUnavailable as exc:
-        print(json.dumps({'error': str(exc), 'hint': 'Build native libs via: python -u src/opensynaptic/utils/c/build_native.py'}, ensure_ascii=False))
-        return 2
+        recovery = _auto_repair_native_runtime(
+            config_path=args.config_path,
+            reason='node-init-failed',
+            force=True,
+            quiet=bool(getattr(args, 'quiet', False)),
+        )
+        if recovery.get('attempted'):
+            _print_native_auto_status(recovery)
+        if recovery.get('ok'):
+            try:
+                node = _make_node(args.config_path)
+            except NativeLibraryUnavailable as retry_exc:
+                exc = retry_exc
+        if node is None:
+            print(json.dumps({
+                'error': str(exc),
+                'hint': 'Run `os-node native-check` then `os-node native-build`.',
+                'auto_native_repair': {
+                    'attempted': recovery.get('attempted'),
+                    'ok': recovery.get('ok'),
+                    'selected': recovery.get('selected'),
+                    'guidance': recovery.get('guidance'),
+                },
+            }, ensure_ascii=False))
+            return 2
     if cmd in ('snapshot', 'os-snapshot'):
         result = {'device_id': node.device_id, 'assigned_id': node.assigned_id, 'services': node.service_manager.snapshot() if hasattr(node, 'service_manager') else {}, 'transporters': sorted(list(node.active_transporters.keys()))}
         os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(result, ensure_ascii=False))
@@ -1200,8 +1329,12 @@ def _main_impl(argv=None):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='ensure-id')
         host = getattr(args, 'host', None) or node.config.get('Client_Core', {}).get('server_host', '127.0.0.1')
         port = getattr(args, 'port', None) or node.config.get('Client_Core', {}).get('server_port', 8080)
-        ok = node.ensure_id(host, port)
-        print(json.dumps({'ok': ok, 'assigned_id': node.assigned_id}, ensure_ascii=False))
+        ensure_raw = node.ensure_id(host, port)
+        if isinstance(ensure_raw, dict):
+            ok = bool(ensure_raw.get('ok', False))
+        else:
+            ok = bool(ensure_raw)
+        print(json.dumps({'ok': ensure_raw, 'assigned_id': node.assigned_id}, ensure_ascii=False))
         return 0 if ok else 1
     if cmd in ('transmit', 'os-transmit'):
         return _handle_transmit_cmd(node, args)

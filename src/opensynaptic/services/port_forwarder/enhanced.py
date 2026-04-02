@@ -339,7 +339,7 @@ class EnhancedPortForwarder:
             if feature in self.features_enabled:
                 self.features_enabled[feature] = True
                 self.stats['features_enabled'][feature] = True
-                os_log.log('INFO', f'Enabled feature: {feature}')
+                os_log.info('ENHANCED_PF', 'FEATURE_ENABLE', f'Enabled feature: {feature}', {'feature': feature})
                 return True
             return False
     
@@ -349,7 +349,7 @@ class EnhancedPortForwarder:
             if feature in self.features_enabled:
                 self.features_enabled[feature] = False
                 self.stats['features_enabled'][feature] = False
-                os_log.log('INFO', f'Disabled feature: {feature}')
+                os_log.info('ENHANCED_PF', 'FEATURE_DISABLE', f'Disabled feature: {feature}', {'feature': feature})
                 return True
             return False
     
@@ -360,7 +360,7 @@ class EnhancedPortForwarder:
                 self.features_enabled[feature] = not self.features_enabled[feature]
                 self.stats['features_enabled'][feature] = self.features_enabled[feature]
                 status = 'enabled' if self.features_enabled[feature] else 'disabled'
-                os_log.log('INFO', f'Toggled feature {feature}: {status}')
+                os_log.info('ENHANCED_PF', 'FEATURE_TOGGLE', f'Toggled feature {feature}: {status}', {'feature': feature, 'status': status})
                 return self.features_enabled[feature]
             return False
     
@@ -377,7 +377,7 @@ class EnhancedPortForwarder:
                     self.features_enabled[feature] = bool(enabled)
                     self.stats['features_enabled'][feature] = bool(enabled)
             
-            os_log.log('INFO', f'Set features: {kwargs}')
+            os_log.info('ENHANCED_PF', 'FEATURE_SET', f'Set features: {kwargs}', {'features': kwargs})
             return dict(self.features_enabled)
     
     # ════════════════════════════════════════════════════════════════════════
@@ -403,7 +403,7 @@ class EnhancedPortForwarder:
                 
                 if rule.matches(packet, medium):
                     if rule.action == 'deny':
-                        os_log.log('DEBUG', f'Firewall blocked: {rule.name}')
+                        os_log.info('ENHANCED_PF', 'FIREWALL_BLOCK', f'Firewall blocked: {rule.name}', {'rule': rule.name})
                         self.stats['denied_packets'] += 1
                         return False
                     elif rule.action == 'allow':
@@ -547,7 +547,7 @@ class EnhancedPortForwarder:
             self.node.dispatch = self._hijacked_dispatch
             self.is_hijacked = True
             
-            os_log.log('INFO', 'Enhanced Port Forwarder hijacked dispatch')
+            os_log.info('ENHANCED_PF', 'AUTO_LOAD', 'Enhanced Port Forwarder hijacked dispatch')
             return self
         except Exception as exc:
             os_log.err('ENHANCED_PF', 'AUTO_LOAD', exc, {})
@@ -560,7 +560,7 @@ class EnhancedPortForwarder:
                 self.node.dispatch = self.original_dispatch
                 self.is_hijacked = False
             
-            os_log.log('INFO', f'Enhanced Port Forwarder closed, stats: {self.stats}')
+            os_log.info('ENHANCED_PF', 'CLOSE', f'Enhanced Port Forwarder closed, stats: {self.stats}', {'stats': self.stats})
         except Exception as exc:
             os_log.err('ENHANCED_PF', 'CLOSE', exc, {})
     

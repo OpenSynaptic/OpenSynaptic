@@ -10,3 +10,10 @@ py -3 -m pip install -e .[dev]
 py -3 -m pytest --cov=opensynaptic tests
 ```
 
+Windows PowerShell (execution policy-safe, no activation required):
+
+```powershell
+.\scripts\venv-python.cmd -m pip install -e .[dev]
+.\scripts\venv-python.cmd -m pytest --cov=opensynaptic tests
+```
+
