@@ -59,6 +59,23 @@ Restart PowerShell after activation.
 
 ## Architecture
 
+```mermaid
+graph LR
+    A["Sensors List"] -->|Raw Data| B["Standardizer<br/>(UCUM Normalisation)"]
+    B -->|Standardised| C["Compressor<br/>(Base62 Encoding)"]
+    C -->|Compressed| D["Fusion Engine<br/>(FULL/DIFF Packet)"]
+    D -->|Binary Packet| E["Dispatcher<br/>(TCP/UDP/LoRa/MQTT/CAN)"]
+    E -->|Transmitted| F["Remote Node"]
+    
+    style A fill:#e1f5ff
+    style B fill:#fff3e0
+    style C fill:#f3e5f5
+    style D fill:#e8f5e9
+    style E fill:#fce4ec
+    style F fill:#e0f2f1
+```
+
+**Pipeline Overview (Text):**
 ```
 sensors list
     → OpenSynapticStandardizer.standardize()   # UCUM normalisation
@@ -173,13 +190,31 @@ $env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR = "0"
 
 ## Why OpenSynaptic?
 
+### Feature Comparison
+
 | Feature | MQTT + JSON | CoAP | OpenSynaptic |
 |---------|-------------|------|--------------|
 | Data Standardization | ❌ | ❌ | ✅ UCUM |
 | Compression | ❌ | ❌ | ✅ Base62 + DIFF |
 | Transport Flexibility | TCP only | UDP only | ✅ Pluggable (TCP/UDP/LoRa/CAN/MQTT) |
-| Latency (end-to-end) | 1-5 ms | 1-5 ms | **9.7 μs** |
-| Throughput (single core) | ~10k ops/s | ~10k ops/s | **1.14M ops/s** |
+
+### Performance Comparison
+
+**Latency Comparison (microseconds):**
+
+| Protocol | Latency (μs) |
+|---|---:|
+| MQTT + JSON | 3,500 |
+| CoAP | 3,500 |
+| OpenSynaptic | **9.7** |
+
+**Throughput Advantage** (ops/s):
+
+| Protocol | Throughput (ops/s) |
+|---|---:|
+| MQTT + JSON | 10,000 |
+| CoAP | 10,000 |
+| OpenSynaptic | **1,140,000** |
 
 ---
 
@@ -187,57 +222,136 @@ $env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR = "0"
 
 <div align="center">
 
-![Throughput](https://img.shields.io/badge/Throughput-1.10M%2B%20ops%2Fs-0A7E07?style=for-the-badge)
-![P99 Latency](https://img.shields.io/badge/P99-0.0250%20ms-1E40AF?style=for-the-badge)
-![Stability](https://img.shields.io/badge/Stress-20M%20ops%20%7C%200%20failures-7C3AED?style=for-the-badge)
+![Throughput](https://img.shields.io/badge/Throughput-1.20M%2B%20ops%2Fs-0A7E07?style=for-the-badge)
+![P99 Latency](https://img.shields.io/badge/P99-0.0686%20ms-1E40AF?style=for-the-badge)
+![Stability](https://img.shields.io/badge/Stress-10M%20ops%20%7C%200%20failures-7C3AED?style=for-the-badge)
 
 </div>
 
-<table>
-  <tr>
-    <td><strong>Total Ops</strong><br/>20,000,000</td>
-    <td><strong>Success</strong><br/>20,000,000</td>
-    <td><strong>Failed</strong><br/>0</td>
-    <td><strong>Elapsed</strong><br/>18.185 s</td>
-  </tr>
-  <tr>
-    <td><strong>Throughput</strong><br/>1,099,812.5 ops/s</td>
-    <td><strong>Avg</strong><br/>0.0097 ms</td>
-    <td><strong>P95</strong><br/>0.0155 ms</td>
-    <td><strong>P99</strong><br/>0.0250 ms</td>
-  </tr>
-  <tr>
-    <td><strong>P99.9</strong><br/>0.0546 ms</td>
-    <td><strong>P99.99</strong><br/>0.1146 ms</td>
-    <td><strong>Min</strong><br/>0.0042 ms</td>
-    <td><strong>Max</strong><br/>0.1388 ms</td>
-  </tr>
-</table>
+### CPU Throughput Comparison (PPS)
 
-### Run Profile
+| CPU | Throughput (ops/s) | Total | Mode | Chain | Pipeline | Processes | Threads/Process | Batch |
+|---|---:|---:|---|---|---|---:|---:|---:|
+| R5 9600X | 1,202,731.1 | 10,000,000 | hybrid | core | batch_fused | 16 | 1 | 128 |
+| i7-9750H | 484,728.3 | 10,000,000 | hybrid | n/a (not provided) | batch_fused | 12 | 2 | 256 |
+| i7_9750H | 275,334.3 | 20,000,000 | hybrid | e2e_loopback | batch_fused | 8 | 1 | 128 |
 
-| Field | Value |
-|---|---:|
-| Core Backend | `rscore` |
-| Execution Mode | `hybrid` |
-| Chain Mode | `e2e_loopback` |
-| Processes | `8` |
-| Threads per Process | `2` |
-| Batch Size | `258` |
+```mermaid
+gantt
+  title CPU Throughput Comparison (K ops/s)
+  dateFormat x
+  axisFormat %Q
+  section PPS
+  R5_9600X 1203K : a1, 0, 1203
+  RK3588 485K  :crit, a2, 0, 485
+  i7_9750H 275K    :active, a3, 0, 275
+```
 
-### Stage Timing Breakdown (ms)
+Color legend: `R5 9600X = active`, `i7-9750H = crit`, `i7_9750H = active`.
 
-| Stage | Avg | P95 | P99 | P99.9 | P99.99 | Min | Max |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `standardize_ms` | 0.0032 | 0.0052 | 0.0083 | 0.0182 | 0.0382 | 0.0014 | 0.0463 |
-| `compress_ms` | 0.0032 | 0.0052 | 0.0083 | 0.0182 | 0.0382 | 0.0014 | 0.0463 |
-| `fuse_ms` | 0.0032 | 0.0052 | 0.0083 | 0.0182 | 0.0382 | 0.0014 | 0.0463 |
+> **Note**: The chart above uses user-provided run data. Because run profiles differ (`total`, `processes`, `threads`, `batch`, `chain_mode`), treat it as an engineering reference rather than a strict A/B benchmark.
+
+```mermaid
+gantt
+  title CPU Processing Time by Percentile (us)
+  dateFormat x
+  axisFormat %Q
+  section AVG
+  R5_9600X 10.7us   : a1, 0, 11
+  RK3588 31.5us   :crit, a2, 0, 32
+  i7_9750H 21.8us     :active, a3, 0, 22
+
+  section P95
+  R5_9600X 36.8us   :b1, 0, 37
+  RK3588 88.4us   :crit, b2, 0, 88
+  i7_9750H 54.7us     :active, b3, 0, 55
+
+  section P99
+  R5_9600X 68.6us   : c1, 0, 69
+  RK3588 186.1us  :crit, c2, 0, 186
+  i7_9750H 89.7us     :active, c3, 0, 90
+
+  section P99.9
+  R5_9600X 109.8us  : d1, 0, 110
+  RK3588 461.2us  :crit, d2, 0, 461
+  i7_9750H 192.9us    :active, d3, 0, 193
+
+  section P99.99
+  R5_9600X 109.8us  : e1, 0, 110
+  RK3588 811.6us  :crit, e2, 0, 812
+  i7_9750H 338.8us    :active, e3, 0, 339
+
+  section MAX
+  R5_9600X 141.5us  : f1, 0, 142
+  RK3588 2012.9us :crit, f2, 0, 2013
+  i7_9750H 436.4us    :active, f3, 0, 436
+```
+
+Chart scale note: bars are shown in approximate microseconds (us) for readability, grouped by percentile for faster cross-CPU comparison.
+
+> **Note**: This simplified view shows only total per-packet CPU processing latency from user-provided `batch_fused` runs. If you need stage-level timing (`standardize_ms` / `compress_ms` / `fuse_ms`), use `--pipeline-mode legacy` in single-process mode.
+
+### Legacy Mode (Precise Per-Stage Timing)
+
+For accurate per-stage breakdown, use `--pipeline-mode legacy` with **single process only**:
+
+```bash
+python -u src/main.py plugin-test --suite stress --total 1 \
+  --chain-mode core --pipeline-mode legacy --processes 1 --threads-per-process 1
+```
+
+**Sample Output (1 op):**
+- standardize_ms: 0.0343 ms (3.8% of total)
+- compress_ms: 0.0563 ms (6.3% of total)
+- fuse_ms: 0.7985 ms (89.7% of total)
+- **Total: 0.8901 ms**
+
+**Legacy Mode Pipeline Timing Breakdown:**
+
+```mermaid
+pie title Per-Stage Latency Distribution (Legacy Mode)
+    "Standardize (3.8%)" : 3.8
+    "Compress (6.3%)" : 6.3
+    "Fuse (89.7%)" : 89.7
+```
+
+> **Key Insight**: Fusion (binary packet construction) dominates latency in legacy mode; batch_fused optimization reduces this bottleneck significantly.
+
+⚠️ **Legacy Mode Caveats:**
+- Throughput artificially low (~1-5K pps) due to global lock in result collector, not representative of actual system speed
+- Latency data accuracy ✅, but don't use pps metric for performance tuning
+- Use batch_fused (above) for realistic performance profiling
 
 📊 [Full Benchmark Report](docs/reports/PERFORMANCE_OPTIMIZATION_REPORT.md)
 
 ---
 
 ## 💡 Use Cases
+
+```mermaid
+timeline
+    title OpenSynaptic Deployment Scenarios
+    
+    Smart Agriculture (Offline)
+        : $30 SBC = Local Cloud
+        : LoRa Sensor Network
+        : Zero Internet Dependency
+        : Real-time Data Aggregation
+    
+    Industrial IoT (Unified)
+        : Single Protocol Stack
+        : Replace Proprietary Solutions
+        : 50% Cost Reduction
+        : Multi-transport Flexibility
+    
+    Privacy-First Smart Home
+        : Local Data Sovereignty
+        : SBC = Home Gateway
+        : Cloud-agnostic Control
+        : Mobile App Integration
+```
+
+**Detailed Scenarios:**
 
 ### Smart Agriculture (Offline)
 Deploy a $30 SBC as a local cloud, aggregating data from LoRa sensors. No internet required.
@@ -276,6 +390,54 @@ OpenSynaptic = manager.get_symbol('OpenSynaptic')
 
 All commands are available via `os-node` (installed entrypoint), `./run-main.cmd` (Windows), or `python -u src/main.py`:
 
+**Command Categories:**
+
+```mermaid
+graph TD
+    CLI["OpenSynaptic CLI"]
+    
+    CLI --> Runtime["🏃 Runtime Commands"]
+    CLI --> Config["⚙️ Config Management"]
+    CLI --> Plugin["🔌 Plugin Management"]
+    CLI --> Test["🧪 Testing & Build"]
+    CLI --> Monitor["📊 Monitoring"]
+    
+    Runtime --> run["run: Main event loop"]
+    Runtime --> transmit["transmit: Send one sensor"]
+    Runtime --> inject["inject: Pipeline debug"]
+    Runtime --> ensure_id["ensure-id: Request device ID"]
+    
+    Config --> show["config-show: Display settings"]
+    Config --> get["config-get: Read key path"]
+    Config --> set["config-set: Write value"]
+    Config --> trans_toggle["transporter-toggle: Enable/disable"]
+    
+    Plugin --> plugin_list["plugin-list: List plugins"]
+    Plugin --> plugin_load["plugin-load: Load plugin"]
+    Plugin --> plugin_cmd["plugin-cmd: Plugin subcommand"]
+    Plugin --> web_user["web-user: Web UI service"]
+    Plugin --> deps["deps: Dependency manager"]
+    
+    Test --> plugin_test["plugin-test: Component/stress tests"]
+    Test --> native_check["native-check: Toolchain check"]
+    Test --> native_build["native-build: Build C bindings"]
+    Test --> rscore["rscore-build: Build Rust core"]
+    
+    Monitor --> snapshot["snapshot: Node/service JSON"]
+    Monitor --> watch["watch: Real-time state poll"]
+    Monitor --> transport["transport-status: Layer status"]
+    Monitor --> decode["decode: Packet decode"]
+    
+    style Runtime fill:#e3f2fd
+    style Config fill:#f3e5f5
+    style Plugin fill:#e8f5e9
+    style Test fill:#fff3e0
+    style Monitor fill:#fce4ec
+```
+
+### Commands by Category
+
+**Runtime Operations:**
 | Command | Description |
 |---|---|
 | `run` | Persistent run loop with heartbeat |
@@ -286,21 +448,37 @@ All commands are available via `os-node` (installed entrypoint), `./run-main.cmd
 | `decode` | Decode a binary packet (hex) or Base62 string back to JSON |
 | `watch` | Real-time poll a module's state (config / registry / transport / pipeline) |
 | `tui` | Render TUI snapshot (add `--interactive` for live mode) |
+
+**Config & System:**
+| Command | Description |
+|---|---|
 | `config-show` | Display Config.json or a specific section |
 | `config-get` | Read a dot-notation key path from Config |
 | `config-set` | Write a typed value to a Config key path |
 | `core` | Show/switch core backend (`pycore` / `rscore`) |
 | `transporter-toggle` | Enable or disable a transporter in Config |
+
+**Plugins & Services:**
+| Command | Description |
+|---|---|
 | `plugin-list` | List mounted service plugins |
 | `plugin-load` | Load a mounted plugin by name |
 | `plugin-cmd` | Route a sub-command to a plugin's CLI handler |
+| `web-user` | Run web_user plugin directly from CLI |
+| `deps` | Run dependency_manager plugin directly from CLI |
+
+**Testing & Build:**
+| Command | Description |
+|---|---|
 | `plugin-test` | Run component or stress tests |
 | `native-check` | Check native compiler/toolchain availability |
 | `native-build` | Build native C bindings (optionally include RS core) |
 | `rscore-build` | Build and install Rust RS core shared library |
 | `rscore-check` | Check RS core DLL/runtime readiness and active core |
-| `web-user` | Run web_user plugin directly from CLI |
-| `deps` | Run dependency_manager plugin directly from CLI |
+
+**Monitoring:**
+| Command | Description |
+|---|---|
 | `transport-status` | Show all transporter layer states |
 | `db-status` | Show DB engine status |
 | `help` | Print full help |
@@ -329,27 +507,37 @@ Full schema → [`docs/CONFIG_SCHEMA.md`](docs/CONFIG_SCHEMA.md)
 
 ## Testing
 
+**Test Suite Options:**
+
+| Suite | Purpose | Command |
+|---|---|---|
+| `component` | Unit-level component tests | `plugin-test --suite component` |
+| `stress` | High-volume performance tests | `plugin-test --suite stress --workers 8 --total 200` |
+| `integration` | End-to-end integration tests | `plugin-test --suite integration` |
+| `all` | Complete test coverage | `plugin-test --suite all` |
+
+**Quick Commands:**
+
 ```powershell
 # Windows shortcut (no Activate.ps1 needed)
 .\run-main.cmd plugin-test --suite component
 
-# Component tests
+# Component tests (unit-level)
 python -u src/main.py plugin-test --suite component
 
-# Stress test
+# Stress test (high throughput)
 python -u src/main.py plugin-test --suite stress --workers 8 --total 200
 
-# Web UI (foreground mode)
-python -u src/main.py web-user --cmd start -- --host 127.0.0.1 --port 8765 --block
+# All suites combined
+python -u src/main.py plugin-test --suite all
 
-# Dependency checks and repair
+# If tests fail, repair dependencies
 python -u src/main.py deps --cmd check
 python -u src/main.py deps --cmd repair
 
-# Both suites
-python -u src/main.py plugin-test --suite all
+# Then retry the test suite
 
-# Local integration and capability checks
+# Additional testing scripts
 python scripts/integration_test.py
 python scripts/udp_receive_test.py --protocol udp --host 127.0.0.1 --port 8080 --config Config.json
 python scripts/audit_driver_capabilities.py
@@ -360,22 +548,45 @@ python scripts/services_smoke_check.py
 
 ## Native And Rust Build
 
+**Backend Options:**
+
+| Backend | Type | Toolchain Required | Best For |
+|---|---|---|---|
+| `pycore` | Pure Python | Optional (C compiler) | Balanced, easy setup |
+| `rscore` | Rust + FFI | Required (Rust + MSVC/Clang) | Maximum performance |
+
+**Quick Start:**
+
+1. **Check what you have:**
+   ```powershell
+   python -u src/main.py native-check      # Check toolchain availability
+   ```
+
+2. **Build native bindings (for pycore):**
+   ```powershell
+   python -u src/main.py native-build      # Build C bindings
+   ```
+
+3. **Build Rust backend (optional, for rscore):**
+   ```powershell
+   python -u src/main.py rscore-build      # Build Rust core
+   python -u src/main.py rscore-check      # Verify installation
+   ```
+
+4. **Switch active core (persistent):**
+   ```powershell
+   # Use Rust core
+   python -u src/main.py core --set rscore --persist
+   
+   # Or switch back to Python core
+   python -u src/main.py core --set pycore --persist
+   ```
+
+**Windows Shortcuts (no Activate.ps1 needed):**
+
 ```powershell
-# Windows shortcut (no Activate.ps1 needed)
 .\run-main.cmd native-check
 .\run-main.cmd native-build
-
-python -u src/main.py native-check
-python -u src/main.py native-build
-python -u src/main.py rscore-build
-python -u src/main.py rscore-check
-python -u src/main.py core --set rscore --persist
-```
-
-If needed, switch back:
-
-```powershell
-python -u src/main.py core --set pycore --persist
 ```
 
 ---
