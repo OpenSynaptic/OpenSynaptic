@@ -394,94 +394,67 @@ All commands are available via `os-node` (installed entrypoint), `./run-main.cmd
 
 ```mermaid
 graph TD
-    CLI["OpenSynaptic CLI"]
+    A["OpenSynaptic CLI"] --> B["🏃 Runtime"]
+    A --> C["⚙️ Config"]
+    A --> D["🔌 Plugin"]
+    A --> E["🧪 Testing"]
+    A --> F["📊 Monitor"]
     
-    CLI --> Runtime["🏃 Runtime Commands"]
-    CLI --> Config["⚙️ Config Management"]
-    CLI --> Plugin["🔌 Plugin Management"]
-    CLI --> Test["🧪 Testing & Build"]
-    CLI --> Monitor["📊 Monitoring"]
+    B --> B1["run"]
+    B --> B2["snapshot"]
+    B --> B3["ensure-id"]
+    B --> B4["transmit"]
+    B --> B5["inject, decode, watch, tui"]
     
-    Runtime --> run["run: Main event loop"]
-    Runtime --> transmit["transmit: Send one sensor"]
-    Runtime --> inject["inject: Pipeline debug"]
-    Runtime --> ensure_id["ensure-id: Request device ID"]
+    C --> C1["config-show"]
+    C --> C2["config-get"]
+    C --> C3["config-set"]
+    C --> C4["core, transporter-toggle"]
     
-    Config --> show["config-show: Display settings"]
-    Config --> get["config-get: Read key path"]
-    Config --> set["config-set: Write value"]
-    Config --> trans_toggle["transporter-toggle: Enable/disable"]
+    D --> D1["plugin-list"]
+    D --> D2["plugin-load"]
+    D --> D3["plugin-cmd"]
+    D --> D4["web-user, deps"]
     
-    Plugin --> plugin_list["plugin-list: List plugins"]
-    Plugin --> plugin_load["plugin-load: Load plugin"]
-    Plugin --> plugin_cmd["plugin-cmd: Plugin subcommand"]
-    Plugin --> web_user["web-user: Web UI service"]
-    Plugin --> deps["deps: Dependency manager"]
+    E --> E1["plugin-test"]
+    E --> E2["native-check"]
+    E --> E3["native-build"]
+    E --> E4["rscore-build, rscore-check"]
     
-    Test --> plugin_test["plugin-test: Component/stress tests"]
-    Test --> native_check["native-check: Toolchain check"]
-    Test --> native_build["native-build: Build C bindings"]
-    Test --> rscore["rscore-build: Build Rust core"]
-    
-    Monitor --> snapshot["snapshot: Node/service JSON"]
-    Monitor --> watch["watch: Real-time state poll"]
-    Monitor --> transport["transport-status: Layer status"]
-    Monitor --> decode["decode: Packet decode"]
-    
-    style Runtime fill:#e3f2fd
-    style Config fill:#f3e5f5
-    style Plugin fill:#e8f5e9
-    style Test fill:#fff3e0
-    style Monitor fill:#fce4ec
+    F --> F1["transport-status"]
+    F --> F2["db-status, help"]
 ```
 
-### Commands by Category
+### All Commands
 
-**Runtime Operations:**
-| Command | Description |
-|---|---|
-| `run` | Persistent run loop with heartbeat |
-| `snapshot` | Print node/service/transporter JSON snapshot |
-| `ensure-id` | Request device ID from server |
-| `transmit` | Encode one sensor reading and dispatch |
-| `inject` | Push data through pipeline stages and inspect output |
-| `decode` | Decode a binary packet (hex) or Base62 string back to JSON |
-| `watch` | Real-time poll a module's state (config / registry / transport / pipeline) |
-| `tui` | Render TUI snapshot (add `--interactive` for live mode) |
-
-**Config & System:**
-| Command | Description |
-|---|---|
-| `config-show` | Display Config.json or a specific section |
-| `config-get` | Read a dot-notation key path from Config |
-| `config-set` | Write a typed value to a Config key path |
-| `core` | Show/switch core backend (`pycore` / `rscore`) |
-| `transporter-toggle` | Enable or disable a transporter in Config |
-
-**Plugins & Services:**
-| Command | Description |
-|---|---|
-| `plugin-list` | List mounted service plugins |
-| `plugin-load` | Load a mounted plugin by name |
-| `plugin-cmd` | Route a sub-command to a plugin's CLI handler |
-| `web-user` | Run web_user plugin directly from CLI |
-| `deps` | Run dependency_manager plugin directly from CLI |
-
-**Testing & Build:**
-| Command | Description |
-|---|---|
-| `plugin-test` | Run component or stress tests |
-| `native-check` | Check native compiler/toolchain availability |
-| `native-build` | Build native C bindings (optionally include RS core) |
-| `rscore-build` | Build and install Rust RS core shared library |
-| `rscore-check` | Check RS core DLL/runtime readiness and active core |
-
-**Monitoring:**
-| Command | Description |
-|---|---|
-| `transport-status` | Show all transporter layer states |
-| `db-status` | Show DB engine status |
-| `help` | Print full help |
+| Category | Command | Description |
+|---|---|---|
+| **Runtime** | `run` | Persistent run loop with heartbeat |
+| **Runtime** | `snapshot` | Print node/service/transporter JSON snapshot |
+| **Runtime** | `ensure-id` | Request device ID from server |
+| **Runtime** | `transmit` | Encode one sensor reading and dispatch |
+| **Runtime** | `inject` | Push data through pipeline stages and inspect output |
+| **Runtime** | `decode` | Decode a binary packet (hex) or Base62 string back to JSON |
+| **Runtime** | `watch` | Real-time poll a module's state (config / registry / transport / pipeline) |
+| **Runtime** | `tui` | Render TUI snapshot (add `--interactive` for live mode) |
+| **Config** | `config-show` | Display Config.json or a specific section |
+| **Config** | `config-get` | Read a dot-notation key path from Config |
+| **Config** | `config-set` | Write a typed value to a Config key path |
+| **Config** | `core` | Show/switch core backend (`pycore` / `rscore`) |
+| **Config** | `transporter-toggle` | Enable or disable a transporter in Config |
+| **Plugin** | `plugin-list` | List mounted service plugins |
+| **Plugin** | `plugin-load` | Load a mounted plugin by name |
+| **Plugin** | `plugin-cmd` | Route a sub-command to a plugin's CLI handler |
+| **Plugin** | `web-user` | Run web_user plugin directly from CLI |
+| **Plugin** | `deps` | Run dependency_manager plugin directly from CLI |
+| **Testing** | `plugin-test` | Run component or stress tests |
+| **Testing** | `native-check` | Check native compiler/toolchain availability |
+| **Testing** | `native-build` | Build native C bindings (optionally include RS core) |
+| **Testing** | `rscore-build` | Build and install Rust RS core shared library |
+| **Testing** | `rscore-check` | Check RS core DLL/runtime readiness and active core |
+| **Monitor** | `transport-status` | Show all transporter layer states |
+| **Monitor** | `db-status` | Show DB engine status |
+| **Monitor** | `help` | Print full help |
 
 Full usage examples → [`src/opensynaptic/CLI/README.md`](src/opensynaptic/CLI/README.md)
 
