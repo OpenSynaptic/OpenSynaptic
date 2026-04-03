@@ -569,7 +569,7 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 - 架构详解：[ARCHITECTURE.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ARCHITECTURE)
 - 配置架构：[docs/CONFIG_SCHEMA.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)（英文）
 - 传输器/插件扩展：[docs/TRANSPORTER_PLUGIN.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）
-- ID 租赁系统：[ID 租赁系统](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_SYSTEM)（英文）
+- ID 租赁系统：[ID_LEASE_SYSTEM.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_SYSTEM)（英文）
 - 国际化支持：[docs/I18N.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-I18N)（英文）
 
 ---
