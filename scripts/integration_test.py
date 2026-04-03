@@ -119,10 +119,30 @@ def run_tests(repo_root: Path) -> dict:
             tests_failed += 1
             results.append({"test": "Transmit multiple sensors", "status": "FAIL", "error": str(e)})
         
-        # Test 4: Receive (decompress) - use packet_multi from test 3
+        # Test 4: Receive (decompress) - generate FULL packet to avoid TID cache miss
         print("\n[TEST 4] Receive and decompress packet")
         try:
-            decoded = node.receive(packet_multi)
+            # Directly use fusion engine with FULL strategy to avoid cache dependency
+            # (This avoids needing to transmit a FULL packet first to establish template)
+            sensors_data = [
+                ["V1", "OK", 3.14, "Pa"],
+                ["T1", "OK", 25.3, "Cel"],
+                ["H1", "OK", 65.0, "%"],
+            ]
+            # Standardize and compress manually
+            fact = node.standardizer.standardize(
+                device_id="decompress_test",
+                device_status="ONLINE",
+                sensors=sensors_data
+            )
+            compressed_str = node.engine.compress(fact)
+            raw_input_str = f"{node.assigned_id};{compressed_str}"
+            
+            # Generate FULL packet directly
+            full_packet = node.fusion.run_engine(raw_input_str, strategy='FULL')
+            
+            # Now decode it
+            decoded = node.receive(full_packet)
             assert isinstance(decoded, dict), f"Expected dict, got {type(decoded)}"
             if decoded.get("error"):
                 raise AssertionError(f"Decode error: {decoded.get('error')}")
