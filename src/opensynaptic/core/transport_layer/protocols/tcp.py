@@ -41,7 +41,7 @@ def listen(config, callback):
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
         sock.listen(5)
-        os_log.log('L4', f'TCP listening on {host}:{port}')
+        os_log.info('L4', 'TCP_LISTEN_START', f'TCP listening on {host}:{port}', {'host': host, 'port': port})
         
         while True:
             try:

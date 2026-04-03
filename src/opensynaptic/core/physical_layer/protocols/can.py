@@ -25,7 +25,7 @@ def listen(config, callback):
     
     try:
         driver = CAN_Driver(can_id=can_id)
-        os_log.log('PHY', f'CAN listening on ID 0x{can_id:03X}')
+        os_log.info('PHY', 'CAN_LISTEN_START', f'CAN listening on ID 0x{can_id:03X}', {'can_id': can_id})
         
         while True:
             try:

@@ -27,7 +27,7 @@ def listen(config, callback):
     
     try:
         driver = RS485_Driver(port=port, baudrate=baudrate)
-        os_log.log('PHY', f'RS485 listening on {port} @ {baudrate} baud')
+        os_log.info('PHY', 'RS485_LISTEN_START', f'RS485 listening on {port} @ {baudrate} baud', {'port': port, 'baudrate': baudrate})
         
         while True:
             try:

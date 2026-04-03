@@ -29,7 +29,7 @@ def listen(config, callback):
     
     try:
         driver = LoRaDriver(baudrate=baudrate, timeout=timeout)
-        os_log.log('PHY', f'LoRa listening @ {baudrate} baud (timeout={timeout}s)')
+        os_log.info('PHY', 'LORA_LISTEN_START', f'LoRa listening @ {baudrate} baud (timeout={timeout}s)', {'baudrate': baudrate, 'timeout': timeout})
         
         while True:
             try:

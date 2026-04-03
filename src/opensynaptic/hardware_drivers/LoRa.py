@@ -69,6 +69,18 @@ class LoRaDriver:
             os_log.err('LOR', 'IO', e, {'len': len(data) if 'data' in locals() else None})
             return None
 
+    def receive(self):
+        if not self.ser or not getattr(self.ser, 'is_open', False):
+            return None
+        try:
+            waiting = getattr(self.ser, 'in_waiting', 0)
+            if waiting <= 0:
+                return None
+            return self.ser.read(waiting)
+        except Exception as e:
+            os_log.err('LOR', 'RECV', e, {})
+            return None
+
     def close(self):
         if self.ser and getattr(self.ser, 'is_open', False):
             try:

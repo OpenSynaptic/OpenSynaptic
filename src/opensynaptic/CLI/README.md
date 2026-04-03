@@ -1,6 +1,11 @@
 # OpenSynaptic CLI and TUI
 
-All commands are available via `os-node` (installed entry-point) or `python -u src/main.py`.
+All commands are available via `os-node` (installed entry-point), `./run-main.cmd` (Windows shortcut), or `python -u src/main.py`.
+
+Startup behavior note:
+
+- First run now auto-attempts native runtime repair when required C bindings are missing.
+- If auto-repair fails (for example, compiler missing), CLI returns structured guidance and keeps `native-check` / `native-build` as manual fallback.
 
 ---
 
@@ -9,6 +14,7 @@ All commands are available via `os-node` (installed entry-point) or `python -u s
 | Command | Aliases | Description |
 |---|---|---|
 | `run` | `os-run` | Persistent run loop; maintains protocol heartbeat until Ctrl+C or `--duration` |
+| `restart` | `os-restart` | Gracefully restart: stop current receiver and auto-start new run process |
 | `snapshot` | `os-snapshot` | Print node / service / transporter JSON snapshot |
 | `receive` | `os-receive` | Start UDP receiver (server-side packet ingestion loop) |
 | `demo` | `os-demo` | One-command localhost onboarding: virtual sensors + Web UI |
@@ -43,6 +49,8 @@ All commands are available via `os-node` (installed entry-point) or `python -u s
 
 ## Examples
 
+Windows tip: replace the `python -u src/main.py` prefix below with `./run-main.cmd`.
+
 ```powershell
 # ── Basic node operations ───────────────────────────────────────────────────
 python -u src/main.py demo              --open-browser
@@ -56,6 +64,8 @@ python -u src/main.py transmit          --config Config.json --sensor-id V1 --va
 python -u src/main.py reload-protocol   --config Config.json --medium udp
 python -u src/main.py run               --config Config.json --interval 5
 python -u src/main.py run               --config Config.json --once
+python -u src/main.py restart           --config Config.json --graceful --timeout 10
+python -u src/main.py restart           --config Config.json --timeout 5 --host 127.0.0.1 --port 8080
 
 # ── TUI ─────────────────────────────────────────────────────────────────────
 python -u src/main.py tui               --config Config.json
@@ -206,6 +216,12 @@ py -3 -m pip install argcomplete
 powershell -ExecutionPolicy Bypass -File .\scripts\enable_argcomplete.ps1
 ```
 
+If your PowerShell blocks `Activate.ps1`, you do not need to activate venv for CLI commands:
+
+```powershell
+.\scripts\venv-python.cmd -u src/main.py --help
+```
+
 Manual activation:
 
 ```powershell
@@ -235,3 +251,4 @@ After restart, completion is available for:
 - Plugins can expose `get_cli_completions()` to provide `plugin-cmd --cmd` completion metadata (fallback: `get_cli_commands()` keys).
 - Required plugin settings are auto-added to `Config.json` under `RESOURCES.service_plugins.<plugin_name>`.
 - `web-user --cmd start -- --block` keeps the process in foreground so the browser UI stays available.
+- Native runtime repair is auto-attempted once during first-run startup and node-init native-load failure paths.

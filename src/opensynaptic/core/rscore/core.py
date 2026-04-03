@@ -211,31 +211,111 @@ class OpenSynaptic(BaseOpenSynaptic, RsFFIProxyBase):
         port = int(server_port or client_cfg.get('server_port') or server_cfg.get('port') or 8080)
         return host, port
 
+    def _run_udp_exchange(self, host, port, timeout, request_fn):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+
+        def send_fn(data):
+            sock.sendto(data, (host, port))
+
+        def recv_fn(timeout=1.0):
+            sock.settimeout(timeout)
+            try:
+                data, _ = sock.recvfrom(4096)
+                return data
+            except socket.timeout:
+                return None
+
+        try:
+            return request_fn(send_fn, recv_fn)
+        finally:
+            sock.close()
+
+    def _persist_assigned_id(self, aid):
+        try:
+            val = int(aid)
+        except Exception:
+            return False
+        if not (0 < val < self.MAX_UINT32):
+            return False
+        self.assigned_id = val
+        if isinstance(self.config, dict):
+            self.config['assigned_id'] = val
+        self._sync_assigned_id_to_fusion()
+        self._save_config()
+        return True
+
     def ensure_id(self, server_ip=None, server_port=None, device_meta=None, *args, **kwargs):
         if self._has_valid_assigned_id():
             return True
 
-        out = self._ffi_ensure_id(server_ip, server_port, device_meta, *args, **kwargs)
+        host, port = self._resolve_server_endpoint(server_ip, server_port)
+        timeout = float(kwargs.get('timeout', 5.0) or 5.0)
+        meta = dict(device_meta or {})
+        meta.setdefault('device_id', self.device_id)
+
+        out = None
+        try:
+            out = self._ffi_ensure_id(host, port, meta, *args, **kwargs)
+        except Exception as exc:
+            out = {'ok': False, 'error': str(exc)}
+
         if isinstance(out, dict):
             if bool(out.get('ok', False)):
-                maybe_id = out.get('assigned_id')
-                if maybe_id not in (None, ''):
-                    self.assigned_id = maybe_id
+                self._persist_assigned_id(out.get('assigned_id'))
                 return out
-            err = str(out.get('error', '') or '').lower()
-            if ('not_implemented' in err or 'unavailable' in err) and self._has_valid_assigned_id():
-                return True
+
+        request_id_fn = getattr(self.protocol, 'request_id_via_transport', None)
+        if callable(request_id_fn):
+            def _request(send_fn, recv_fn):
+                return request_id_fn(
+                    transport_send_fn=send_fn,
+                    transport_recv_fn=recv_fn,
+                    device_meta=meta,
+                    timeout=timeout,
+                )
+
+            try:
+                new_id = self._run_udp_exchange(host, port, timeout, _request)
+            except Exception:
+                new_id = None
+
+            if self._persist_assigned_id(new_id):
+                return {'ok': True, 'assigned_id': int(self.assigned_id), 'source': 'protocol_fallback'}
+
         return out
 
     def ensure_time(self, server_ip=None, server_port=None, timeout=3.0):
+        host, port = self._resolve_server_endpoint(server_ip, server_port)
+
         # Keep parity with pycore CLI API. Rust ABI for time sync may be unavailable.
         ffi_ensure_time = getattr(self._ffi, 'ensure_time', None)
-        host, port = self._resolve_server_endpoint(server_ip, server_port)
         if callable(ffi_ensure_time):
             try:
-                return ffi_ensure_time(host, port, timeout)
+                server_time = ffi_ensure_time(host, port, timeout)
+                if server_time:
+                    self.protocol.note_server_time(server_time)
+                    return server_time
             except Exception:
                 pass
+
+        request_time_fn = getattr(self.protocol, 'request_time_via_transport', None)
+        if callable(request_time_fn):
+            def _request(send_fn, recv_fn):
+                return request_time_fn(
+                    transport_send_fn=send_fn,
+                    transport_recv_fn=recv_fn,
+                    timeout=timeout,
+                )
+
+            try:
+                server_time = self._run_udp_exchange(host, port, timeout, _request)
+            except Exception:
+                server_time = None
+            if server_time:
+                self.protocol.note_server_time(server_time)
+                return server_time
+
         return None
 
     def _transmit_fast_direct(self, sensors=None, device_id=None, device_status="ONLINE", **kwargs):
@@ -531,6 +611,11 @@ class OpenSynaptic(BaseOpenSynaptic, RsFFIProxyBase):
         aid = getattr(self, 'assigned_id', None)
         if aid in (None, ""):
             return None
+        try:
+            if getattr(self, '_ffi', None) is not None:
+                self._ffi.assigned_id = int(aid)
+        except Exception:
+            pass
         set_local = getattr(self.fusion, '_set_local_id', None)
         if callable(set_local):
             try:

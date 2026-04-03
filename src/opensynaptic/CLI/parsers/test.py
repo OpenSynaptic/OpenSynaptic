@@ -103,6 +103,10 @@ def register(sub: argparse._SubParsersAction) -> None:
                              help='Warmup compare runs per backend (suite=compare)')
     plugin_test.add_argument('--json-out', dest='json_out', default=None,
                              help='Optional compare report output path (suite=compare)')
+    plugin_test.add_argument('--report-format', choices=['concise', 'json', 'both'], default='concise',
+                             help='Console report style for stress/compare/full_load suites')
+    plugin_test.add_argument('--worst-topk-display', type=int, default=3,
+                             help='Worst latency rows shown in concise report (stress/full_load)')
     plugin_test.add_argument('--require-rust', action='store_true', default=False,
                              help='Fail when rscore path cannot use os_rscore DLL')
     plugin_test.add_argument(

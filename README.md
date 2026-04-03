@@ -9,6 +9,12 @@ pip install -e .
 os-node demo --open-browser
 ```
 
+Windows (no `Activate.ps1` required):
+
+```powershell
+.\run-main.cmd demo --open-browser
+```
+
 - Default user config path: `~/.config/opensynaptic/Config.json`
 - First run launches onboarding wizard (`--yes` / `--no-wizard` supported)
 
@@ -53,6 +59,24 @@ Restart PowerShell after activation.
 
 ## Architecture
 
+```mermaid
+%%{init: {'flowchart': {'rankSeparation': 60, 'nodeSeparation': 50}}}%%
+graph LR
+    A["Sensors List"] -->|Raw Data| B["Standardizer<br/>(UCUM Normalisation)"]
+    B -->|Standardised| C["Compressor<br/>(Base62 Encoding)"]
+    C -->|Compressed| D["Fusion Engine<br/>(FULL/DIFF Packet)"]
+    D -->|Binary Packet| E["Dispatcher<br/>(TCP/UDP/LoRa/MQTT/CAN)"]
+    E -->|Transmitted| F["Remote Node"]
+    
+    style A fill:#e1f5ff
+    style B fill:#fff3e0
+    style C fill:#f3e5f5
+    style D fill:#e8f5e9
+    style E fill:#fce4ec
+    style F fill:#e0f2f1
+```
+
+**Pipeline Overview (Text):**
 ```
 sensors list
     → OpenSynapticStandardizer.standardize()   # UCUM normalisation
@@ -125,75 +149,208 @@ Config.json                     # Single source of truth for all runtime setting
 pip install -e .
 ```
 
+### Windows PowerShell Startup Note
+
+If you see this error when activating a virtual environment:
+
+```text
+Activate.ps1 cannot be loaded because running scripts is disabled on this system.
+```
+
+Use the project wrappers and run without activation:
+
+```powershell
+.\scripts\venv-python.cmd -m pip install -e .
+.\scripts\venv-python.cmd -m pytest tests/unit tests/integration -q
+.\scripts\venv-python.cmd -u src/main.py --help
+.\run-main.cmd --help
+```
+
+If you need activation in the current shell only:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+& ".\.venv\Scripts\Activate.ps1"
+```
+
+### First-Run Native Auto Repair
+
+On first run, OpenSynaptic now auto-attempts native C binding repair if required runtime libraries are missing.
+
+- Trigger point: first run startup preflight and node initialization failure fallback.
+- What it does: runs the same native build pipeline as `native-build`, then retries node startup once.
+- If compiler/toolchain is missing, it returns structured guidance and records environment hints through `env_guard`.
+
+Disable this behavior only when needed:
+
+```powershell
+$env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR = "0"
+```
+
 ---
 
 ## Why OpenSynaptic?
 
-| Feature | MQTT + JSON | CoAP | OpenSynaptic |
-|---------|-------------|------|--------------|
-| Data Standardization | ❌ | ❌ | ✅ UCUM |
-| Compression | ❌ | ❌ | ✅ Base62 + DIFF |
-| Transport Flexibility | TCP only | UDP only | ✅ Pluggable (TCP/UDP/LoRa/CAN/MQTT) |
-| Latency (end-to-end) | 1-5 ms | 1-5 ms | **9.7 μs** |
-| Throughput (single core) | ~10k ops/s | ~10k ops/s | **1.14M ops/s** |
+OpenSynaptic is not a replacement for MQTT or CoAP — it solves a different problem. While MQTT/CoAP handle **transport**, OpenSynaptic focuses on **what you do with sensor data before it hits the wire**.
 
+### The Real Problem
+
+When you deploy IoT sensors from different vendors, you face three universal headaches:
+
+| Problem | Example |
+|---|---|
+| **Unit chaos** | Sensor A sends `"pressure": 101.3, "unit": "kPa"`, Sensor B sends `"p": 14.7, "u": "psi"` |
+| **Verbose encoding** | `{"sensor_id": "temp_01", "value": 23.5, "unit": "celsius"}` → 62 bytes for 4 bytes of data |
+| **Transport fragmentation** | Need TCP for reliability, UDP for speed, LoRa for range, CAN for automotive — five different codebases |
+
+### What OpenSynaptic Does Differently
+
+| Layer | Traditional Approach | OpenSynaptic |
+|---|---|---|
+| **Semantic normalization** | Application code | ✅ Built-in UCUM |
+| **Payload compression** | Optional library (zlib/lz4) | ✅ Built-in Base62 + DIFF (60–80% reduction vs. JSON) |
+| **Transport abstraction** | Rewrite per medium | ✅ Single API: TCP/UDP/LoRa/CAN/MQTT |
+| **Binary encoding** | Custom or Protobuf | ✅ Zero-copy pipeline |
+
+### Performance Comparison (Apples-to-Apples)
+
+**The numbers below compare CPU processing time only** — what happens inside your application before network transmission. Network latency (which dominates end-to-end delay) is excluded because it depends on your infrastructure, not your protocol choice.
+
+| Metric | MQTT + JSON (paho-mqtt) | CoAP (aiocoap) | **OpenSynaptic** |
+|---|---|---|---|
+| **Processing latency** (single sensor, Python) | ~150–300 μs | ~80–200 μs | **9.7 μs** |
+| **Throughput** (single core) | ~8K–15K ops/s | ~10K–20K ops/s | **1.2M ops/s**† |
+| **Payload size** (temperature: 23.5°C) | ~60 bytes | ~40 bytes | **~16 bytes** |
+| **Compression ratio** (vs. JSON) | N/A | N/A | **60–80% reduction** |
+
+*OpenSynaptic: batch_fused mode, 16 processes, R5 9600X. See [Performance at a Glance](#performance-at-a-glance).*
+
+> ⚠️ **Important**: These are **protocol + serialization** benchmarks, not end-to-end network latency. MQTT/CoAP add 1–10 ms for broker/network round trips — OpenSynaptic would add the same when deployed over real networks. The advantage is in **processing efficiency**, not physics-defying network speed.
+
+### When to Use What
+
+| If you need... | Use... |
+|---|---|
+| **Standard IoT cloud connectivity** (AWS IoT, Azure IoT Hub) | MQTT |
+| **REST-like request/response over UDP** | CoAP |
+| **Sensor normalization + compression + multi-transport in one stack** | **OpenSynaptic** |
+| **Maximum processing throughput on constrained hardware** | **OpenSynaptic** |
+| **Already have a working MQTT/CoAP deployment** | Keep it. Add OpenSynaptic for preprocessing. |
+
+### OpenSynaptic as a Preprocessor
+
+OpenSynaptic doesn't force you to abandon existing infrastructure. Use it as a **preprocessing layer** before MQTT:
+
+```python
+# Standardize and compress sensor data, then send via MQTT
+node = OpenSynaptic()
+packet, _, _ = node.transmit(sensors=[["temp", "OK", 23.5, "cel"]])
+mqtt_client.publish("sensors/data", packet.hex())  # 16 bytes instead of 60
+```
 ---
 
 ## ⚡ Performance at a Glance
 
-<div align="center">
 
-![Throughput](https://img.shields.io/badge/Throughput-1.10M%2B%20ops%2Fs-0A7E07?style=for-the-badge)
-![P99 Latency](https://img.shields.io/badge/P99-0.0250%20ms-1E40AF?style=for-the-badge)
-![Stability](https://img.shields.io/badge/Stress-20M%20ops%20%7C%200%20failures-7C3AED?style=for-the-badge)
 
-</div>
+Color legend: `R5 9600X = active`, `i7-9750H = crit`, `i7_9750H = active`.
 
-<table>
-  <tr>
-    <td><strong>Total Ops</strong><br/>20,000,000</td>
-    <td><strong>Success</strong><br/>20,000,000</td>
-    <td><strong>Failed</strong><br/>0</td>
-    <td><strong>Elapsed</strong><br/>18.185 s</td>
-  </tr>
-  <tr>
-    <td><strong>Throughput</strong><br/>1,099,812.5 ops/s</td>
-    <td><strong>Avg</strong><br/>0.0097 ms</td>
-    <td><strong>P95</strong><br/>0.0155 ms</td>
-    <td><strong>P99</strong><br/>0.0250 ms</td>
-  </tr>
-  <tr>
-    <td><strong>P99.9</strong><br/>0.0546 ms</td>
-    <td><strong>P99.99</strong><br/>0.1146 ms</td>
-    <td><strong>Min</strong><br/>0.0042 ms</td>
-    <td><strong>Max</strong><br/>0.1388 ms</td>
-  </tr>
-</table>
+> **Note**: The chart above uses user-provided run data. Because run profiles differ (`total`, `processes`, `threads`, `batch`, `chain_mode`), treat it as an engineering reference rather than a strict A/B benchmark.
 
-### Run Profile
+```mermaid
+gantt
+  title CPU Processing Time by Percentile (us)
+  dateFormat x
+  axisFormat %Q
+  section AVG
+  R5_9600X 10.7us   : a1, 0, 11
+  RK3588 31.5us   :crit, a2, 0, 32
+  i7_9750H 21.8us     :active, a3, 0, 22
 
-| Field | Value |
-|---|---:|
-| Core Backend | `rscore` |
-| Execution Mode | `hybrid` |
-| Chain Mode | `e2e_loopback` |
-| Processes | `8` |
-| Threads per Process | `2` |
-| Batch Size | `258` |
+  section P95
+  R5_9600X 36.8us   :b1, 0, 37
+  RK3588 88.4us   :crit, b2, 0, 88
+  i7_9750H 54.7us     :active, b3, 0, 55
 
-### Stage Timing Breakdown (ms)
+  section P99
+  R5_9600X 68.6us   : c1, 0, 69
+  RK3588 186.1us  :crit, c2, 0, 186
+  i7_9750H 89.7us     :active, c3, 0, 90
 
-| Stage | Avg | P95 | P99 | P99.9 | P99.99 | Min | Max |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `standardize_ms` | 0.0032 | 0.0052 | 0.0083 | 0.0182 | 0.0382 | 0.0014 | 0.0463 |
-| `compress_ms` | 0.0032 | 0.0052 | 0.0083 | 0.0182 | 0.0382 | 0.0014 | 0.0463 |
-| `fuse_ms` | 0.0032 | 0.0052 | 0.0083 | 0.0182 | 0.0382 | 0.0014 | 0.0463 |
+  section P99.9
+  R5_9600X 109.8us  : d1, 0, 110
+  RK3588 461.2us  :crit, d2, 0, 461
+  i7_9750H 192.9us    :active, d3, 0, 193
 
-📊 [Full Benchmark Report](docs/reports/PERFORMANCE_OPTIMIZATION_REPORT.md)
+  section P99.99
+  R5_9600X 109.8us  : e1, 0, 110
+  RK3588 811.6us  :crit, e2, 0, 812
+  i7_9750H 338.8us    :active, e3, 0, 339
+
+  section MAX
+  R5_9600X 141.5us  : f1, 0, 142
+  RK3588 2012.9us :crit, f2, 0, 2013
+  i7_9750H 436.4us    :active, f3, 0, 436
+```
+
+Chart scale note: bars are shown in approximate microseconds (us) for readability, grouped by percentile for faster cross-CPU comparison.
+
+> **Note**: This simplified view shows only total per-packet CPU processing latency from user-provided `batch_fused` runs. If you need stage-level timing (`standardize_ms` / `compress_ms` / `fuse_ms`), use `--pipeline-mode legacy` in single-process mode.
+
+### Legacy Mode (Precise Per-Stage Timing)
+
+For accurate per-stage breakdown, use `--pipeline-mode legacy` with **single process only**:
+
+```bash
+python -u src/main.py plugin-test --suite stress --total 1 \
+  --chain-mode core --pipeline-mode legacy --processes 1 --threads-per-process 1
+```
+
+**Legacy Mode Pipeline Timing Breakdown:**
+
+```mermaid
+pie title Per-Stage Latency Distribution
+    "Standardize (3.8%)" : 3.8
+    "Compress (6.3%)" : 6.3
+    "Fuse (89.7%)" : 89.7
+```
+
+> **Key Insight**: Fusion (binary packet construction) dominates latency in legacy mode; batch_fused optimization reduces this bottleneck significantly.
+
+⚠️ **Legacy Mode Caveats:**
+- Throughput artificially low (~1-5K pps) due to global lock in result collector, not representative of actual system speed
+- Latency data accuracy , but don't use pps metric for performance tuning
+- Use batch_fused (above) for realistic performance profiling
+
+ [Full Benchmark Report](docs/reports/PERFORMANCE_OPTIMIZATION_REPORT.md)
 
 ---
 
-## 💡 Use Cases
+##  Use Cases
+
+```mermaid
+timeline
+    title Deployment Scenarios
+    Smart Agriculture (Offline)
+        : $30 SBC = Local Cloud
+        : LoRa Sensor Network
+        : Zero Internet Dependency
+        : Real-time Data Aggregation
+    
+    Industrial IoT (Unified)
+        : Single Protocol Stack
+        : Replace Proprietary Solutions
+        : 50% Cost Reduction
+        : Multi-transport Flexibility
+    
+    Privacy-First Smart Home
+        : Local Data Sovereignty
+        : SBC = Home Gateway
+        : Cloud-agnostic Control
+        : Mobile App Integration
+```
+
+**Detailed Scenarios:**
 
 ### Smart Agriculture (Offline)
 Deploy a $30 SBC as a local cloud, aggregating data from LoRa sensors. No internet required.
@@ -230,36 +387,47 @@ OpenSynaptic = manager.get_symbol('OpenSynaptic')
 
 ## CLI Quick Reference
 
-All commands are available via `os-node` (installed entrypoint) or `python -u src/main.py`:
+All commands are available via `os-node` (installed entrypoint), `./run-main.cmd` (Windows), or `python -u src/main.py`:
 
-| Command | Description |
-|---|---|
-| `run` | Persistent run loop with heartbeat |
-| `snapshot` | Print node/service/transporter JSON snapshot |
-| `ensure-id` | Request device ID from server |
-| `transmit` | Encode one sensor reading and dispatch |
-| `inject` | Push data through pipeline stages and inspect output |
-| `decode` | Decode a binary packet (hex) or Base62 string back to JSON |
-| `watch` | Real-time poll a module's state (config / registry / transport / pipeline) |
-| `tui` | Render TUI snapshot (add `--interactive` for live mode) |
-| `config-show` | Display Config.json or a specific section |
-| `config-get` | Read a dot-notation key path from Config |
-| `config-set` | Write a typed value to a Config key path |
-| `core` | Show/switch core backend (`pycore` / `rscore`) |
-| `transporter-toggle` | Enable or disable a transporter in Config |
-| `plugin-list` | List mounted service plugins |
-| `plugin-load` | Load a mounted plugin by name |
-| `plugin-cmd` | Route a sub-command to a plugin's CLI handler |
-| `plugin-test` | Run component or stress tests |
-| `native-check` | Check native compiler/toolchain availability |
-| `native-build` | Build native C bindings (optionally include RS core) |
-| `rscore-build` | Build and install Rust RS core shared library |
-| `rscore-check` | Check RS core DLL/runtime readiness and active core |
-| `web-user` | Run web_user plugin directly from CLI |
-| `deps` | Run dependency_manager plugin directly from CLI |
-| `transport-status` | Show all transporter layer states |
-| `db-status` | Show DB engine status |
-| `help` | Print full help |
+**Command Categories:**
+
+-  **Runtime**: `run`, `restart`, `snapshot`, `ensure-id`, `transmit`, `inject`, `decode`, `watch`, `tui`
+- ️ **Config**: `config-show`, `config-get`, `config-set`, `core`, `transporter-toggle`
+-  **Plugin**: `plugin-list`, `plugin-load`, `plugin-cmd`, `web-user`, `deps`
+-  **Testing**: `plugin-test`, `native-check`, `native-build`, `rscore-build`, `rscore-check`
+-  **Monitor**: `transport-status`, `db-status`, `help`
+
+### All Commands
+
+| Category | Command | Description |
+|---|---|---|
+| **Runtime** | `run` | Persistent run loop with heartbeat |
+| **Runtime** | `restart` | Gracefully restart the run loop (stop + auto-start new process) |
+| **Runtime** | `snapshot` | Print node/service/transporter JSON snapshot |
+| **Runtime** | `ensure-id` | Request device ID from server |
+| **Runtime** | `transmit` | Encode one sensor reading and dispatch |
+| **Runtime** | `inject` | Push data through pipeline stages and inspect output |
+| **Runtime** | `decode` | Decode a binary packet (hex) or Base62 string back to JSON |
+| **Runtime** | `watch` | Real-time poll a module's state (config / registry / transport / pipeline) |
+| **Runtime** | `tui` | Render TUI snapshot (add `--interactive` for live mode) |
+| **Config** | `config-show` | Display Config.json or a specific section |
+| **Config** | `config-get` | Read a dot-notation key path from Config |
+| **Config** | `config-set` | Write a typed value to a Config key path |
+| **Config** | `core` | Show/switch core backend (`pycore` / `rscore`) |
+| **Config** | `transporter-toggle` | Enable or disable a transporter in Config |
+| **Plugin** | `plugin-list` | List mounted service plugins |
+| **Plugin** | `plugin-load` | Load a mounted plugin by name |
+| **Plugin** | `plugin-cmd` | Route a sub-command to a plugin's CLI handler |
+| **Plugin** | `web-user` | Run web_user plugin directly from CLI |
+| **Plugin** | `deps` | Run dependency_manager plugin directly from CLI |
+| **Testing** | `plugin-test` | Run component or stress tests |
+| **Testing** | `native-check` | Check native compiler/toolchain availability |
+| **Testing** | `native-build` | Build native C bindings (optionally include RS core) |
+| **Testing** | `rscore-build` | Build and install Rust RS core shared library |
+| **Testing** | `rscore-check` | Check RS core DLL/runtime readiness and active core |
+| **Monitor** | `transport-status` | Show all transporter layer states |
+| **Monitor** | `db-status` | Show DB engine status |
+| **Monitor** | `help` | Print full help |
 
 Full usage examples → [`src/opensynaptic/CLI/README.md`](src/opensynaptic/CLI/README.md)
 
@@ -285,46 +453,105 @@ Full schema → [`docs/CONFIG_SCHEMA.md`](docs/CONFIG_SCHEMA.md)
 
 ## Testing
 
+**Test Suite Options:**
+
+| Suite | Purpose | Command |
+|---|---|---|
+| `component` | Unit-level component tests | `plugin-test --suite component` |
+| `stress` | High-volume performance tests | `plugin-test --suite stress --workers 8 --total 200` |
+| `integration` | End-to-end integration tests | `plugin-test --suite integration` |
+| `all` | Complete test coverage | `plugin-test --suite all` |
+
+**Quick Commands:**
+
 ```powershell
-# Component tests
+# Windows shortcut (no Activate.ps1 needed)
+.\run-main.cmd plugin-test --suite component
+
+# Component tests (unit-level)
 python -u src/main.py plugin-test --suite component
 
-# Stress test
+# Stress test (high throughput)
 python -u src/main.py plugin-test --suite stress --workers 8 --total 200
 
-# Web UI (foreground mode)
-python -u src/main.py web-user --cmd start -- --host 127.0.0.1 --port 8765 --block
+# All suites combined
+python -u src/main.py plugin-test --suite all
 
-# Dependency checks and repair
+# If tests fail, repair dependencies
 python -u src/main.py deps --cmd check
 python -u src/main.py deps --cmd repair
 
-# Both suites
-python -u src/main.py plugin-test --suite all
+# Then retry the test suite
 
-# Local integration and capability checks
+# Additional testing scripts
 python scripts/integration_test.py
 python scripts/udp_receive_test.py --protocol udp --host 127.0.0.1 --port 8080 --config Config.json
 python scripts/audit_driver_capabilities.py
 python scripts/services_smoke_check.py
 ```
 
+**Comprehensive Repeatable Pipeline:**
+
+```powershell
+# Full-scale reproducible validation (recommended default)
+python -u scripts/extreme_validation_pipeline.py --scale full
+
+# Lightweight CI smoke pass
+python -u scripts/extreme_validation_pipeline.py --scale smoke
+
+# Maximum workload, fail on any step
+python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
+```
+
+The runner writes a single aggregated JSON report to:
+
+`data/benchmarks/extreme_validation_report_latest.json`
+
+It also updates per-suite benchmark artifacts under `data/benchmarks/` (compare, stress, protocol matrix, CLI exhaustive report).
+
 ---
 
 ## Native And Rust Build
 
-```powershell
-python -u src/main.py native-check
-python -u src/main.py native-build
-python -u src/main.py rscore-build
-python -u src/main.py rscore-check
-python -u src/main.py core --set rscore --persist
-```
+**Backend Options:**
 
-If needed, switch back:
+| Backend | Type | Toolchain Required | Best For |
+|---|---|---|---|
+| `pycore` | Pure Python | Optional (C compiler) | Balanced, easy setup |
+| `rscore` | Rust + FFI | Required (Rust + MSVC/Clang) | Maximum performance |
+
+**Quick Start:**
+
+1. **Check what you have:**
+   ```powershell
+   python -u src/main.py native-check      # Check toolchain availability
+   ```
+
+2. **Build native bindings (for pycore):**
+   ```powershell
+   python -u src/main.py native-build      # Build C bindings
+   ```
+
+3. **Build Rust backend (optional, for rscore):**
+   ```powershell
+   python -u src/main.py rscore-build      # Build Rust core
+   python -u src/main.py rscore-check      # Verify installation
+   ```
+
+4. **Switch active core (persistent):**
+   ```powershell
+   # Use Rust core
+   python -u src/main.py core --set rscore --persist
+   
+   # Or switch back to Python core
+   python -u src/main.py core --set pycore --persist
+   ```
+
+**Windows Shortcuts (no Activate.ps1 needed):**
 
 ```powershell
-python -u src/main.py core --set pycore --persist
+.\run-main.cmd native-check
+.\run-main.cmd native-build
 ```
 
 ---

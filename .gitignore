@@ -33,6 +33,7 @@ venv.bak/
 
 # Data files (不要上傳實際資料)
 data/device_registry/
+src/data/device_registry/
 *.db
 *.sqlite
 *.sqlite3
@@ -43,6 +44,13 @@ cache/
 *.log
 *.pot
 *.pyc
+.md_translate_cache.json
+.md_translate_cache_restore.json
+
+# Local benchmark/runtime snapshots
+data/benchmarks/data/
+data/benchmarks/protocol_matrix_exhaustive_latest.json
+data/benchmarks/random_registration_protocol_e2e_latest.json
 
 # OS generated files
 .DS_Store

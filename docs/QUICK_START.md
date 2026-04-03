@@ -4,6 +4,28 @@ Use this page to quickly jump to the right document set.
 
 ---
 
+## Runtime First Start
+
+Use one of the following commands to start `main` directly:
+
+```powershell
+# Windows shortcut (no Activate.ps1 required)
+.\run-main.cmd run --once --quiet
+
+# Installed entrypoint
+os-node run --once --quiet
+```
+
+If native runtime libraries are missing on first run, startup will auto-attempt native build once and retry node creation.
+Manual fallback:
+
+```powershell
+os-node native-check
+os-node native-build
+```
+
+---
+
 ## I am..., I want...
 
 ### New Developer
@@ -87,5 +109,5 @@ Use this page to quickly jump to the right document set.
 - Documentation hub: [README.md](README.md)
 - Project root readme: [../README.md](../README.md)
 
-_Last updated: 2026-04-01 (local workspace)_
+_Last updated: 2026-04-02 (local workspace)_
 

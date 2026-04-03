@@ -48,7 +48,7 @@ def listen(config, callback):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, port))
             sock.settimeout(timeout)
-            os_log.log('ZGB', f'Zigbee UDP listen on {host}:{port}')
+            os_log.info('ZGB', 'LISTEN_START', f'Zigbee UDP listen on {host}:{port}', {'host': host, 'port': port})
             while True:
                 try:
                     data, addr = sock.recvfrom(65535)
@@ -57,7 +57,7 @@ def listen(config, callback):
                 if data and callable(callback):
                     callback(data, addr)
     except KeyboardInterrupt:
-        os_log.log('ZGB', 'Listener interrupted')
+        os_log.info('ZGB', 'LISTEN_STOP', 'Listener interrupted')
     except Exception as e:
         os_log.err('ZGB', 'LISTEN', e, {'host': host, 'port': port})
 

@@ -1,0 +1,163 @@
+name: Scripts Comprehensive CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: "Validation pipeline scale"
+        required: false
+        default: "smoke"
+        type: choice
+        options:
+          - smoke
+          - full
+          - extreme
+      random_rounds:
+        description: "Rounds for randomized protocol e2e"
+        required: false
+        default: "20"
+        type: string
+
+jobs:
+  scripts-test:
+    name: scripts-test (ubuntu-latest / py3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      OPENSYNAPTIC_CORE: pycore
+      PYTHONPATH: ${{ github.workspace }}/src
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/rscore
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure Rust environment
+        shell: bash
+        run: |
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          echo "RUSTUP_HOME=$HOME/.rustup" >> $GITHUB_ENV
+          echo "CARGO_HOME=$HOME/.cargo" >> $GITHUB_ENV
+          rustc --version
+          cargo --version
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          python -m pip install maturin cffi
+          python -m pip install -e ".[dev]"
+
+      - name: Build native C runtime libraries
+        shell: bash
+        run: |
+          timeout 10m python -u src/opensynaptic/utils/c/check_native_toolchain.py
+          timeout 20m python -u src/opensynaptic/utils/c/build_native.py
+
+      - name: Resolve workflow inputs
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.scale }}" ]]; then
+            echo "PIPELINE_SCALE=${{ github.event.inputs.scale }}" >> "$GITHUB_ENV"
+          else
+            echo "PIPELINE_SCALE=smoke" >> "$GITHUB_ENV"
+          fi
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.random_rounds }}" ]]; then
+            echo "RANDOM_ROUNDS=${{ github.event.inputs.random_rounds }}" >> "$GITHUB_ENV"
+          else
+            echo "RANDOM_ROUNDS=20" >> "$GITHUB_ENV"
+          fi
+
+      - name: Script - integration_test
+        shell: bash
+        run: |
+          timeout 15m python -u scripts/integration_test.py
+
+      - name: Script - udp_receive_test (once)
+        shell: bash
+        run: |
+          timeout 5m python -u scripts/udp_receive_test.py \
+            --protocol udp \
+            --host 127.0.0.1 \
+            --port 18080 \
+            --config Config.json \
+            --once \
+            --timeout 0.5
+
+      - name: Script - audit_driver_capabilities
+        shell: bash
+        run: |
+          timeout 15m python -u scripts/audit_driver_capabilities.py
+
+      - name: Script - cli_exhaustive_check
+        shell: bash
+        run: |
+          timeout 40m python -u scripts/cli_exhaustive_check.py
+
+      - name: Script - protocol_matrix_exhaustive
+        shell: bash
+        run: |
+          timeout 20m python -u scripts/protocol_matrix_exhaustive.py \
+            --host 127.0.0.1 \
+            --base-port 21080 \
+            --timeout 1.2 \
+            --output data/benchmarks/protocol_matrix_exhaustive_ci.json
+
+      - name: Script - random_registration_protocol_e2e
+        shell: bash
+        run: |
+          timeout 20m python -u scripts/random_registration_protocol_e2e.py \
+            --rounds "$RANDOM_ROUNDS" \
+            --seed 202611 \
+            --host 127.0.0.1 \
+            --listen-base-port 22080 \
+            --handshake-port 22888 \
+            --timeout 1.2 \
+            --backend pycore \
+            --output data/benchmarks/random_registration_protocol_e2e_ci.json
+
+      - name: Script - services_smoke_check
+        shell: bash
+        run: |
+          timeout 20m python -u scripts/services_smoke_check.py
+
+      - name: Script - port_forwarder_roundtrip_check
+        shell: bash
+        run: |
+          timeout 10m python -u scripts/port_forwarder_roundtrip_check.py
+
+      - name: Script - port_forwarder_matrix_sim_check
+        shell: bash
+        run: |
+          timeout 15m python -u scripts/port_forwarder_matrix_sim_check.py \
+            --json-out data/benchmarks/port_forwarder_matrix_sim_ci.json
+
+      - name: Script - extreme_validation_pipeline
+        shell: bash
+        run: |
+          timeout 120m python -u scripts/extreme_validation_pipeline.py \
+            --scale "$PIPELINE_SCALE" \
+            --strict \
+            --output data/benchmarks/extreme_validation_report_ci.json
+
+      - name: Upload script benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scripts-benchmarks-${{ github.run_id }}
+          path: |
+            data/benchmarks/*.json
+            data/benchmarks/**/*.json
+          if-no-files-found: warn

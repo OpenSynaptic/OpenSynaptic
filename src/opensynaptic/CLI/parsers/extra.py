@@ -101,6 +101,29 @@ def register(sub: argparse._SubParsersAction) -> None:
         help='Generate default localhost config and skip questions',
     )
 
+    # --- restart ---
+    restart = sub.add_parser(
+        'restart', aliases=['os-restart'],
+        help='Gracefully restart the run loop: stop current receiver, start new run process',
+    )
+    add_config_arg(restart)
+    restart.add_argument(
+        '--graceful', action='store_true', default=True,
+        help='Enable graceful shutdown (waits for pending operations; default: enabled)',
+    )
+    restart.add_argument(
+        '--timeout', type=float, default=10.0,
+        help='Timeout in seconds to wait for graceful shutdown (default: 10.0)',
+    )
+    restart.add_argument(
+        '--host', type=str, default=None,
+        help='Server host for ID assignment (optional, uses config if not specified)',
+    )
+    restart.add_argument(
+        '--port', type=int, default=None,
+        help='Server port for ID assignment (optional, uses config if not specified)',
+    )
+
     # --- help ---
     help_p = sub.add_parser(
         'help', aliases=['os-help'],

@@ -11,10 +11,26 @@
       "device_key": "request:{\"test\": \"verification\", \"timestamp\": \"final\"}",
       "state": "active",
       "offline_since": 0
+    },
+    "2": {
+      "meta": {
+        "addr": "('127.0.0.1', 54933)",
+        "device_meta": {
+          "device_id": "DEMO_NODE"
+        },
+        "device_id": "DEMO_NODE",
+        "ts": 1775114282
+      },
+      "ts": 1775114282,
+      "last_seen": 1775114282,
+      "lease_expires_at": 1777706282,
+      "device_key": "device_id:DEMO_NODE",
+      "state": "active",
+      "offline_since": 0
     }
   },
   "released": [],
-  "next_candidate": 2,
+  "next_candidate": 3,
   "lease_metrics": {
     "base_lease_seconds": 2592000,
     "effective_lease_seconds": 2592000,

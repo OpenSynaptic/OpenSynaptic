@@ -9,6 +9,7 @@ class CAN_Driver:
     def __init__(self, can_id=291):
         self.can_id = can_id
         self.MTU = 8
+        self._loopback_frames = []
 
     def segment_send(self, payload):
         if isinstance(payload, str):
@@ -22,4 +23,15 @@ class CAN_Driver:
             end = start + self.MTU
             chunk = payload[start:end]
             frames.append({'id': self.can_id, 'dlc': len(chunk), 'data': chunk})
+            self._loopback_frames.append(bytes(chunk))
         return frames
+
+    def receive(self):
+        """Return one frame payload in local loopback mode.
+
+        This keeps protocol listener contract intact when a real CAN backend
+        is not wired in the current runtime.
+        """
+        if not self._loopback_frames:
+            return None
+        return self._loopback_frames.pop(0)

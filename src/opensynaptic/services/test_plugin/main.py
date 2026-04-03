@@ -227,6 +227,219 @@ class TestPlugin:
                 flush=True,
             )
 
+        def _fmt_num(value, digits=4):
+            try:
+                return ('{:.%df}' % int(digits)).format(float(value or 0.0))
+            except Exception:
+                return '0.0000'
+
+        def _fit_cell(value, width):
+            text = str(value)
+            if len(text) <= width:
+                return text
+            if width <= 1:
+                return text[:width]
+            return text[:width - 1] + '~'
+
+        def _print_compact_table(headers, rows, max_col_width=22):
+            cols = [str(h) for h in (headers or [])]
+            if not cols:
+                return
+            normalized_rows = []
+            for row in (rows or []):
+                vals = []
+                for idx in range(len(cols)):
+                    vals.append(str(row[idx]) if idx < len(row) else '')
+                normalized_rows.append(vals)
+
+            widths = []
+            for idx, header in enumerate(cols):
+                w = len(header)
+                for row in normalized_rows:
+                    w = max(w, len(row[idx]))
+                widths.append(max(3, min(int(max_col_width), w)))
+
+            sep = '+' + '+'.join('-' * (w + 2) for w in widths) + '+'
+            print('  ' + sep, flush=True)
+            head = '| ' + ' | '.join(_fit_cell(cols[i], widths[i]).ljust(widths[i]) for i in range(len(cols))) + ' |'
+            print('  ' + head, flush=True)
+            print('  ' + sep, flush=True)
+            for row in normalized_rows:
+                line = '| ' + ' | '.join(_fit_cell(row[i], widths[i]).ljust(widths[i]) for i in range(len(cols))) + ' |'
+                print('  ' + line, flush=True)
+            print('  ' + sep, flush=True)
+
+        def _print_ascii_bars(title, pairs, width=24, digits=4):
+            clean = []
+            for label, value in (pairs or []):
+                try:
+                    num = max(0.0, float(value or 0.0))
+                except Exception:
+                    num = 0.0
+                clean.append((str(label), num))
+            if not clean:
+                return
+
+            max_val = max(v for _, v in clean)
+            if max_val <= 0.0:
+                max_val = 1.0
+
+            print('  {}'.format(title), flush=True)
+            for label, num in clean:
+                filled = int(round((num / max_val) * int(width)))
+                filled = max(0, min(int(width), filled))
+                bar = '#' * filled + '.' * (int(width) - filled)
+                print(
+                    '    {:<12} {:>10} |{}|'.format(
+                        label[:12],
+                        _fmt_num(num, digits),
+                        bar,
+                    ),
+                    flush=True,
+                )
+
+        def _print_stress_concise(summary, worst_topk_limit=3):
+            if not isinstance(summary, dict):
+                print('[stress:report] no summary payload', flush=True)
+                return
+
+            total = int(summary.get('total', 0) or 0)
+            ok = int(summary.get('ok', 0) or 0)
+            fail = int(summary.get('fail', 0) or 0)
+            success_rate = (float(ok) * 100.0 / float(total)) if total > 0 else 0.0
+
+            mode = str(summary.get('execution_mode', 'thread'))
+            proc = int(summary.get('processes', 1) or 1)
+            tpp = int(summary.get('threads_per_process', 1) or 1)
+            batch = int(summary.get('batch_size', 1) or 1)
+            chain = str(summary.get('chain_mode', 'core'))
+            runtime = summary.get('runtime_toggles', {}) if isinstance(summary.get('runtime_toggles', {}), dict) else {}
+
+            print('\n[stress:report]', flush=True)
+            _print_compact_table(
+                ['total', 'ok', 'fail', 'success%', 'pps', 'elapsed_s', 'backend', 'mode'],
+                [[
+                    total,
+                    ok,
+                    fail,
+                    _fmt_num(success_rate, 2),
+                    _fmt_num(summary.get('throughput_pps', 0.0), 1),
+                    _fmt_num(summary.get('elapsed_s', 0.0), 3),
+                    str(summary.get('core_backend', 'unknown')),
+                    mode,
+                ]],
+                max_col_width=14,
+            )
+
+            _print_compact_table(
+                ['chain', 'p', 'tpp', 'batch', 'pipeline', 'collector', 'gc_off'],
+                [[
+                    chain,
+                    proc,
+                    tpp,
+                    batch,
+                    str(runtime.get('pipeline_mode', 'n/a')),
+                    str(runtime.get('collector_mode', 'n/a')),
+                    str(bool(runtime.get('gc_disabled_during_run', False))),
+                ]],
+                max_col_width=14,
+            )
+
+            latency_pairs = [
+                ('avg', summary.get('avg_latency_ms', 0.0)),
+                ('p95', summary.get('p95_latency_ms', 0.0)),
+                ('p99', summary.get('p99_latency_ms', 0.0)),
+                ('p99.9', summary.get('p99_9_latency_ms', 0.0)),
+                ('p99.99', summary.get('p99_99_latency_ms', 0.0)),
+                ('max', summary.get('max_latency_ms', 0.0)),
+            ]
+            _print_compact_table(
+                ['metric', 'value_ms'],
+                [[name, _fmt_num(value, 4)] for name, value in latency_pairs],
+                max_col_width=12,
+            )
+            _print_ascii_bars('latency_bar(ms) scale=max', latency_pairs, width=24, digits=4)
+
+            stage = summary.get('stage_timing_ms', {}) if isinstance(summary.get('stage_timing_ms', {}), dict) else {}
+            if stage:
+                stage_rows = []
+                stage_avg_pairs = []
+                for name in ('standardize_ms', 'compress_ms', 'fuse_ms'):
+                    row = stage.get(name, {}) if isinstance(stage.get(name, {}), dict) else {}
+                    stage_rows.append([
+                        name,
+                        _fmt_num(row.get('avg', 0.0), 4),
+                        _fmt_num(row.get('p95', 0.0), 4),
+                        _fmt_num(row.get('p99', 0.0), 4),
+                        _fmt_num(row.get('max', 0.0), 4),
+                    ])
+                    stage_avg_pairs.append((name.replace('_ms', ''), row.get('avg', 0.0)))
+                _print_compact_table(
+                    ['stage', 'avg', 'p95', 'p99', 'max'],
+                    stage_rows,
+                    max_col_width=14,
+                )
+                _print_ascii_bars('stage_avg_bar(ms) scale=max', stage_avg_pairs, width=24, digits=4)
+
+            error_samples = summary.get('error_samples', [])
+            if isinstance(error_samples, list) and error_samples:
+                joined = '; '.join(str(x) for x in error_samples[:3])
+                print('  errors      {}{}'.format(joined, ' ...' if len(error_samples) > 3 else ''), flush=True)
+
+            topk = summary.get('worst_topk', [])
+            if isinstance(topk, list) and topk:
+                limit = max(1, int(worst_topk_limit or 1))
+                print('  worst_topk  showing {} of {}'.format(min(limit, len(topk)), len(topk)), flush=True)
+                top_rows = []
+                top_pairs = []
+                for idx, item in enumerate(topk[:limit], start=1):
+                    dominant = item.get('dominant_stage', {}) if isinstance(item.get('dominant_stage', {}), dict) else {}
+                    dom_name = str(dominant.get('name', 'n/a'))
+                    dom_ms = _fmt_num(dominant.get('latency_ms', 0.0), 4)
+                    total_ms = _fmt_num(item.get('total_latency_ms', 0.0), 4)
+                    top_rows.append([idx, total_ms, dom_name, dom_ms])
+                    top_pairs.append(('top{}'.format(idx), item.get('total_latency_ms', 0.0)))
+                _print_compact_table(['#', 'total_ms', 'dominant', 'dom_ms'], top_rows, max_col_width=12)
+                _print_ascii_bars('worst_topk_bar(ms) scale=max', top_pairs, width=24, digits=4)
+
+        def _emit_stress_report(summary, report_format='concise', worst_topk_limit=3):
+            style = str(report_format or 'concise').strip().lower()
+            if style not in {'concise', 'json', 'both'}:
+                style = 'concise'
+            if style in {'concise', 'both'}:
+                _print_stress_concise(summary, worst_topk_limit=worst_topk_limit)
+            if style in {'json', 'both'}:
+                print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+        def _print_auto_profile_concise(report):
+            if not isinstance(report, dict):
+                print('[stress:auto-profile] no report payload', flush=True)
+                return
+            best = report.get('best') if isinstance(report.get('best'), dict) else {}
+            final = report.get('final') if isinstance(report.get('final'), dict) else {}
+            final_agg = final.get('aggregate') if isinstance(final.get('aggregate'), dict) else {}
+            print('\n[stress:auto-profile]', flush=True)
+            print(
+                '  best        p={} tpp={} batch={} mode={} score_pps={}'.format(
+                    int(best.get('processes', 0) or 0),
+                    int(best.get('threads_per_process', 0) or 0),
+                    int(best.get('batch_size', 0) or 0),
+                    str(best.get('pipeline_mode', 'n/a')),
+                    _fmt_num(best.get('throughput_pps', 0.0), 1),
+                ),
+                flush=True,
+            )
+            print(
+                '  final       ok={} fail={} pps={} avg_ms={} p99_ms={}'.format(
+                    int(final_agg.get('ok', 0) or 0),
+                    int(final_agg.get('fail', 0) or 0),
+                    _fmt_num(final_agg.get('throughput_pps_avg', 0.0), 1),
+                    _fmt_num(final_agg.get('avg_latency_ms_avg', 0.0), 4),
+                    _fmt_num(final_agg.get('p99_latency_ms_avg', 0.0), 4),
+                ),
+                flush=True,
+            )
+
         def _component(argv):
             import argparse
             p = argparse.ArgumentParser(prog='test_plugin component')
@@ -277,6 +490,10 @@ class TestPlugin:
                            help='Candidate batch sizes (CSV)')
             p.add_argument('--json-out', dest='json_out', default=None,
                            help='Optional output path for stress/auto-profile JSON report')
+            p.add_argument('--report-format', choices=['concise', 'json', 'both'], default='concise',
+                           help='Console report style (default: concise)')
+            p.add_argument('--worst-topk-display', type=int, default=3,
+                           help='Number of worst_topk entries shown in concise report')
             ns = p.parse_args(argv)
 
             try:
@@ -309,7 +526,10 @@ class TestPlugin:
                         plugin='test_plugin', suite='stress-auto-profile',
                         ok=final_agg.get('ok', 0), fail=final_agg.get('fail', 0),
                     )
-                    print(json.dumps(report, indent=2, ensure_ascii=False))
+                    if ns.report_format in {'concise', 'both'}:
+                        _print_auto_profile_concise(report)
+                    if ns.report_format in {'json', 'both'}:
+                        print(json.dumps(report, indent=2, ensure_ascii=False))
                     return 0 if int(final_agg.get('fail', 0) or 0) == 0 else 1
 
                 summary, fail = self.run_stress(
@@ -317,7 +537,10 @@ class TestPlugin:
                 )
                 _write_json_out(ns.json_out, summary)
                 _print_stress_brief(summary)
-                return _log_and_output('stress', summary.get('ok', 0), fail, summary)
+                os_log.log_with_const('info', LogMsg.PLUGIN_TEST_RESULT,
+                                      plugin='test_plugin', suite='stress', ok=summary.get('ok', 0), fail=fail)
+                _emit_stress_report(summary, report_format=ns.report_format, worst_topk_limit=ns.worst_topk_display)
+                return 0 if fail == 0 else 1
             except KeyboardInterrupt:
                 print('\n[stress] aborted by user', file=sys.stderr, flush=True)
                 return 130
@@ -360,6 +583,8 @@ class TestPlugin:
                            help='Warmup runs per backend before measured runs')
             p.add_argument('--json-out', dest='json_out', default=None,
                            help='Optional output path to save comparison JSON')
+            p.add_argument('--report-format', choices=['concise', 'json', 'both'], default='concise',
+                           help='Console report style (default: concise)')
             _add_stress_common_args(p)
             ns = p.parse_args(argv)
 
@@ -461,8 +686,8 @@ class TestPlugin:
                 pass
 
             _write_json_out(ns.json_out, results)
-
-            print(json.dumps(results, indent=2, ensure_ascii=False))
+            if ns.report_format in {'json', 'both'}:
+                print(json.dumps(results, indent=2, ensure_ascii=False))
             any_fail = any(v.get('fail', 0) > 0 or 'error' in v for v in results.values())
             return 1 if any_fail else 0
 
@@ -493,6 +718,10 @@ class TestPlugin:
             p.add_argument('--verbosity', type=int, default=1)
             p.add_argument('--json-out', dest='json_out', default=None,
                            help='Optional path to write the full-load report JSON')
+            p.add_argument('--report-format', choices=['concise', 'json', 'both'], default='concise',
+                           help='Console report style (default: concise)')
+            p.add_argument('--worst-topk-display', type=int, default=3,
+                           help='Number of worst_topk entries shown in concise report')
             ns = p.parse_args(argv)
 
             report: dict = {'mode': 'full_load'}
@@ -538,7 +767,21 @@ class TestPlugin:
                 return 130
 
             _write_json_out(ns.json_out, report)
-            return _log_and_output('full_load', summary.get('ok', 0), report['overall_fail'], report)
+            os_log.log_with_const('info', LogMsg.PLUGIN_TEST_RESULT,
+                                  plugin='test_plugin', suite='full_load', ok=summary.get('ok', 0), fail=report['overall_fail'])
+            if ns.report_format in {'concise', 'both'}:
+                print('\n[full_load:report]', flush=True)
+                if ns.with_component:
+                    comp = report.get('component', {}) if isinstance(report.get('component', {}), dict) else {}
+                    print('  component   ok={} fail={}'.format(int(comp.get('ok', 0) or 0), int(comp.get('fail', 0) or 0)), flush=True)
+                _emit_stress_report(
+                    report.get('stress', {}),
+                    report_format='concise',
+                    worst_topk_limit=ns.worst_topk_display,
+                )
+            if ns.report_format in {'json', 'both'}:
+                print(json.dumps(report, indent=2, ensure_ascii=False))
+            return 0 if report['overall_fail'] == 0 else 1
 
         def _integration(argv):
             """Run integration tests."""
@@ -711,18 +954,18 @@ class TestPlugin:
         
         if use_processes:
             # 使用进程
-            from concurrent.futures import ProcessPoolExecutor
+            from concurrent.futures import ProcessPoolExecutor, as_completed
             from opensynaptic.services.test_plugin.stress_tests import _init_worker_ignore_sigint, _run_test_class_subprocess
             
             with ProcessPoolExecutor(max_workers=num_workers, initializer=_init_worker_ignore_sigint) as pool:
                 futures = {pool.submit(_run_test_class_subprocess, cls.__name__, self._config_path): cls.__name__ 
                           for cls in class_map}
-                for future in __import__('concurrent.futures').as_completed(futures):
+                for future in as_completed(futures):
                     result = future.result()
                     raw_rows.append((result['cls'], result['ok'], result['fail'], result.get('output', '')))
         else:
             # 使用线程
-            from concurrent.futures import ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             import io
             
             def _run_cls_thread(cls, tests):
@@ -737,7 +980,7 @@ class TestPlugin:
             with ThreadPoolExecutor(max_workers=num_workers) as pool:
                 futures = {pool.submit(_run_cls_thread, cls, tests): cls.__name__ 
                           for cls, tests in class_map.items()}
-                for future in __import__('concurrent.futures').as_completed(futures):
+                for future in as_completed(futures):
                     raw_rows.append(future.result())
         
         total_ok = sum(r[1] for r in raw_rows)

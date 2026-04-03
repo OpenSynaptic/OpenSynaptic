@@ -1,5 +1,6 @@
 from opensynaptic.core.common.base import BaseOSHandshakeManager, NativeLibraryUnavailable
 from opensynaptic.core.rscore._ffi_proxy import RsFFIProxyBase
+import json
 import struct
 import time
 
@@ -124,6 +125,8 @@ class OSHandshakeManager(BaseOSHandshakeManager, RsFFIProxyBase):
         }
 
     def _handle_ctrl(self, cmd, packet, addr):
+        if cmd == CMD.ID_REQUEST:
+            return self._on_id_request(packet, addr)
         if cmd == CMD.HANDSHAKE_ACK:
             return self._on_ack(packet, addr)
         if cmd == CMD.HANDSHAKE_NACK:
@@ -156,6 +159,58 @@ class OSHandshakeManager(BaseOSHandshakeManager, RsFFIProxyBase):
     def _on_ack(self, packet, addr):
         seq = self._seq_from_packet(packet)
         return {'type': 'CTRL', 'cmd': CMD.HANDSHAKE_ACK, 'result': {'status': 'ACK_RECEIVED', 'seq': seq}, 'response': None}
+
+    def _on_id_request(self, packet, addr):
+        seq = self._seq_from_packet(packet)
+        meta = {}
+        if packet and len(packet) > 3:
+            try:
+                raw_meta = packet[3:].decode('utf-8', errors='ignore')
+                if raw_meta.strip():
+                    meta = json.loads(raw_meta)
+            except Exception:
+                meta = {}
+
+        assigned_id = None
+        allocator = getattr(self, 'id_allocator', None)
+        if allocator is not None:
+            try:
+                assigned_id = allocator.allocate_id(
+                    meta={
+                        'addr': str(addr) if addr else 'unknown',
+                        'device_meta': meta,
+                        'device_id': meta.get('device_id') if isinstance(meta, dict) else None,
+                        'ts': int(time.time()),
+                    }
+                )
+            except Exception:
+                assigned_id = None
+
+        if assigned_id in (None, 0):
+            parser = getattr(self, 'parser', None)
+            fallback_id = getattr(parser, 'local_id', None) if parser is not None else None
+            try:
+                fallback_id = int(fallback_id)
+            except Exception:
+                fallback_id = None
+            if isinstance(fallback_id, int) and 0 < fallback_id < 0xFFFFFFFF:
+                assigned_id = fallback_id
+
+        if assigned_id and int(assigned_id) > 0:
+            aid = int(assigned_id)
+            return {
+                'type': 'CTRL',
+                'cmd': CMD.ID_REQUEST,
+                'result': {'status': 'ASSIGNED', 'assigned_id': aid, 'addr': addr},
+                'response': self._build_id_assign(seq, aid),
+            }
+
+        return {
+            'type': 'CTRL',
+            'cmd': CMD.ID_REQUEST,
+            'result': {'status': 'REJECTED', 'reason': 'NO_ALLOCATOR'},
+            'response': self._build_nack(seq=seq, reason='NO_ALLOCATOR'),
+        }
 
     def _on_nack(self, packet, addr):
         seq = self._seq_from_packet(packet)
@@ -211,9 +266,17 @@ class OSHandshakeManager(BaseOSHandshakeManager, RsFFIProxyBase):
         seq = self._next_seq()
         return struct.pack('>BH', CMD.PING, seq)
 
+    def build_id_request(self, device_meta=None):
+        seq = self._next_seq()
+        payload = json.dumps(device_meta or {}, ensure_ascii=False).encode('utf-8')
+        return struct.pack('>BH', CMD.ID_REQUEST, seq) + payload
+
     def build_time_request(self):
         seq = self._next_seq()
         return struct.pack('>BH', CMD.TIME_REQUEST, seq)
+
+    def _build_id_assign(self, seq=0, assigned_id=0):
+        return struct.pack('>BHI', CMD.ID_ASSIGN, int(seq) & 0xFFFF, int(assigned_id or 0))
 
     def _build_ack(self, seq=0):
         return struct.pack('>BH', CMD.HANDSHAKE_ACK, int(seq) & 0xFFFF)
@@ -226,6 +289,50 @@ class OSHandshakeManager(BaseOSHandshakeManager, RsFFIProxyBase):
 
     def _build_time_response(self, seq=0, server_time=0):
         return struct.pack('>BHQ', CMD.TIME_RESPONSE, int(seq) & 0xFFFF, int(server_time or 0))
+
+    def request_id_via_transport(self, transport_send_fn, transport_recv_fn, device_meta=None, timeout=5.0):
+        req_packet = self.build_id_request(device_meta)
+        try:
+            transport_send_fn(req_packet)
+        except Exception:
+            return None
+
+        start = time.time()
+        while time.time() - start < timeout:
+            wait_s = min(0.5, max(0.0, timeout - (time.time() - start)))
+            try:
+                resp = transport_recv_fn(timeout=wait_s)
+                if resp and len(resp) >= 1:
+                    result = self.classify_and_dispatch(resp)
+                    if result.get('cmd') == CMD.ID_ASSIGN:
+                        return (result.get('result') or {}).get('assigned_id')
+                    if result.get('cmd') == CMD.HANDSHAKE_NACK:
+                        return None
+            except Exception:
+                time.sleep(0.05)
+        return None
+
+    def request_time_via_transport(self, transport_send_fn, transport_recv_fn, timeout=3.0):
+        req_packet = self.build_time_request()
+        try:
+            transport_send_fn(req_packet)
+        except Exception:
+            return None
+
+        start = time.time()
+        while time.time() - start < timeout:
+            wait_s = min(0.5, max(0.0, timeout - (time.time() - start)))
+            try:
+                resp = transport_recv_fn(timeout=wait_s)
+                if resp and len(resp) >= 1:
+                    result = self.classify_and_dispatch(resp)
+                    if result.get('cmd') == CMD.TIME_RESPONSE:
+                        return (result.get('result') or {}).get('server_time')
+                    if result.get('cmd') == CMD.HANDSHAKE_NACK:
+                        return None
+            except Exception:
+                time.sleep(0.05)
+        return None
 
     def get_session_key(self, aid):
         session = self._secure_sessions.get(str(aid), {})

@@ -1,6 +1,6 @@
 # OpenSynaptic Documentation Index
 
-**Last updated**: 2026-04-01 (local workspace)
+**Last updated**: 2026-04-02 (local workspace)
 
 ---
 
@@ -60,6 +60,8 @@ Read in this order:
 - [guides/DISPLAY_API_QUICKSTART.md](guides/DISPLAY_API_QUICKSTART.md)
 - [guides/DISPLAY_API_README.md](guides/DISPLAY_API_README.md)
 - [guides/DISPLAY_API_INDEX.md](guides/DISPLAY_API_INDEX.md)
+- [guides/RESTART_COMMAND_GUIDE.md](guides/RESTART_COMMAND_GUIDE.md)
+- [guides/QUICK_REFERENCE.md](guides/QUICK_REFERENCE.md)
 - [guides/WEB_COMMANDS_REFERENCE.md](guides/WEB_COMMANDS_REFERENCE.md)
 - [guides/TUI_QUICK_REFERENCE.md](guides/TUI_QUICK_REFERENCE.md)
 - [guides/REFACTORING_QUICK_REFERENCE.md](guides/REFACTORING_QUICK_REFERENCE.md)
@@ -68,12 +70,22 @@ Read in this order:
 ### Reports and Logs
 - [reports/CHANGELOG.md](reports/CHANGELOG.md)
 - [reports/CHANGELOG_2026M03_24.md](reports/CHANGELOG_2026M03_24.md)
+- [reports/DOC_FRESHNESS_AUDIT_2026-04-02.md](reports/DOC_FRESHNESS_AUDIT_2026-04-02.md)
+- [reports/root/BUILD_FIX_SUMMARY.md](reports/root/BUILD_FIX_SUMMARY.md)
+- [reports/root/CFFI_FINAL_FIX.md](reports/root/CFFI_FINAL_FIX.md)
+- [reports/root/FINAL_COMPLETION_REPORT.md](reports/root/FINAL_COMPLETION_REPORT.md)
+- [reports/root/FIX_CFFI_MISMATCH.md](reports/root/FIX_CFFI_MISMATCH.md)
 - [reports/FINAL_PERFORMANCE_REPORT.md](reports/FINAL_PERFORMANCE_REPORT.md)
 - [reports/PERFORMANCE_OPTIMIZATION_REPORT.md](reports/PERFORMANCE_OPTIMIZATION_REPORT.md)
 - [reports/BUG_FIX_REPORT.md](reports/BUG_FIX_REPORT.md)
 - [reports/CODE_CHANGES_SUMMARY.md](reports/CODE_CHANGES_SUMMARY.md)
 - [reports/COMPREHENSIVE_COMPLETION_SUMMARY.md](reports/COMPREHENSIVE_COMPLETION_SUMMARY.md)
 - [reports/IMPLEMENTATION_COMPLETE.md](reports/IMPLEMENTATION_COMPLETE.md)
+
+### Releases
+- [releases/RELEASE_CHECKLIST.md](releases/RELEASE_CHECKLIST.md)
+- [releases/RELEASE_1_1_0_RC1_COMPLETE.md](releases/RELEASE_1_1_0_RC1_COMPLETE.md)
+- [releases/v1.1.0.md](releases/v1.1.0.md)
 
 ### Internal
 - [internal/AGENTS.md](internal/AGENTS.md)
@@ -104,12 +116,12 @@ Read in this order:
 | `docs/api/` | 2 |
 | `docs/features/` | 5 |
 | `docs/plugins/` | 10 |
-| `docs/guides/` | 10 |
-| `docs/reports/` | 31 |
+| `docs/guides/` | 11 |
+| `docs/reports/` | 36 |
 | `docs/internal/` | 12 |
-| `docs/releases/` | 8 |
+| `docs/releases/` | 11 |
 
-Total markdown files in `docs/`: **98**
+Total markdown files in `docs/`: **107**
 
 ---
 

@@ -1155,6 +1155,7 @@ class RsOSVisualFusionEngine:
         # Rust-side fusion templates survive node re-instantiation.
         self._ctx_id = int(self._derive_ctx_id(args, kwargs))
         self._registry_root = self._resolve_registry_root(args, kwargs)
+        self._decode_engine = None
         self.local_id = 0xFFFFFFFE
         self.local_id_str = str(self.local_id)
         self._single_route_ids = (self.local_id,)
@@ -1249,7 +1250,13 @@ class RsOSVisualFusionEngine:
                     data = json.load(fh)
                 if isinstance(data, dict):
                     templates = data.get('templates', {}) if isinstance(data.get('templates', {}), dict) else {}
-                    return {'aid': str(int(aid)), 'templates': templates}
+                    normalized = {}
+                    for tid, tpl in templates.items():
+                        key = str(tid)
+                        if key.isdigit():
+                            key = str(int(key)).zfill(2)
+                        normalized[key] = tpl
+                    return {'aid': str(int(aid)), 'templates': normalized}
             except Exception:
                 pass
         return {'aid': str(int(aid)), 'templates': {}}
@@ -1272,8 +1279,102 @@ class RsOSVisualFusionEngine:
         vals_b64 = [base64.b64encode(v).decode('ascii') for v in (vals or [])]
         data = self._load_registry_disk(int(source_aid))
         templates = data.setdefault('templates', {})
-        templates[str(int(tid))] = {'sig': sig_str, 'last_vals_bin': vals_b64}
+        tid_key = str(int(tid)).zfill(2)
+        templates[tid_key] = {'sig': sig_str, 'last_vals_bin': vals_b64}
+        if tid_key != str(int(tid)):
+            templates.pop(str(int(tid)), None)
         self._save_registry_disk(int(source_aid), data)
+
+    def _decode_with_registry_fallback(self, packet: bytes, meta: dict):
+        if not isinstance(meta, dict):
+            return None
+        try:
+            base_cmd = int(meta.get('base_cmd', meta.get('cmd', 0)) or 0)
+        except Exception:
+            return None
+        if base_cmd not in (63, 127, 170):
+            return None
+        if bool(meta.get('secure')):
+            return None
+
+        if len(packet) < 5:
+            return None
+        route_count = int(packet[1]) if len(packet) > 1 else 0
+        tid_pos = 2 + route_count * 4
+        if len(packet) < tid_pos + 10:
+            return None
+
+        tid_num = int(packet[tid_pos])
+        tid_key = str(tid_num).zfill(2)
+        src_aid = int(meta.get('source_aid', 0) or 0)
+        ts_raw = packet[tid_pos + 1:tid_pos + 7]
+        ts_enc = base64.urlsafe_b64encode(ts_raw).decode('ascii').rstrip('=')
+        body = bytes(packet[tid_pos + 7:-3])
+        crc8_recv = int(packet[-3])
+
+        fallback_meta = dict(meta)
+        fallback_meta['tid'] = tid_key
+        try:
+            fallback_meta['crc8_ok'] = int(rs_crc8(body)) == crc8_recv
+        except Exception:
+            fallback_meta['crc8_ok'] = False
+        if not bool(fallback_meta.get('crc8_ok')):
+            return {'error': 'CRC8 mismatch', '__packet_meta__': fallback_meta}
+
+        if self._decode_engine is None:
+            from opensynaptic.core.rscore.solidity import OpenSynapticEngine as _RsEngine
+            self._decode_engine = _RsEngine()
+
+        if base_cmd == 63:
+            raw_str = body.decode('utf-8', errors='ignore')
+            if raw_str:
+                self._persist_full_payload(raw_str, src_aid, tid_num)
+            decoded = self._decode_engine.decompress(raw_str)
+            if isinstance(decoded, dict):
+                decoded['__packet_meta__'] = fallback_meta
+            return decoded
+
+        data = self._load_registry_disk(src_aid)
+        templates = data.get('templates', {}) if isinstance(data.get('templates', {}), dict) else {}
+        tpl = templates.get(tid_key)
+        if not isinstance(tpl, dict):
+            err_hex = '0xAA' if base_cmd == 170 else '0x7F'
+            return {'error': f'Template {tid_key} missing for {err_hex}', '__packet_meta__': fallback_meta}
+
+        sig = str(tpl.get('sig', ''))
+        vals_bin = []
+        for item in tpl.get('last_vals_bin', []) or []:
+            try:
+                vals_bin.append(base64.b64decode(item))
+            except Exception:
+                vals_bin.append(b'')
+
+        if base_cmd == 170:
+            mask_len = (len(vals_bin) + 7) // 8
+            mask = int.from_bytes(body[:mask_len], 'big') if mask_len > 0 else 0
+            off = mask_len
+            for idx in range(len(vals_bin)):
+                if (mask >> idx) & 1:
+                    if off >= len(body):
+                        return {'error': 'Malformed DIFF payload', '__packet_meta__': fallback_meta}
+                    v_len = int(body[off])
+                    nxt = off + 1 + v_len
+                    if nxt > len(body):
+                        return {'error': 'Malformed DIFF payload', '__packet_meta__': fallback_meta}
+                    vals_bin[idx] = body[off + 1:nxt]
+                    off = nxt
+            tpl['last_vals_bin'] = [base64.b64encode(v).decode('ascii') for v in vals_bin]
+            templates[tid_key] = tpl
+            self._save_registry_disk(src_aid, data)
+
+        payload = sig.replace('{TS}', ts_enc)
+        for value in vals_bin:
+            payload = payload.replace('\x01', value.decode('utf-8', errors='ignore'), 1)
+
+        decoded = self._decode_engine.decompress(payload)
+        if isinstance(decoded, dict):
+            decoded['__packet_meta__'] = fallback_meta
+        return decoded
 
     @staticmethod
     def _packet_tid_and_source(packet: bytes):
@@ -1347,6 +1448,14 @@ class RsOSVisualFusionEngine:
         ).encode('utf-8')
         out_raw = _run_json_abi(self._dec_json_fn, payload)
         decoded = json.loads(out_raw.decode('utf-8'))
+        if isinstance(decoded, dict) and str(decoded.get('error', '')) == 'fusion_receive_apply_failed':
+            try:
+                hdr = parse_packet_header(raw) or _header_fallback(raw)
+            except Exception:
+                hdr = _header_fallback(raw)
+            recovered = self._decode_with_registry_fallback(raw, hdr)
+            if recovered is not None:
+                decoded = recovered
         if isinstance(decoded, dict):
             meta = decoded.get('__packet_meta__', {}) if isinstance(decoded.get('__packet_meta__', {}), dict) else {}
             if int(meta.get('base_cmd', meta.get('cmd', 0)) or 0) == 63:

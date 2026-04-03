@@ -53,6 +53,35 @@ class OSLogger:
         self.logger.info(out)
         return out
 
+    def log(self, mid, msg, ctx=None, level=None):
+        """Compatibility shim for legacy call-sites using os_log.log(...).
+
+        Supported forms:
+        - log('L4', 'message')
+        - log('INFO', 'message')
+        - log('L4', 'message', {'k': 'v'}, level='warning')
+        """
+        mid_text = str(mid)
+        inferred_level = str(level or '').strip().lower()
+        if not inferred_level:
+            low_mid = mid_text.strip().lower()
+            if low_mid in ('debug', 'info', 'warning', 'error', 'critical'):
+                inferred_level = low_mid
+                mid_text = 'LOG'
+            else:
+                inferred_level = 'info'
+
+        out = self._format(mid_text, 'LOG', msg, ctx)
+        if inferred_level == 'debug':
+            self.logger.debug(out)
+        elif inferred_level == 'warning':
+            self.logger.warning(out)
+        elif inferred_level in ('error', 'critical'):
+            self.logger.error(out)
+        else:
+            self.logger.info(out)
+        return out
+
     def err(self, mid, eid, exc, ctx=None):
         out = self._format(mid, eid, exc, ctx)
         out['error_type'] = type(exc).__name__

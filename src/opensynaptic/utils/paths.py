@@ -1,31 +1,128 @@
 import os
 import sys
 import json
+import time
+import tempfile
+import threading
 from pathlib import Path
 from opensynaptic.utils.logger import os_log
 from opensynaptic.utils.constants import LogMsg
 
+_WRITE_LOCKS = {}
+_WRITE_LOCKS_GUARD = threading.Lock()
+
+
+def _get_write_lock(lock_path):
+    key = os.path.normcase(os.path.abspath(lock_path))
+    with _WRITE_LOCKS_GUARD:
+        lock = _WRITE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _WRITE_LOCKS[key] = lock
+        return lock
+
 def read_json(path):
     if not path or not os.path.exists(path):
         return {}
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        os_log.err('PTH', 'IO', e, {'path': path})
-        return {}
+    last_exc = None
+    for attempt in range(3):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except PermissionError as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(0.01 * (attempt + 1))
+                continue
+            break
+        except json.JSONDecodeError as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(0.01 * (attempt + 1))
+                continue
+            break
+        except Exception as e:
+            os_log.err('PTH', 'IO', e, {'path': path})
+            return {}
+    if last_exc is not None:
+        os_log.err('PTH', 'IO', last_exc, {'path': path})
+    return {}
 
 def write_json(path, obj, indent=4):
     if not path:
         return False
+    temp_path = None
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(obj, f, indent=indent, ensure_ascii=False)
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = os.path.normcase(os.path.abspath(str(target) + '.lock'))
+        with _get_write_lock(lock_path):
+            with open(lock_path, 'a+b') as lock_fp:
+                file_locked = False
+                if os.name == 'nt':
+                    import msvcrt
+                    lock_fp.seek(0, os.SEEK_END)
+                    if lock_fp.tell() == 0:
+                        lock_fp.write(b'0')
+                        lock_fp.flush()
+                    lock_fp.seek(0)
+                    for attempt in range(200):
+                        try:
+                            msvcrt.locking(lock_fp.fileno(), msvcrt.LK_NBLCK, 1)
+                            file_locked = True
+                            break
+                        except OSError as e:
+                            win_err = getattr(e, 'winerror', None)
+                            errno = getattr(e, 'errno', None)
+                            if (win_err in (33, 36) or errno in (13, 36)) and attempt < 199:
+                                time.sleep(0.005 * (attempt + 1))
+                                continue
+                            raise
+                    if not file_locked:
+                        raise OSError('failed to acquire lock for {}'.format(lock_path))
+                else:
+                    import fcntl
+                    fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX)
+                    file_locked = True
+                try:
+                    fd, temp_path = tempfile.mkstemp(prefix=f'.{target.name}.', suffix='.tmp', dir=str(target.parent))
+                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                        json.dump(obj, f, indent=indent, ensure_ascii=False)
+                        f.flush()
+                        try:
+                            os.fsync(f.fileno())
+                        except OSError:
+                            pass
+                    for attempt in range(20):
+                        try:
+                            os.replace(temp_path, str(target))
+                            temp_path = None
+                            break
+                        except PermissionError:
+                            if attempt >= 19:
+                                raise
+                            time.sleep(0.005 * (attempt + 1))
+                        except OSError as e:
+                            if getattr(e, 'winerror', None) in (5, 32) and attempt < 19:
+                                time.sleep(0.005 * (attempt + 1))
+                                continue
+                            raise
+                finally:
+                    if os.name == 'nt' and file_locked:
+                        lock_fp.seek(0)
+                        msvcrt.locking(lock_fp.fileno(), msvcrt.LK_UNLCK, 1)
+                    elif os.name != 'nt' and file_locked:
+                        fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
         return True
     except Exception as e:
         os_log.err('PTH', 'IO', e, {'path': path})
         return False
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
 
 class OSContext:
 

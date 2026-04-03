@@ -60,7 +60,7 @@ def listen(config, callback):
     
     def on_connect(client, userdata, flags, rc):
         if rc == 0:
-            os_log.log('MQTT', f'Connected to {host}:{port}, subscribing to {topic}')
+            os_log.info('MQTT', 'CONNECT', f'Connected to {host}:{port}, subscribing to {topic}', {'host': host, 'port': port, 'topic': topic})
             client.subscribe(topic)
         else:
             os_log.err('MQTT', 'LISTEN', f'Connection failed with code {rc}', {})
@@ -70,11 +70,11 @@ def listen(config, callback):
     client.on_connect = on_connect
     
     try:
-        os_log.log('MQTT', f'MQTT listening on {host}:{port}')
+        os_log.info('MQTT', 'LISTEN_START', f'MQTT listening on {host}:{port}', {'host': host, 'port': port, 'topic': topic})
         client.connect(host, port, 60)
         client.loop_forever()
     except KeyboardInterrupt:
-        os_log.log('MQTT', 'Listener interrupted')
+        os_log.info('MQTT', 'LISTEN_STOP', 'Listener interrupted')
     except Exception as e:
         os_log.err('MQTT', 'LISTEN', e, {'host': host, 'port': port, 'topic': topic})
     finally:

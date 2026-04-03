@@ -30,6 +30,7 @@ Usage:
 
 import threading
 import json
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
@@ -319,7 +320,68 @@ class PortForwarder:
     
     def _load_rules_from_config(self):
         """Load rules from configuration"""
-        # ...existing code...
+        with self._lock:
+            self.rule_sets = {}
+
+            cfg_sets = self.config.get('rule_sets', []) if isinstance(self.config, dict) else []
+            if isinstance(cfg_sets, list):
+                for item in cfg_sets:
+                    try:
+                        if isinstance(item, dict):
+                            rs = ForwardingRuleSet.from_dict(item)
+                            self.rule_sets[rs.name] = rs
+                    except Exception as exc:
+                        os_log.err('PORT_FWD', 'LOAD_RULESET_CFG', exc, {'item': str(item)[:200]})
+
+            # Persisted file has higher precedence than inline config rule list.
+            if bool(self.config.get('persist_rules', True)):
+                path = self._rules_file_path()
+                payload = read_json(str(path))
+                if isinstance(payload, dict):
+                    file_sets = payload.get('rule_sets', [])
+                    if isinstance(file_sets, list):
+                        for item in file_sets:
+                            try:
+                                if isinstance(item, dict):
+                                    rs = ForwardingRuleSet.from_dict(item)
+                                    self.rule_sets[rs.name] = rs
+                            except Exception as exc:
+                                os_log.err('PORT_FWD', 'LOAD_RULESET_FILE', exc, {'item': str(item)[:200]})
+
+            if self.default_rule_set not in self.rule_sets:
+                self.rule_sets[self.default_rule_set] = ForwardingRuleSet(
+                    name=self.default_rule_set,
+                    description='Default forwarding rules',
+                    enabled=True,
+                    rules=[],
+                )
+
+    def _rules_file_path(self) -> Path:
+        """Resolve rules persistence path from plugin config."""
+        raw = str((self.config or {}).get('rules_file', '') or '').strip()
+        if not raw:
+            raw = self.get_required_config().get('rules_file', 'data/port_forwarder_rules.json')
+
+        p = Path(raw)
+        if p.is_absolute():
+            return p
+        return Path(ctx.root) / p
+
+    def _save_rules_to_file(self) -> bool:
+        """Persist rule sets when persistence is enabled."""
+        if not bool((self.config or {}).get('persist_rules', True)):
+            return True
+
+        with self._lock:
+            path = self._rules_file_path()
+            payload = {
+                'updated_at': int(time.time()),
+                'rule_sets': [rs.to_dict() for rs in self.rule_sets.values()],
+            }
+            ok = write_json(str(path), payload)
+            if not ok:
+                os_log.err('PORT_FWD', 'SAVE_RULESET_FILE', RuntimeError('write_json failed'), {'path': str(path)})
+            return bool(ok)
     
     # ════════════════════════════════════════════════════════════════════════
     # 3. Core Hijacking Logic
@@ -363,7 +425,7 @@ class PortForwarder:
                             self.stats['rules_applied'][rule_key] = \
                                 self.stats['rules_applied'].get(rule_key, 0) + 1
                             
-                            os_log.log('DEBUG', f'Applied rule: {rule_key} → {rule.to_host}:{rule.to_port}')
+                            os_log.info('PORT_FWD', 'RULE_APPLIED', f'Applied rule: {rule_key} → {rule.to_host}:{rule.to_port}', {'rule': rule_key, 'to_host': rule.to_host, 'to_port': rule.to_port})
                             break
                 
                 # Dispatch using original method
