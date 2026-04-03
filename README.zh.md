@@ -548,15 +548,15 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 
 ## 添加传输器
 
-见 [docs/TRANSPORTER_PLUGIN.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）。
+见 [TRANSPORTER_PLUGIN](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）。
 
 ---
 
 ## API 参考
 
-见 [docs/API.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-API)（英文）。
+见 [API](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-API)（英文）。
 
-核心 API 和加载器参考 → [docs/CORE_API.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CORE_API)（英文）
+核心 API 和加载器参考 → [CORE_API](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CORE_API)（英文）
 
 ---
 
@@ -564,13 +564,13 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 
 **所有文档**（均有中英文版本）：
 
-- 仓库文档地图：[docs/INDEX.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)
-- 从这里开始：[README.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki)
-- 架构详解：[ARCHITECTURE.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ARCHITECTURE)
-- 配置架构：[docs/CONFIG_SCHEMA.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)（英文）
-- 传输器/插件扩展：[docs/TRANSPORTER_PLUGIN.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）
-- ID 租赁系统：[ID_LEASE_SYSTEM.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_SYSTEM)（英文）
-- 国际化支持：[docs/I18N.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-I18N)（英文）
+- 仓库文档地图：[Navigation-EN](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)
+- 从这里开始：[Wiki 首页](https://github.com/OpenSynaptic/OpenSynaptic/wiki)
+- 架构详解：[ARCHITECTURE](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ARCHITECTURE)
+- 配置架构：[CONFIG_SCHEMA](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)（英文）
+- 传输器/插件扩展：[TRANSPORTER_PLUGIN](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）
+- ID 租赁系统：[ID_LEASE_SYSTEM](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_SYSTEM)（英文）
+- 国际化支持：[I18N](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-I18N)（英文）
 
 ---
 
