@@ -73,26 +73,32 @@ jobs:
         include:
           - os: ubuntu-latest
             cibw_archs_linux: "x86_64"
+            cibw_build: "cp311-* cp312-* cp313-*"
             artifact_suffix: "linux-x86_64"
             experimental: false
           - os: ubuntu-latest
             cibw_archs_linux: "aarch64"
+            cibw_build: "cp311-*"
             artifact_suffix: "linux-aarch64"
-            experimental: false
+            experimental: true
           - os: windows-latest
             cibw_archs_windows: "AMD64"
+            cibw_build: "cp311-* cp312-* cp313-*"
             artifact_suffix: "windows-amd64"
             experimental: false
           - os: windows-latest
             cibw_archs_windows: "ARM64"
+            cibw_build: "cp311-*"
             artifact_suffix: "windows-arm64"
             experimental: true
-          - os: macos-13
+          - os: macos-latest
             cibw_archs_macos: "x86_64"
+            cibw_build: "cp311-*"
             artifact_suffix: "macos-x86_64"
-            experimental: false
-          - os: macos-14
+            experimental: true
+          - os: macos-latest
             cibw_archs_macos: "arm64"
+            cibw_build: "cp311-* cp312-* cp313-*"
             artifact_suffix: "macos-arm64"
             experimental: false
     env:
@@ -121,9 +127,13 @@ jobs:
         run: |
           cibuildwheel --output-dir dist
         env:
+          CIBW_BUILD: ${{ matrix.cibw_build }}
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs_linux }}
           CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
           CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
+          CIBW_BEFORE_ALL: "pip install maturin cffi"
+          CIBW_BEFORE_ALL_WINDOWS: "pip install maturin cffi && rustup target add aarch64-pc-windows-msvc"
+          CIBW_BEFORE_ALL_MACOS: "pip install maturin cffi && rustup target add x86_64-apple-darwin aarch64-apple-darwin"
           CIBW_BEFORE_BUILD: "python -m pip install cffi"
           CIBW_ENVIRONMENT: "OPENSYNAPTIC_REQUIRE_RSCORE=1 CARGO_TARGET_DIR=target/rscore MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
 
