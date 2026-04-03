@@ -548,15 +548,15 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 
 ## 添加传输器
 
-见 [TRANSPORTER_PLUGIN](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）。
+见 [传输器插件指南](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）。
 
 ---
 
 ## API 参考
 
-见 [API](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-API)（英文）。
+见 [API 文档](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-API)（英文）。
 
-核心 API 和加载器参考 → [CORE_API](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CORE_API)（英文）
+核心 API 和加载器参考 → [核心 API 文档](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CORE_API)（英文）
 
 ---
 
