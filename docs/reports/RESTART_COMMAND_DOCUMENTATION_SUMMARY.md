@@ -31,12 +31,12 @@ Successfully integrated comprehensive documentation for the new `os-node restart
   - Location: Lines 103-106
 
 ### 4. **Documentation Index**
-- **[docs/INDEX.md](docs/INDEX.md)** (Documentation Hub)
+- **[docs/INDEX.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)** (Documentation Hub)
   - Added new guide file to "Guides" section
   - Location: Line 64
 
 ### 5. **New Comprehensive Guide** ✨
-- **[docs/guides/RESTART_COMMAND_GUIDE.md](docs/guides/RESTART_COMMAND_GUIDE.md)** (11,992 bytes)
+- **[docs/guides/RESTART_COMMAND_GUIDE.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-guides-RESTART_COMMAND_GUIDE)** (11,992 bytes)
   - Complete 370+ line reference guide including:
     - **Quick Start**: 3 usage patterns (basic, custom timeout, custom host/port)
     - **How It Works**: Architecture diagram, execution flow, graceful vs. non-graceful comparison
@@ -102,8 +102,8 @@ os-node restart --graceful --timeout 15 --host 192.168.1.100 --port 9090
 - ✅ Quick reference updated (README.md)
 - ✅ CLI reference updated (src/opensynaptic/CLI/README.md)
 - ✅ Workspace guidelines updated (AGENTS.md)
-- ✅ Documentation index updated (docs/INDEX.md)
-- ✅ Comprehensive guide created (docs/guides/RESTART_COMMAND_GUIDE.md)
+- ✅ Documentation index updated (https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)
+- ✅ Comprehensive guide created (https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-guides-RESTART_COMMAND_GUIDE)
 - ✅ All cross-references valid
 - ✅ Examples executable on Windows/Unix
 - ✅ Troubleshooting section included
@@ -118,7 +118,7 @@ os-node restart --graceful --timeout 15 --host 192.168.1.100 --port 9090
 3. Check CLI examples in [src/opensynaptic/CLI/README.md](src/opensynaptic/CLI/README.md)
 
 ### For Deep Understanding
-1. Start with [docs/guides/RESTART_COMMAND_GUIDE.md](docs/guides/RESTART_COMMAND_GUIDE.md) "Overview" section
+1. Start with [docs/guides/RESTART_COMMAND_GUIDE.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-guides-RESTART_COMMAND_GUIDE) "Overview" section
 2. Review "How It Works" architecture
 3. Follow examples in your use case
 4. Consult "Troubleshooting" if issues arise
