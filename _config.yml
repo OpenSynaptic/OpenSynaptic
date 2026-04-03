@@ -1,0 +1,60 @@
+title: OpenSynaptic
+description: 2-N-2 High-Performance IoT Protocol Stack
+author: OpenSynaptic Contributors
+url: https://opensynaptic.github.io
+baseurl: /OpenSynaptic
+
+theme: jekyll-theme-minimal
+
+# Localization settings
+languages:
+  en: English
+  zh: 简体中文
+
+default_language: en
+exclude_from_localization:
+  - index.html
+  - README.md
+  - README.zh.md
+
+# Build settings
+markdown: kramdown
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# Collections
+collections:
+  docs:
+    output: true
+    permalink: /docs/:path/
+
+# Front matter defaults
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "default"
+      language: "en"
+  - scope:
+      path: "docs/zh"
+      type: "pages"
+    values:
+      layout: "default"
+      language: "zh"
+      permalink: /docs/zh/:basename/
+
+# Exclude from processing
+exclude:
+  - .gitignore
+  - .github
+  - scripts
+  - plugins
+  - tests
+  - data
+  - Gemfile
+  - Gemfile.lock
+  - venv
+  - node_modules
