@@ -34,7 +34,19 @@ class OSVisualFusionEngine:
         self._cache_ttl_seconds = max(60, int(fusion_cfg.get('ttl_seconds', 3600) or 3600))
         self._cache_cleanup_interval = max(15, int(fusion_cfg.get('cleanup_interval_seconds', 120) or 120))
         self._cache_last_cleanup = 0.0
-        registry_dir = getattr(ctx, 'registry_dir', None)
+        engine_cfg = cfg.get('engine_settings', {}) if isinstance(cfg.get('engine_settings', {}), dict) else {}
+        self._registry_sync_interval_seconds = max(0.0, float(engine_cfg.get('registry_sync_interval_seconds', 1.0) or 1.0))
+        self._registry_sync_state_lock = threading.Lock()
+        self._registry_last_sync = {}
+
+        resources_cfg = cfg.get('RESOURCES', {}) if isinstance(cfg.get('RESOURCES', {}), dict) else {}
+        registry_conf = resources_cfg.get('registry')
+        registry_dir = None
+        if registry_conf:
+            rp = Path(str(registry_conf)).expanduser()
+            registry_dir = str(rp if rp.is_absolute() else (Path(self.base_dir) / rp).resolve())
+        if not registry_dir:
+            registry_dir = getattr(ctx, 'registry_dir', None)
         if not registry_dir:
             registry_dir = str(Path(self.base_dir) / 'data' / 'device_registry')
         Path(registry_dir).mkdir(parents=True, exist_ok=True)
@@ -153,6 +165,47 @@ class OSVisualFusionEngine:
                 self._RAM_CACHE.pop(key, None)
         self._cache_last_cleanup = now_ts
 
+    def _normalize_registry_data(self, data, key):
+        repaired = False
+        raw = data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            repaired = True
+        normalized = dict(raw)
+        normalized['aid'] = str(normalized.get('aid', key))
+        templates = normalized.get('templates', {})
+        if not isinstance(templates, dict):
+            templates = {}
+            repaired = True
+        clean_templates = {}
+        for tid, tpl in templates.items():
+            if not isinstance(tpl, dict):
+                repaired = True
+                continue
+            sig = tpl.get('sig')
+            if not isinstance(sig, str) or not sig:
+                repaired = True
+                continue
+            tid_key = str(tid).zfill(2)
+            entry = dict(tpl)
+            entry['sig'] = sig
+            stored = entry.get('last_vals_bin')
+            if stored is None:
+                pass
+            elif isinstance(stored, list):
+                clean_stored = [v for v in stored if isinstance(v, str)]
+                if len(clean_stored) != len(stored):
+                    repaired = True
+                if clean_stored:
+                    entry['last_vals_bin'] = clean_stored
+                else:
+                    entry.pop('last_vals_bin', None)
+            else:
+                repaired = True
+                entry.pop('last_vals_bin', None)
+            clean_templates[tid_key] = entry
+        normalized['templates'] = clean_templates
+        return normalized, repaired
+
     def _get_active_registry(self, aid_str):
         now_ts = time.time()
         key = None
@@ -193,10 +246,18 @@ class OSVisualFusionEngine:
                     os_log.err('FUS', 'FS', e, {'root': self.root_dir, 'aid': aid_str})
             if legacy_found:
                 data = read_json(str(legacy_found))
+        data, repaired = self._normalize_registry_data(data, key)
+        repaired_on_decode = False
         runtime_vals_by_tid = {}
         for tid, tpl in data.get('templates', {}).items():
             stored = tpl.get('last_vals_bin', [])
-            runtime_vals_by_tid[tid] = [base64.b64decode(v) for v in stored]
+            decoded_vals = []
+            for v in stored:
+                try:
+                    decoded_vals.append(base64.b64decode(v))
+                except Exception:
+                    repaired_on_decode = True
+            runtime_vals_by_tid[tid] = decoded_vals
         sig_index = {}
         for tid, tpl in data.get('templates', {}).items():
             sig = tpl.get('sig')
@@ -205,7 +266,7 @@ class OSVisualFusionEngine:
         reg = {
             'data': data,
             'path': f_path,
-            'dirty': False,
+            'dirty': repaired or repaired_on_decode,
             'lock': threading.RLock(),
             'runtime_vals': runtime_vals_by_tid,
             'sig_index': sig_index,
@@ -235,6 +296,19 @@ class OSVisualFusionEngine:
                         tpl['last_vals_bin'] = [base64.b64encode(v).decode() for v in vals]
                 write_json(reg['path'], reg['data'], indent=4)
                 reg['dirty'] = False
+
+    def _maybe_sync_to_disk(self, aid_str, force=False):
+        if force:
+            self._sync_to_disk(aid_str)
+            return
+        key = str(aid_str)
+        now = time.time()
+        with self._registry_sync_state_lock:
+            last = float(self._registry_last_sync.get(key, 0.0) or 0.0)
+            if now - last < self._registry_sync_interval_seconds:
+                return
+            self._registry_last_sync[key] = now
+        self._sync_to_disk(aid_str)
 
     def _decompose_for_receive(self, raw_input):
         try:
@@ -475,7 +549,7 @@ class OSVisualFusionEngine:
                             reg.setdefault('sig_index', {})[sig] = tid_str
                         reg['runtime_vals'][tid_str] = list(vals_bin)
                         reg['dirty'] = True
-                        self._sync_to_disk(src_val)
+                        self._maybe_sync_to_disk(src_val)
                         meta['template_learned'] = True
                         os_log.log_with_const('info', LogMsg.TEMPLATE_LEARNED, tid=tid_str, src=src_val, vars=len(vals_bin))
                     return self._attach_meta(decoder.decompress(raw_str), meta)

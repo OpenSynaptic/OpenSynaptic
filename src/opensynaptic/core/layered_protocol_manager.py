@@ -43,10 +43,13 @@ class LayeredProtocolManager:
         return cfg.get(name, {}) if isinstance(cfg, dict) else {}
 
     def _is_enabled(self, name):
+        key = str(name or '').strip().lower()
+        if key not in self.candidates:
+            return False
         status = self._status_map()
         if not isinstance(status, dict):
             return True
-        return bool(status.get(name, True))
+        return bool(status.get(key, True))
 
     def invalidate(self, name=None):
         if name is None:
@@ -66,6 +69,10 @@ class LayeredProtocolManager:
             return self.discover()
         key = str(name or '').strip().lower()
         if not key:
+            return None
+        if key not in self.candidates:
+            return None
+        if not self._is_enabled(key):
             return None
         self.invalidate(key)
         module = self._load_module(key)

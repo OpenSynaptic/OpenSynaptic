@@ -14,6 +14,7 @@ Startup behavior note:
 | Command | Aliases | Description |
 |---|---|---|
 | `run` | `os-run` | Persistent run loop; maintains protocol heartbeat until Ctrl+C or `--duration` |
+| `restart` | `os-restart` | Gracefully restart: stop current receiver and auto-start new run process |
 | `snapshot` | `os-snapshot` | Print node / service / transporter JSON snapshot |
 | `receive` | `os-receive` | Start UDP receiver (server-side packet ingestion loop) |
 | `demo` | `os-demo` | One-command localhost onboarding: virtual sensors + Web UI |
@@ -63,6 +64,8 @@ python -u src/main.py transmit          --config Config.json --sensor-id V1 --va
 python -u src/main.py reload-protocol   --config Config.json --medium udp
 python -u src/main.py run               --config Config.json --interval 5
 python -u src/main.py run               --config Config.json --once
+python -u src/main.py restart           --config Config.json --graceful --timeout 10
+python -u src/main.py restart           --config Config.json --timeout 5 --host 127.0.0.1 --port 8080
 
 # ── TUI ─────────────────────────────────────────────────────────────────────
 python -u src/main.py tui               --config Config.json

@@ -60,6 +60,7 @@ Read in this order:
 - [guides/DISPLAY_API_QUICKSTART.md](guides/DISPLAY_API_QUICKSTART.md)
 - [guides/DISPLAY_API_README.md](guides/DISPLAY_API_README.md)
 - [guides/DISPLAY_API_INDEX.md](guides/DISPLAY_API_INDEX.md)
+- [guides/RESTART_COMMAND_GUIDE.md](guides/RESTART_COMMAND_GUIDE.md)
 - [guides/QUICK_REFERENCE.md](guides/QUICK_REFERENCE.md)
 - [guides/WEB_COMMANDS_REFERENCE.md](guides/WEB_COMMANDS_REFERENCE.md)
 - [guides/TUI_QUICK_REFERENCE.md](guides/TUI_QUICK_REFERENCE.md)

@@ -1,0 +1,193 @@
+{
+  "total": 10000,
+  "ok": 10000,
+  "fail": 0,
+  "avg_latency_ms": 1.7082,
+  "p95_latency_ms": 2.7326,
+  "p99_latency_ms": 3.4905,
+  "p99_9_latency_ms": 5.7892,
+  "p99_99_latency_ms": 7.3481,
+  "min_latency_ms": 0.3655,
+  "max_latency_ms": 7.4617,
+  "stage_timing_ms": {
+    "standardize_ms": {
+      "avg": 0.01,
+      "p95": 0.0137,
+      "p99": 0.017,
+      "p99_9": 0.0524,
+      "p99_99": 0.0754,
+      "min": 0.0034,
+      "max": 0.0766
+    },
+    "compress_ms": {
+      "avg": 0.0106,
+      "p95": 0.0144,
+      "p99": 0.02,
+      "p99_9": 0.0566,
+      "p99_99": 0.2025,
+      "min": 0.0044,
+      "max": 0.2182
+    },
+    "fuse_ms": {
+      "avg": 0.0487,
+      "p95": 0.1157,
+      "p99": 0.3331,
+      "p99_9": 0.8871,
+      "p99_99": 1.8543,
+      "min": 0.017,
+      "max": 1.8966
+    }
+  },
+  "error_samples": [],
+  "core_backend": "pycore",
+  "codec_class": "Base62Codec",
+  "codec_module": "opensynaptic.utils.base62.base62",
+  "requested_core": "pycore",
+  "execution_mode": "thread",
+  "processes": 1,
+  "threads_per_process": 8,
+  "batch_size": 16,
+  "header_probe": {
+    "enabled": false,
+    "rate": 0.0,
+    "parser_available": false,
+    "attempted": 0,
+    "parsed": 0,
+    "crc16_ok": 0,
+    "parse_hit_rate": 0.0,
+    "crc16_ok_rate": 0.0
+  },
+  "worst_sample": {
+    "total_latency_ms": 7.4617,
+    "task_id": null,
+    "chain_mode": "e2e_loopback",
+    "stage_timing_ms": {
+      "standardize_ms": 0.0149,
+      "compress_ms": 0.0142,
+      "fuse_ms": 0.0491
+    },
+    "stage_share_pct": {
+      "standardize_ms": 0.1997,
+      "compress_ms": 0.1903,
+      "fuse_ms": 0.658
+    },
+    "dominant_stage": {
+      "name": "fuse_ms",
+      "latency_ms": 0.0491
+    }
+  },
+  "worst_topk": [
+    {
+      "total_latency_ms": 7.4617,
+      "task_id": null,
+      "chain_mode": "e2e_loopback",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0149,
+        "compress_ms": 0.0142,
+        "fuse_ms": 0.0491
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.1997,
+        "compress_ms": 0.1903,
+        "fuse_ms": 0.658
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.0491
+      }
+    },
+    {
+      "total_latency_ms": 7.3481,
+      "task_id": null,
+      "chain_mode": "e2e_loopback",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0091,
+        "compress_ms": 0.0092,
+        "fuse_ms": 0.0342
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.1238,
+        "compress_ms": 0.1252,
+        "fuse_ms": 0.4654
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.0342
+      }
+    },
+    {
+      "total_latency_ms": 7.2251,
+      "task_id": null,
+      "chain_mode": "e2e_loopback",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0139,
+        "compress_ms": 0.0134,
+        "fuse_ms": 0.0455
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.1924,
+        "compress_ms": 0.1855,
+        "fuse_ms": 0.6297
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.0455
+      }
+    },
+    {
+      "total_latency_ms": 6.5591,
+      "task_id": null,
+      "chain_mode": "e2e_loopback",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0116,
+        "compress_ms": 0.0115,
+        "fuse_ms": 0.0411
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.1769,
+        "compress_ms": 0.1753,
+        "fuse_ms": 0.6266
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.0411
+      }
+    },
+    {
+      "total_latency_ms": 6.4137,
+      "task_id": null,
+      "chain_mode": "e2e_loopback",
+      "stage_timing_ms": {
+        "standardize_ms": 0.0132,
+        "compress_ms": 0.0134,
+        "fuse_ms": 0.0481
+      },
+      "stage_share_pct": {
+        "standardize_ms": 0.2058,
+        "compress_ms": 0.2089,
+        "fuse_ms": 0.75
+      },
+      "dominant_stage": {
+        "name": "fuse_ms",
+        "latency_ms": 0.0481
+      }
+    }
+  ],
+  "elapsed_s": 2.695,
+  "throughput_pps": 3710.7,
+  "chain_mode": "e2e_loopback",
+  "runtime_toggles": {
+    "collector_mode": "batched",
+    "collector_flush_every": 256,
+    "collector_flush_auto_tuned": false,
+    "pipeline_mode": "legacy",
+    "pipeline_effective_batch_size": 16,
+    "pipeline_batch_available": false,
+    "gc_mode": "auto",
+    "gc_disabled_during_run": true,
+    "chain_mode_requested": "e2e_loopback",
+    "chain_mode": "e2e_loopback",
+    "forced_thread_fallback": false,
+    "forced_thread_reason": ""
+  }
+}

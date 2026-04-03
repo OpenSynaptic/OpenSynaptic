@@ -15,7 +15,7 @@ class _ManagerProxyDriver:
 class TransporterManager:
     APP_PROTOCOLS = {'mqtt', 'matter', 'zigbee'}
     TRANSPORT_PROTOCOLS = {'udp', 'tcp', 'quic', 'iwip', 'uip'}
-    PHYSICAL_PROTOCOLS = {'uart', 'rs485', 'can', 'lora'}
+    PHYSICAL_PROTOCOLS = {'uart', 'rs485', 'can', 'lora', 'bluetooth'}
 
     def __init__(self, master):
         self.master = master
@@ -128,9 +128,9 @@ class TransporterManager:
         app_driver = self._service.get_driver(key)
         if app_driver:
             return app_driver
-        if self._transport_manager.get_adapter(key):
+        if key in self.TRANSPORT_PROTOCOLS and self._transport_manager.get_adapter(key):
             return self._get_or_create_proxy(self._transport_manager, key)
-        if self._physical_manager.get_adapter(key):
+        if key in self.PHYSICAL_PROTOCOLS and self._physical_manager.get_adapter(key):
             return self._get_or_create_proxy(self._physical_manager, key)
         return None
 

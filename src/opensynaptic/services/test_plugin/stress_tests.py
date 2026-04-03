@@ -1159,6 +1159,44 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         )
 
     def _build_e2e_sender(attached_node, mode, use_udp=False, use_transport=None):
+        def _prepare_transport_driver(node_obj, transport_name):
+            tname = str(transport_name or '').strip().lower()
+            if not tname:
+                return
+            try:
+                cfg_root = node_obj.config.setdefault('RESOURCES', {})
+                app_status = cfg_root.setdefault('application_status', {})
+                l4_status = cfg_root.setdefault('transport_status', {})
+                phy_status = cfg_root.setdefault('physical_status', {})
+                if tname in {'mqtt', 'matter', 'zigbee'}:
+                    app_status[tname] = True
+                elif tname in {'udp', 'tcp', 'quic', 'iwip', 'uip'}:
+                    l4_status[tname] = True
+                elif tname in {'uart', 'rs485', 'can', 'lora', 'bluetooth'}:
+                    phy_status[tname] = True
+                merged = {}
+                merged.update(app_status)
+                merged.update(l4_status)
+                merged.update(phy_status)
+                cfg_root['transporters_status'] = merged
+
+                if tname in {'udp', 'tcp'}:
+                    l4_cfg = cfg_root.setdefault('transport_config', {})
+                    defaults = {'host': '127.0.0.1', 'listen_host': '127.0.0.1'}
+                    defaults['port'] = 10000 if tname == 'udp' else 10001
+                    defaults['listen_port'] = defaults['port']
+                    t_cfg = l4_cfg.setdefault(tname, {})
+                    for k, v in defaults.items():
+                        t_cfg.setdefault(k, v)
+
+                tm = getattr(node_obj, 'transporter_manager', None)
+                if tm:
+                    tm._transport_manager.set_config(node_obj.config)
+                    tm._physical_manager.set_config(node_obj.config)
+                    tm.refresh_protocol(tname)
+            except Exception:
+                pass
+
         receive_fn = getattr(attached_node, 'receive', None)
         fusion = getattr(attached_node, 'fusion', None)
         decompress_fn = getattr(fusion, 'decompress', None)
@@ -1187,8 +1225,10 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         
         # Support use_transport (preferred) or legacy use_udp (for backward compat)
         transport_driver = use_transport or ('udp' if use_udp else None)
+        transport_driver = str(transport_driver).strip().lower() if transport_driver else None
         
         if transport_driver:
+            _prepare_transport_driver(attached_node, transport_driver)
             # Real transport driver path - measures actual network I/O
             def _send_transport(packet):
                 try:
@@ -1311,8 +1351,36 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                                 break
                         sock.close()
                     elif use_transport == 'tcp':
-                        # For TCP, we'd need accept() - skip for now as it's more complex
-                        pass
+                        # Start TCP listener to accept sender connections in loopback mode
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        sock.bind((listen_host, listen_port))
+                        sock.listen(64)
+                        sock.settimeout(0.5)
+
+                        while not receiver_stop_flag.is_set():
+                            try:
+                                conn, _ = sock.accept()
+                            except socket.timeout:
+                                continue
+                            except Exception:
+                                break
+                            try:
+                                conn.settimeout(0.5)
+                                data = conn.recv(65535)
+                                if data:
+                                    try:
+                                        node.receive(data)
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                            finally:
+                                try:
+                                    conn.close()
+                                except Exception:
+                                    pass
+                        sock.close()
                 # For other transports (uart, mqtt, etc), no network listener needed
             except Exception as e:
                 os_log.err('RECV', 'INIT', e, {'transport': use_transport})
@@ -1476,7 +1544,11 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             packets = local_batch.run_batch(batch_items)
             t_b1 = time.perf_counter_ns()
             avg_ms = ((t_b1 - t_b0) / max(1, range_count)) / 1_000_000.0
-            stage_avg = avg_ms / 3.0
+            # batch_fused path consumes pre-packed facts; standardization is not timed here.
+            # Keep stage approximation explicit and avoid writing identical values to all stages.
+            stage_std = 0.0
+            stage_cmp = avg_ms / 2.0
+            stage_fus = avg_ms / 2.0
             b_stage = {'standardize_ms': [], 'compress_ms': [], 'fuse_ms': []}
             b_errors: list[str] = []
             # Fast path: batch ABI normally returns one packet per input and failures are rare.
@@ -1484,7 +1556,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                 result.merge_uniform_chunk(
                     range_count,
                     avg_ms,
-                    {'standardize_ms': stage_avg, 'compress_ms': stage_avg, 'fuse_ms': stage_avg},
+                    {'standardize_ms': stage_std, 'compress_ms': stage_cmp, 'fuse_ms': stage_fus},
                     chain_mode=chain_mode,
                 )
                 _commit_progress(range_count)
@@ -1496,9 +1568,9 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                         b_errors.append('batch_pipeline_item_failed')
                     else:
                         b_latencies.append(avg_ms)
-                        b_stage['standardize_ms'].append(stage_avg)
-                        b_stage['compress_ms'].append(stage_avg)
-                        b_stage['fuse_ms'].append(stage_avg)
+                        b_stage['standardize_ms'].append(stage_std)
+                        b_stage['compress_ms'].append(stage_cmp)
+                        b_stage['fuse_ms'].append(stage_fus)
             result.merge_chunk(b_latencies, b_stage, b_errors, chain_mode=chain_mode)
             _commit_progress(range_count)
             return

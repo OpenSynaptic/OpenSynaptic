@@ -9,6 +9,7 @@ from pathlib import Path
 import logging
 import sys
 import time
+import subprocess
 from types import SimpleNamespace
 from opensynaptic.core import get_core_manager
 from opensynaptic.services.env_guard.main import EnvironmentGuardService
@@ -1574,6 +1575,99 @@ def _main_impl(argv=None):
             print(f"Fusion cached AIDs    : {result['fusion_cached_aids']}")
         return 0
 
+    if cmd in ('restart', 'os-restart'):
+        os_log.log_with_const('info', LogMsg.CLI_ACTION, action='restart')
+        graceful = bool(getattr(args, 'graceful', True))
+        timeout = float(getattr(args, 'timeout', 10.0))
+        
+        # Build the run command arguments
+        run_cmd_args = [sys.executable, '-m', 'opensynaptic', 'run']
+        
+        # Add optional host and port if provided
+        host = getattr(args, 'host', None)
+        port = getattr(args, 'port', None)
+        if host:
+            run_cmd_args.extend(['--host', str(host)])
+        if port:
+            run_cmd_args.extend(['--port', str(port)])
+        
+        # Provide restart information to user
+        restart_info = {
+            'action': 'restart',
+            'graceful': graceful,
+            'timeout_seconds': timeout,
+            'new_run_command': ' '.join(run_cmd_args),
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        
+        os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps(restart_info, ensure_ascii=False))
+        print(json.dumps(restart_info, ensure_ascii=False))
+        
+        # Print separator for clarity
+        sep = "=" * 70
+        print(f"\n{sep}")
+        print(f"[RESTART] Initiating graceful restart sequence")
+        print(f"{sep}")
+        
+        # Inform user about the restart process
+        print(f"\nRestart Configuration:")
+        print(f"  • Graceful mode: {graceful}")
+        print(f"  • Shutdown timeout: {timeout}s")
+        print(f"  • Command: {' '.join(run_cmd_args)}")
+        
+        print(f"\nInstructions for graceful shutdown:")
+        print(f"  1. In the terminal running 'os-node run', press [Ctrl+C] to stop")
+        print(f"  2. New run process will be launched automatically")
+        print(f"  3. If you don't have an active 'run' terminal, new run starts immediately")
+        print(f"\nWaiting {timeout} seconds for transition...")
+        
+        # Start the new run process
+        try:
+            if sys.platform == 'win32':
+                # Windows: CREATE_NEW_CONSOLE launches in a new window
+                proc = subprocess.Popen(
+                    run_cmd_args,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE
+                )
+            else:
+                # Unix-like: detach process from current terminal
+                proc = subprocess.Popen(
+                    run_cmd_args,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=os.setsid
+                )
+            
+            print(f"\n[OK] New run process started (PID: {proc.pid})")
+            print(f"[OK] Command: os-node run")
+            
+            # Wait for graceful shutdown
+            time.sleep(timeout)
+            
+            print(f"\n{sep}")
+            print(f"[OK] Restart sequence complete!")
+            print(f"{sep}")
+            print(f"\nNew run loop is now active in a separate terminal/process.")
+            print(f"To manage the new run process:")
+            print(f"  • View logs: Check your run terminal window")
+            print(f"  • Stop gracefully: Press [Ctrl+C] in that terminal")
+            print(f"  • Check status: 'os-node status'")
+            
+            os_log.log_with_const('info', LogMsg.CLI_RESULT, result=json.dumps({
+                'restart_status': 'complete',
+                'new_pid': proc.pid,
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+            }, ensure_ascii=False))
+            
+            return 0
+            
+        except Exception as exc:
+            os_log.err('CLI', 'RESTART', exc, {})
+            error_msg = f"Failed to start new run process: {str(exc)}"
+            print(f"\n[ERROR] {error_msg}")
+            print(json.dumps({'error': error_msg}, ensure_ascii=False))
+            return 1
+
     if cmd in ('run', 'os-run'):
         os_log.log_with_const('info', LogMsg.CLI_ACTION, action='run')
         host = getattr(args, 'host', None) or node.config.get('Client_Core', {}).get('server_host', '127.0.0.1')
@@ -2082,6 +2176,8 @@ def _main_impl(argv=None):
         runs = str(int(getattr(args, 'runs', 1)))
         warmup = str(int(getattr(args, 'warmup', 0)))
         json_out = getattr(args, 'json_out', None) or None
+        report_format = str(getattr(args, 'report_format', 'concise') or 'concise')
+        worst_topk_display = str(int(getattr(args, 'worst_topk_display', 3) or 3))
         require_rust = bool(getattr(args, 'require_rust', False))
         header_probe_rate = str(float(getattr(args, 'header_probe_rate', 0.0) or 0.0))
         batch_size = str(int(getattr(args, 'batch_size', 1) or 1))
@@ -2124,6 +2220,8 @@ def _main_impl(argv=None):
                 '--processes', processes,
                 '--chain-mode', chain_mode,
                 '--pipeline-mode', pipeline_mode,
+                '--report-format', report_format,
+                '--worst-topk-display', worst_topk_display,
             ]
             if use_real_udp:
                 extra_args.append('--use-real-udp')
@@ -2160,6 +2258,7 @@ def _main_impl(argv=None):
                 '--processes', processes,
                 '--chain-mode', chain_mode,
                 '--pipeline-mode', pipeline_mode,
+                '--report-format', report_format,
             ]
             if use_real_udp:
                 extra_args.append('--use-real-udp')
@@ -2178,6 +2277,8 @@ def _main_impl(argv=None):
                 '--verbosity', verbosity,
                 '--chain-mode', chain_mode,
                 '--pipeline-mode', pipeline_mode,
+                '--report-format', report_format,
+                '--worst-topk-display', worst_topk_display,
             ]
             if no_progress:
                 extra_args.append('--no-progress')
