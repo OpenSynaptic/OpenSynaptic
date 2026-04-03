@@ -87,11 +87,11 @@ jobs:
             cibw_archs_windows: "ARM64"
             artifact_suffix: "windows-arm64"
             experimental: true
-          - os: macos-latest
+          - os: macos-13
             cibw_archs_macos: "x86_64"
             artifact_suffix: "macos-x86_64"
             experimental: false
-          - os: macos-latest
+          - os: macos-14
             cibw_archs_macos: "arm64"
             artifact_suffix: "macos-arm64"
             experimental: false
@@ -100,6 +100,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup QEMU for Linux ARM emulation
+        if: runner.os == 'Linux' && matrix.cibw_archs_linux == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Setup Python
         uses: actions/setup-python@v5
