@@ -337,7 +337,7 @@ pie title 阶段级延迟分布
 - 延迟数据准确，但不要使用 pps 指标进行性能调优
 - 请使用 `batch_fused`（上方）进行真实的性能分析
 
-[完整基准报告](docs/reports/PERFORMANCE_OPTIMIZATION_REPORT.md)
+[完整基准报告](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-reports-FINAL_PERFORMANCE_REPORT)
 
 ---
 
@@ -437,7 +437,7 @@ OpenSynaptic = manager.get_symbol('OpenSynaptic')
 | `RESOURCES.transporters_status` | map | `{}` | 遗留的合并兼容性映射（镜像层特定状态映射） |
 | `security_settings.drop_on_crc16_failure` | bool | `true` | CRC 校验失败时丢弃数据包 |
 
-完整架构 → [docs/CONFIG_SCHEMA.md](docs/CONFIG_SCHEMA.md)
+完整架构 → [docs/CONFIG_SCHEMA.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)
 
 ---
 
@@ -548,15 +548,15 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 
 ## 添加传输器
 
-见 [docs/TRANSPORTER_PLUGIN.md](../docs/TRANSPORTER_PLUGIN.md)（英文）。
+见 [docs/TRANSPORTER_PLUGIN.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）。
 
 ---
 
 ## API 参考
 
-见 [docs/API.md](../docs/API.md)（英文）。
+见 [docs/API.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-API)（英文）。
 
-核心 API 和加载器参考 → [docs/CORE_API.md](../docs/CORE_API.md)（英文）
+核心 API 和加载器参考 → [docs/CORE_API.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CORE_API)（英文）
 
 ---
 
@@ -567,10 +567,10 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 - 仓库文档地图：[docs/INDEX.md](INDEX.md)
 - 从这里开始：[README.md](README.md)
 - 架构详解：[ARCHITECTURE.md](ARCHITECTURE.md)
-- 配置架构：[docs/CONFIG_SCHEMA.md](../docs/CONFIG_SCHEMA.md)（英文）
-- 传输器/插件扩展：[docs/TRANSPORTER_PLUGIN.md](../docs/TRANSPORTER_PLUGIN.md)（英文）
-- ID 租赁系统：[ID_LEASE_SYSTEM.md](../docs/ID_LEASE_SYSTEM.md)（英文）
-- 国际化支持：[docs/I18N.md](../docs/I18N.md)（英文）
+- 配置架构：[docs/CONFIG_SCHEMA.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)（英文）
+- 传输器/插件扩展：[docs/TRANSPORTER_PLUGIN.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）
+- ID 租赁系统：[ID_LEASE_SYSTEM.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_SYSTEM)（英文）
+- 国际化支持：[docs/I18N.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-I18N)（英文）
 
 ---
 
