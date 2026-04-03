@@ -60,6 +60,7 @@ Restart PowerShell after activation.
 ## Architecture
 
 ```mermaid
+%%{init: {'flowchart': {'rankSeparation': 60, 'nodeSeparation': 50}}}%%
 graph LR
     A["Sensors List"] -->|Raw Data| B["Standardizer<br/>(UCUM Normalisation)"]
     B -->|Standardised| C["Compressor<br/>(Base62 Encoding)"]
@@ -300,16 +301,10 @@ python -u src/main.py plugin-test --suite stress --total 1 \
   --chain-mode core --pipeline-mode legacy --processes 1 --threads-per-process 1
 ```
 
-**Sample Output (1 op):**
-- standardize_ms: 0.0343 ms (3.8% of total)
-- compress_ms: 0.0563 ms (6.3% of total)
-- fuse_ms: 0.7985 ms (89.7% of total)
-- **Total: 0.8901 ms**
-
 **Legacy Mode Pipeline Timing Breakdown:**
 
 ```mermaid
-pie title Per-Stage Latency Distribution (Legacy Mode)
+pie title Per-Stage Latency Distribution
     "Standardize (3.8%)" : 3.8
     "Compress (6.3%)" : 6.3
     "Fuse (89.7%)" : 89.7
@@ -319,19 +314,18 @@ pie title Per-Stage Latency Distribution (Legacy Mode)
 
 ⚠️ **Legacy Mode Caveats:**
 - Throughput artificially low (~1-5K pps) due to global lock in result collector, not representative of actual system speed
-- Latency data accuracy ✅, but don't use pps metric for performance tuning
+- Latency data accuracy , but don't use pps metric for performance tuning
 - Use batch_fused (above) for realistic performance profiling
 
-📊 [Full Benchmark Report](docs/reports/PERFORMANCE_OPTIMIZATION_REPORT.md)
+ [Full Benchmark Report](docs/reports/PERFORMANCE_OPTIMIZATION_REPORT.md)
 
 ---
 
-## 💡 Use Cases
+##  Use Cases
 
 ```mermaid
 timeline
-    title OpenSynaptic Deployment Scenarios
-    
+    title Deployment Scenarios
     Smart Agriculture (Offline)
         : $30 SBC = Local Cloud
         : LoRa Sensor Network
@@ -392,11 +386,11 @@ All commands are available via `os-node` (installed entrypoint), `./run-main.cmd
 
 **Command Categories:**
 
-- 🏃 **Runtime**: `run`, `snapshot`, `ensure-id`, `transmit`, `inject`, `decode`, `watch`, `tui`
-- ⚙️ **Config**: `config-show`, `config-get`, `config-set`, `core`, `transporter-toggle`
-- 🔌 **Plugin**: `plugin-list`, `plugin-load`, `plugin-cmd`, `web-user`, `deps`
-- 🧪 **Testing**: `plugin-test`, `native-check`, `native-build`, `rscore-build`, `rscore-check`
-- 📊 **Monitor**: `transport-status`, `db-status`, `help`
+-  **Runtime**: `run`, `snapshot`, `ensure-id`, `transmit`, `inject`, `decode`, `watch`, `tui`
+- ️ **Config**: `config-show`, `config-get`, `config-set`, `core`, `transporter-toggle`
+-  **Plugin**: `plugin-list`, `plugin-load`, `plugin-cmd`, `web-user`, `deps`
+-  **Testing**: `plugin-test`, `native-check`, `native-build`, `rscore-build`, `rscore-check`
+-  **Monitor**: `transport-status`, `db-status`, `help`
 
 ### All Commands
 
