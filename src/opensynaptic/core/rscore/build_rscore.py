@@ -60,6 +60,17 @@ def _find_cargo():
     return None
 
 
+def _cargo_target_root():
+    """Return Cargo target root, honoring CARGO_TARGET_DIR when provided."""
+    raw = str(os.environ.get('CARGO_TARGET_DIR', '') or '').strip()
+    if not raw:
+        return _CRATE_DIR / 'target'
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = (_CRATE_DIR / p).resolve()
+    return p
+
+
 def build_rscore(
     release=True,
     show_progress=True,
@@ -148,9 +159,13 @@ def build_rscore(
 
     # Locate the produced artefact.
     profile_dir = 'release' if release else 'debug'
-    src = _CRATE_DIR / 'target' / profile_dir / _cargo_lib_filename()
+    target_root = _cargo_target_root()
+    src = target_root / profile_dir / _cargo_lib_filename()
     if not src.exists():
-        msg = 'build succeeded but artefact not found: {}'.format(src)
+        msg = (
+            'build succeeded but artefact not found: {} '
+            '(CARGO_TARGET_DIR={})'
+        ).format(src, os.environ.get('CARGO_TARGET_DIR', '<unset>'))
         logs.append(msg)
         _emit({'type': 'build-end', 'ok': False, 'elapsed_s': elapsed, 'message': msg})
         return {'ok': False, 'status': 'artefact-missing', 'compiler': 'cargo', 'output': None, 'logs': logs}

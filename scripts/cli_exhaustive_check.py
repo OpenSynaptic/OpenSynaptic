@@ -38,8 +38,8 @@ CASES = [
     ('ensure-id', ['ensure-id', '--config', str(CFG), '--host', '127.0.0.1', '--port', '8080'], False),
     ('native-check', ['native-check'], True),
     ('native-build', ['native-build'], True),
-    ('rscore-check', ['rscore-check'], True),
     ('rscore-build', ['rscore-build'], True),
+    ('rscore-check', ['rscore-check'], True),
     ('plugin-test:component', ['plugin-test', '--config', str(CFG), '--suite', 'component'], False),
     ('plugin-test:stress', ['plugin-test', '--config', str(CFG), '--suite', 'stress', '--total', '100', '--workers', '2', '--no-progress', '--pipeline-mode', 'batch_fused'], True),
     ('diagnose', ['diagnose', '--config', str(CFG)], True),
@@ -55,15 +55,26 @@ CASES = [
 ]
 
 
+def _case_timeout_seconds(name: str) -> int:
+    if name == 'native-build':
+        return 120
+    if name == 'rscore-build':
+        return 300
+    if name == 'rscore-check':
+        return 60
+    return 20
+
+
 def run_case(name: str, args: list[str], expect_success: bool):
     cmd = [PY, '-u', str(MAIN), '--no-wizard'] + args
+    timeout_s = _case_timeout_seconds(name)
     try:
         proc = subprocess.run(
             cmd,
             cwd=str(ROOT),
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=timeout_s,
         )
     except subprocess.TimeoutExpired as exc:
         return {
@@ -71,7 +82,7 @@ def run_case(name: str, args: list[str], expect_success: bool):
             'ok': False,
             'expected_success': expect_success,
             'returncode': -1,
-            'error': str(exc),
+            'error': f'timeout after {timeout_s}s: {exc}',
             'stdout_tail': ((exc.stdout or '')[-600:] if isinstance(exc.stdout, str) else ''),
             'stderr_tail': ((exc.stderr or '')[-600:] if isinstance(exc.stderr, str) else ''),
             'args': args,
