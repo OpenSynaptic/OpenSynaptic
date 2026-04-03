@@ -392,38 +392,11 @@ All commands are available via `os-node` (installed entrypoint), `./run-main.cmd
 
 **Command Categories:**
 
-```mermaid
-graph TD
-    A["OpenSynaptic CLI"] --> B["🏃 Runtime"]
-    A --> C["⚙️ Config"]
-    A --> D["🔌 Plugin"]
-    A --> E["🧪 Testing"]
-    A --> F["📊 Monitor"]
-    
-    B --> B1["run"]
-    B --> B2["snapshot"]
-    B --> B3["ensure-id"]
-    B --> B4["transmit"]
-    B --> B5["inject, decode, watch, tui"]
-    
-    C --> C1["config-show"]
-    C --> C2["config-get"]
-    C --> C3["config-set"]
-    C --> C4["core, transporter-toggle"]
-    
-    D --> D1["plugin-list"]
-    D --> D2["plugin-load"]
-    D --> D3["plugin-cmd"]
-    D --> D4["web-user, deps"]
-    
-    E --> E1["plugin-test"]
-    E --> E2["native-check"]
-    E --> E3["native-build"]
-    E --> E4["rscore-build, rscore-check"]
-    
-    F --> F1["transport-status"]
-    F --> F2["db-status, help"]
-```
+- 🏃 **Runtime**: `run`, `snapshot`, `ensure-id`, `transmit`, `inject`, `decode`, `watch`, `tui`
+- ⚙️ **Config**: `config-show`, `config-get`, `config-set`, `core`, `transporter-toggle`
+- 🔌 **Plugin**: `plugin-list`, `plugin-load`, `plugin-cmd`, `web-user`, `deps`
+- 🧪 **Testing**: `plugin-test`, `native-check`, `native-build`, `rscore-build`, `rscore-check`
+- 📊 **Monitor**: `transport-status`, `db-status`, `help`
 
 ### All Commands
 
