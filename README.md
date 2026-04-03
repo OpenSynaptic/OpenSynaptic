@@ -2,7 +2,19 @@
 
 **2-N-2 high-performance IoT protocol stack** — standardises sensor readings into UCUM units, compresses them via Base62 encoding, wraps them in a binary packet, and dispatches over pluggable transporters (TCP / UDP / UART / LoRa / MQTT / CAN).
 
-🌍 **[中文文档 (Chinese Documentation)](README.zh.md)** | [文档中心 (Documentation Hub)](docs/README.md) | [中文文档中心](docs/zh/README.md)
+## 📚 Documentation Hub
+
+🌍 **All documentation has been moved to our comprehensive Wiki.** Choose your language and start exploring:
+
+### English Documentation
+- **[📖 Full Wiki Navigation](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-EN.md)** — Complete English documentation index
+- **[🏠 Wiki Home](OpenSynaptic_Wiki/OpenSynaptic.wiki/Home.md)** — Start here for role-based navigation
+- **[🔍 Complete Index](OpenSynaptic_Wiki/OpenSynaptic.wiki/en-INDEX.md)** — All 110+ English documents
+
+### 中文文档 (Chinese)
+- **[📖 完整导航](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-ZH.md)** — 完整的中文文档索引
+- **[🏠 Wiki 首页](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-Home.md)** — 中文首页
+- **[🔍 完整索引](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-INDEX.md)** — 所有 91+ 中文文档
 
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat&logo=python&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?style=flat&logo=windows&logoColor=white)

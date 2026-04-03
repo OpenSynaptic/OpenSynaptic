@@ -8,7 +8,19 @@ language: zh
 
 **2-N-2 高性能物联网协议栈** — 将传感器读数标准化为 UCUM 单位，通过 Base62 编码压缩，包装成二进制数据包，并通过可插拔的传输器分发（TCP / UDP / UART / LoRa / MQTT / CAN）。
 
-[🌐 Select English](../README.md) | [📖 返回文档中心](../README.md)
+## 📚 文档中心
+
+🌍 **所有文档已移至我们的综合 Wiki。** 选择您的语言开始探索：
+
+### 英文文档
+- **[📖 完整导航](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-EN.md)** — 完整的英文文档索引
+- **[🏠 Wiki 首页](OpenSynaptic_Wiki/OpenSynaptic.wiki/Home.md)** — 英文版首页
+- **[🔍 完整索引](OpenSynaptic_Wiki/OpenSynaptic.wiki/en-INDEX.md)** — 所有 110+ 英文文档
+
+### 中文文档
+- **[📖 完整导航](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-ZH.md)** — 完整的中文文档索引
+- **[🏠 Wiki 首页](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-Home.md)** — 中文版首页
+- **[🔍 完整索引](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-INDEX.md)** — 所有 91+ 中文文档
 
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat&logo=python&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?style=flat&logo=windows&logoColor=white)
