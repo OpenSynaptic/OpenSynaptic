@@ -23,8 +23,6 @@ profile:
 #    paths:
 #      - <path/where/not/run/inspection>
 
-projectJDK: "25" #(Applied in CI/CD pipeline)
-
 #Execute shell command before Qodana execution (Applied in CI/CD pipeline)
 #bootstrap: sh ./prepare-qodana.sh
 
@@ -45,4 +43,4 @@ projectJDK: "25" #(Applied in CI/CD pipeline)
 #    total: 50
 
 #Specify Qodana linter for analysis (Applied in CI/CD pipeline)
-linter: jetbrains/qodana-jvm:2025.3
+linter: jetbrains/qodana-python:2025.3

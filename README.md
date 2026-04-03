@@ -2,6 +2,15 @@
 
 **2-N-2 high-performance IoT protocol stack** — standardises sensor readings into UCUM units, compresses them via Base62 encoding, wraps them in a binary packet, and dispatches over pluggable transporters (TCP / UDP / UART / LoRa / MQTT / CAN).
 
+![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat&logo=python&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?style=flat&logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-Compatible-FCC624?style=flat&logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/macOS-Compatible-111111?style=flat&logo=apple&logoColor=white)
+![Architecture](https://img.shields.io/badge/Arch-x86__64%20%7C%20arm64-6F42C1?style=flat)
+![Core Backend](https://img.shields.io/badge/Core-pycore%20%7C%20rscore-2E8B57?style=flat)
+![Transport](https://img.shields.io/badge/Transport-UDP%20%7C%20TCP%20%7C%20UART%20%7C%20LoRa%20%7C%20MQTT%20%7C%20CAN-E67E22?style=flat)
+![License](https://img.shields.io/badge/License-Apache--2.0-D22128?style=flat&logo=apache&logoColor=white)
+
 ## Try In 30 Seconds
 
 ```powershell

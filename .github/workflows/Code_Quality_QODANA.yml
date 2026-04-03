@@ -1,36 +1,60 @@
-name: Qodana Configuration Upload
+name: Code Quality (Qodana)
 
 on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - Beta
   workflow_dispatch:
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
-  upload-qodana-config:
-    # Qodana workflow disabled - qodana-global-configurations.yaml not configured
-    if: false
+  qodana:
+    name: Qodana Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Verify Qodana config exists
+      - name: Detect Qodana token
+        id: token-check
+        shell: bash
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
         run: |
-          if [ ! -f qodana-global-configurations.yaml ]; then
-            echo "qodana-global-configurations.yaml not found. Creating placeholder..."
-            cat > qodana-global-configurations.yaml << 'EOF'
-          # Placeholder Qodana global configuration
-          # Configure with actual settings when ready
-          EOF
+          if [ -n "$QODANA_TOKEN" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run Qodana Configuration Uploader
+      - name: Run Qodana (Cloud upload)
+        if: steps.token-check.outputs.has_token == 'true'
+        uses: JetBrains/qodana-action@v2025.2
+        with:
+          upload-result: true
+          cache-default-branch-only: true
         env:
-          QODANA_CONFIGURATIONS_TOKEN: ${{ secrets.QODANA_CONFIGURATIONS_TOKEN }}
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+          QODANA_ENDPOINT: https://qodana.cloud
+
+      - name: Run Qodana (Local report only)
+        if: steps.token-check.outputs.has_token == 'false'
+        uses: JetBrains/qodana-action@v2025.2
+        with:
+          upload-result: false
+          cache-default-branch-only: true
+
+      - name: Explain local-only mode
+        if: steps.token-check.outputs.has_token == 'false'
         run: |
-          docker run --rm \
-            -v $(pwd):/workspace \
-            -w /workspace \
-            -e QODANA_CONFIGURATIONS_TOKEN=$QODANA_CONFIGURATIONS_TOKEN \
-            jetbrains/qodana-configuration-uploader:latest \
-            --global-configs-file qodana-global-configurations.yaml \
-            --qodana-host https://qodana.cloud
+          echo "QODANA_TOKEN secret is not configured."
+          echo "Qodana ran in local-report mode without Cloud upload."
