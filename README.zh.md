@@ -565,7 +565,7 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 **所有文档**（均有中英文版本）：
 
 - 仓库文档地图：[Navigation-EN](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)
-- 从这里开始：[Wiki 首页](https://github.com/OpenSynaptic/OpenSynaptic/wiki)
+- 从这里开始：[Wiki 首页](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Home)
 - 架构详解：[ARCHITECTURE](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ARCHITECTURE)
 - 配置架构：[CONFIG_SCHEMA](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)（英文）
 - 传输器/插件扩展：[TRANSPORTER_PLUGIN](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）

@@ -596,7 +596,7 @@ Core facade and loader reference -> [`docs/CORE_API.md`](https://github.com/Open
 ## Documentation Hub
 
 - Repository docs map: [`docs/INDEX.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)
-- Start here: [`docs/README.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki)
+- Start here: [`docs/README.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Home)
 - Architecture walkthrough: [`docs/ARCHITECTURE.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ARCHITECTURE)
 - Config schema: [`docs/CONFIG_SCHEMA.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)
 - Transporter/plugin extension: [`docs/TRANSPORTER_PLUGIN.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)

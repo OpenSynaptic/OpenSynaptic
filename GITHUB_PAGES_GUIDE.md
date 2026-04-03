@@ -15,7 +15,7 @@ OpenSynaptic documentation now supports **multiple languages** on GitHub Pages.
 
 ### Accessing Documentation
 
-1. **Visit Language Selector**: Open [Wiki Home](https://github.com/OpenSynaptic/OpenSynaptic/wiki) in browser
+1. **Visit Language Selector**: Open [Wiki Home](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Home) in browser
 2. **Switch Languages**: Click language cards to navigate
 3. **Direct URLs**:
    - English: `https://opensynaptic.github.io/`
