@@ -43,6 +43,15 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Configure Rust environment
+        shell: bash
+        run: |
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          echo "RUSTUP_HOME=$HOME/.rustup" >> $GITHUB_ENV
+          echo "CARGO_HOME=$HOME/.cargo" >> $GITHUB_ENV
+          rustc --version
+          cargo --version
+
       - name: Install dependencies
         shell: bash
         run: |
