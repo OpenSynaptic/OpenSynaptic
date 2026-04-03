@@ -1,0 +1,46 @@
+---
+layout: default
+title: 普遍驱动程序支持实现
+language: zh
+---
+
+# 普遍驱动程序支持实现
+
+## 范围
+
+本文档是根据当前本地代码库重构的英文维护版本。
+
+- 文件：`docs/features/IMPLEMENTATION_universal_driver_support.md`
+- 刷新日期：2026-04-01
+- 重点：功能行为和基于当前服务/核心实现的运行时切换。
+
+## 代码锚点
+
+- `src/opensynaptic/services/port_forwarder/main.py`
+- `src/opensynaptic/services/port_forwarder/enhanced.py`
+- `src/opensynaptic/core/pycore/transporter_manager.py`
+- `src/opensynaptic/core/layered_protocol_manager.py`
+- `Config.json`（`RESOURCES.*_status`、`RESOURCES.*_config`）
+
+## 实际验证
+
+使用这些命令验证当前工作空间中的相关行为：
+
+```powershell
+pip install -e .
+python -u src/main.py plugin-test --suite component
+python -u src/main.py plugin-test --suite stress --workers 8 --total 200
+```
+
+## 相关文档
+
+- `docs/README.md`
+- `docs/INDEX.md`
+- `docs/QUICK_START.md`
+- `AGENTS.md`
+- `README.md`
+
+## 说明
+
+- 本页面已规范化为英文，并与当前本地路径对齐。
+- 对于规范的运行时行为，优先使用 `src/opensynaptic/` 中的源模块。

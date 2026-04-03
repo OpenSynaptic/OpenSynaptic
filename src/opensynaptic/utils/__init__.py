@@ -13,6 +13,13 @@ from opensynaptic.utils.c.check_native_toolchain import build_guidance, get_tool
 from opensynaptic.utils.constants import CLI_HELP_TABLE, LogMsg, MESSAGES
 from opensynaptic.utils.errors import EnvironmentMissingError, classify_exception
 from opensynaptic.utils.logger import os_log
+from opensynaptic.utils.i18n import (
+    Language,
+    set_language,
+    set_language_by_code,
+    get_current_language,
+    translate,
+)
 from opensynaptic.utils.paths import (
     ctx,
     get_config_path,
@@ -44,5 +51,6 @@ __all__ = [
     'load_native_library', 'require_native_library', 'has_native_library', 'NativeLibraryUnavailable',
     'build_native_all', 'build_guidance', 'get_toolchain_report',
     'EnvironmentMissingError', 'classify_exception',
+    'Language', 'set_language', 'set_language_by_code', 'get_current_language', 'translate',
 ]
 

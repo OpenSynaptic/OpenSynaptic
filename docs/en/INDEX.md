@@ -1,6 +1,8 @@
 # OpenSynaptic Documentation Index
 
-**Last updated**: 2026-04-02 (local workspace)
+**Last updated**: 2026-04-02 (local workspace)  
+**Language**: [English](INDEX.md) | [中文](zh/INDEX.md)  
+**Language Selector**: [Select Language](index.html)
 
 ---
 

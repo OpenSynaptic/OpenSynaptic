@@ -7,6 +7,7 @@ from opensynaptic.utils import (
     EnvironmentMissingError,
     classify_exception,
 )
+from opensynaptic.utils.i18n import translate
 
 class LevelFilter(logging.Filter):
 
@@ -45,7 +46,11 @@ class OSLogger:
 
     def _format(self, mid, eid, exc, ctx=None):
         lineno = self._caller_lineno(3)
-        msg = {'mid': mid, 'eid': eid, 'msg': str(exc), 'ctx': ctx, 'loc': f'{Path.cwd()}:{lineno}' if lineno is not None else None}
+        # Translate message if translation is available
+        msg_text = str(exc)
+        if ctx:
+            msg_text = translate(msg_text, **ctx)
+        msg = {'mid': mid, 'eid': eid, 'msg': msg_text, 'ctx': ctx, 'loc': f'{Path.cwd()}:{lineno}' if lineno is not None else None}
         return msg
 
     def info(self, mid, eid, msg, ctx=None):
@@ -111,7 +116,10 @@ class OSLogger:
 
     def log_with_const(self, level, msg_key, **kwargs):
         template = MESSAGES.get(msg_key, None)
-        text = template.format(**kwargs) if template else msg_key.value if isinstance(msg_key, LogMsg) else str(msg_key)
+        if not template:
+            template = msg_key.value if isinstance(msg_key, LogMsg) else str(msg_key)
+        # Apply translation if context is provided
+        text = translate(template, **kwargs) if kwargs else template
         if level.lower() in ('info', 'debug'):
             self.logger.info(text)
         elif level.lower() == 'warning':

@@ -1,0 +1,80 @@
+# Jekyll Configuration for OpenSynaptic Multi-Language Support
+
+theme: jekyll-theme-minimal
+title: "OpenSynaptic"
+description: "2-N-2 IoT Protocol Stack with Real-Time Fusion"
+author: "OpenSynaptic Contributors"
+github_username: "opensynaptic"
+show_downloads: true
+
+# Markdown Settings
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  auto_ids: true
+  footnote_nr: 1
+  entity_output: numeric
+  toc_levels: 1..6
+  smart_quotes: lsquo,rsquo,ldquo,rdquo
+  enable_coderay: false
+
+# URL Settings (adjust baseurl if deploying to subdirectory)
+baseurl: "/"
+url: "https://opensynaptic.github.io"
+
+# Build Settings
+exclude:
+  - .github
+  - scripts
+  - tests
+  - plugins
+  - src
+  - libraries
+  - target
+  - venv
+  - .gitignore
+  - node_modules
+  - Gemfile
+  - Gemfile.lock
+
+# Language Support
+languages:
+  en:
+    name: "English"
+    code: "en"
+    path: "/en/"
+  zh:
+    name: "简体中文"
+    code: "zh"
+    path: "/zh/"
+
+# Default language
+default_language: "en"
+
+# Output settings
+sass:
+  style: compressed
+  load_paths:
+    - _sass
+
+# Plugin settings
+plugins:
+  - jekyll-seo-tag
+  - jekyll-feed
+  - jekyll-sitemap
+  - jekyll-gist
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: "default"
+      toc: true
+
+# Collections (for organized docs)
+collections:
+  guides:
+    output: true
+    permalink: /:collection/:path/

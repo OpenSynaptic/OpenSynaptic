@@ -2,6 +2,8 @@
 
 Use this page as the main entry point for repository documentation.
 
+> **🌐 Multi-Language Support**: [English](README.md) | [简体中文](zh/README.md) | [完整索引](index.html)
+
 **Snapshot date**: 2026-04-02 (local workspace)  
 **Total docs under `docs/`**: rolling; see [INDEX.md](INDEX.md) for current inventory
 

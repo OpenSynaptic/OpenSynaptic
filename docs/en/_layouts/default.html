@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="{{ page.language | default: site.default_language | default: 'en' }}">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>{{ page.title | default: site.title }}</title>
+    <meta name="description" content="{{ page.description | default: site.description }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{{ '/assets/css/style.css?v=' | append: site.github.build_revision | relative_url }}">
+    <link rel="alternate" hreflang="en" href="{{ '/' | relative_url }}" />
+    <link rel="alternate" hreflang="zh" href="{{ '/zh/' | relative_url }}" />
+    {% seo %}
+    {% feed_meta %}
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href="{{ '/' | relative_url }}">{{ site.title | default: 'OpenSynaptic' }}</a></h1>
+        <p>{{ site.description | default: '2-N-2 IoT Protocol Stack' }}</p>
+        
+        <div class="language-switcher">
+          <strong>Language:</strong>
+          {% if page.language == 'zh' %}
+            [简体中文] 
+            <a href="{{ page.url | replace: '/zh/', '/' }}">English</a>
+          {% else %}
+            <a href="/zh{{ page.url }}">中文</a>
+            [English]
+          {% endif %}
+        </div>
+        
+        <ul>
+          {% if page.language == 'zh' %}
+            <li><a href="{{ '/zh/' | relative_url }}">首页</a></li>
+            <li><a href="{{ '/zh/INDEX.md' | relative_url }}">文档索引</a></li>
+            <li><a href="{{ '/zh/ARCHITECTURE.md' | relative_url }}">架构</a></li>
+            <li><a href="{{ '/zh/API.md' | relative_url }}">API</a></li>
+          {% else %}
+            <li><a href="{{ '/' | relative_url }}">Home</a></li>
+            <li><a href="{{ '/INDEX.md' | relative_url }}">Documentation</a></li>
+            <li><a href="{{ '/ARCHITECTURE.md' | relative_url }}">Architecture</a></li>
+            <li><a href="{{ '/API.md' | relative_url }}">API</a></li>
+          {% endif %}
+          <li><a href="{{ site.github.repository_url | default: 'https://github.com/opensynaptic/opensynaptic' }}">View on GitHub</a></li>
+        </ul>
+      </header>
+      
+      <section>
+        {{ content }}
+        
+        {% if page.toc != false %}
+          <div class="toc">
+            * auto-gen TOC:
+            {:toc}
+          </div>
+        {% endif %}
+      </section>
+      
+      <footer>
+        <p>
+          {% if page.language == 'zh' %}
+            <small>托管在 <a href="https://pages.github.com">GitHub 页面</a> 上。语言：
+            <a href="{{ page.url | replace: '/zh/', '/' }}">English</a> | 
+            <strong>简体中文</strong></small>
+          {% else %}
+            <small>Hosted on <a href="https://pages.github.com">GitHub Pages</a>. Language:
+            <strong>English</strong> | 
+            <a href="/zh{{ page.url }}">中文</a></small>
+          {% endif %}
+        </p>
+        <p><small>Last updated: {{ 'now' | date: '%Y-%m-%d' }}</small></p>
+      </footer>
+    </div>
+    <script src="{{ '/assets/js/scale.fix.js' | relative_url }}"></script>
+  </body>
+</html>
