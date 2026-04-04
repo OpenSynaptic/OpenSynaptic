@@ -56,7 +56,7 @@ Invoke-Expression (register-python-argcomplete os-node --shell powershell)
 
 Restart PowerShell after activation.
 
-![OpenSynaptic Demo Quickstart](https://raw.githubusercontent.com/OpenSynaptic/OpenSynaptic/main/docs/assets/demo_quickstart.svg)
+![OpenSynaptic Demo Quickstart](https://raw.githubusercontent.com/OpenSynaptic/OpenSynaptic/main/_layouts/assets/demo_quickstart.svg)
 
 ---
 
