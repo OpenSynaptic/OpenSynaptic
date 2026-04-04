@@ -337,7 +337,7 @@ pie title 阶段级延迟分布
 - 延迟数据准确，但不要使用 pps 指标进行性能调优
 - 请使用 `batch_fused`（上方）进行真实的性能分析
 
-[完整基准报告](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-reports-FINAL_PERFORMANCE_REPORT)
+[完整基准报告](https://opensynaptic.github.io/en-reports-FINAL_PERFORMANCE_REPORT)
 
 ---
 
@@ -437,7 +437,7 @@ OpenSynaptic = manager.get_symbol('OpenSynaptic')
 | `RESOURCES.transporters_status` | map | `{}` | 遗留的合并兼容性映射（镜像层特定状态映射） |
 | `security_settings.drop_on_crc16_failure` | bool | `true` | CRC 校验失败时丢弃数据包 |
 
-完整架构 → [docs/CONFIG_SCHEMA.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)
+完整架构 → [docs/CONFIG_SCHEMA.md](https://opensynaptic.github.io/en-CONFIG_SCHEMA)
 
 ---
 
@@ -548,15 +548,15 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 
 ## 添加传输器
 
-见 [传输器插件指南](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）。
+见 [传输器插件指南](https://opensynaptic.github.io/en-TRANSPORTER_PLUGIN)（英文）。
 
 ---
 
 ## API 参考
 
-见 [API 文档](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-API)（英文）。
+见 [API 文档](https://opensynaptic.github.io/en-API)（英文）。
 
-核心 API 和加载器参考 → [核心 API 文档](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CORE_API)（英文）
+核心 API 和加载器参考 → [核心 API 文档](https://opensynaptic.github.io/en-CORE_API)（英文）
 
 ---
 
@@ -564,13 +564,13 @@ python -u scripts/extreme_validation_pipeline.py --scale extreme --strict
 
 **所有文档**（均有中英文版本）：
 
-- 仓库文档地图：[Navigation-EN](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)
-- 从这里开始：[Wiki 首页](https://github.com/OpenSynaptic/OpenSynaptic/wiki)
-- 架构详解：[ARCHITECTURE](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ARCHITECTURE)
-- 配置架构：[CONFIG_SCHEMA](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)（英文）
-- 传输器/插件扩展：[TRANSPORTER_PLUGIN](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)（英文）
-- ID 租赁系统：[ID_LEASE_SYSTEM](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_SYSTEM)（英文）
-- 国际化支持：[I18N](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-I18N)（英文）
+- 仓库文档地图：[Navigation-EN](https://opensynaptic.github.io/Navigation-EN)
+- 从这里开始：[Wiki 首页](https://opensynaptic.github.io/)
+- 架构详解：[ARCHITECTURE](https://opensynaptic.github.io/en-ARCHITECTURE)
+- 配置架构：[CONFIG_SCHEMA](https://opensynaptic.github.io/en-CONFIG_SCHEMA)（英文）
+- 传输器/插件扩展：[TRANSPORTER_PLUGIN](https://opensynaptic.github.io/en-TRANSPORTER_PLUGIN)（英文）
+- ID 租赁系统：[ID_LEASE_SYSTEM](https://opensynaptic.github.io/en-ID_LEASE_SYSTEM)（英文）
+- 国际化支持：[I18N](https://opensynaptic.github.io/en-I18N)（英文）
 
 ---
 

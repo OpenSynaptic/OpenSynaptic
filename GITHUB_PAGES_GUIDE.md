@@ -15,7 +15,7 @@ OpenSynaptic documentation now supports **multiple languages** on GitHub Pages.
 
 ### Accessing Documentation
 
-1. **Visit Language Selector**: Open [Wiki Home](https://github.com/OpenSynaptic/OpenSynaptic/wiki) in browser
+1. **Visit Language Selector**: Open [Wiki Home](https://opensynaptic.github.io/) in browser
 2. **Switch Languages**: Click language cards to navigate
 3. **Direct URLs**:
    - English: `https://opensynaptic.github.io/`
@@ -209,7 +209,7 @@ bundle exec jekyll build
 
 ## Reference
 
-- **Multi-Language Guide**: [docs/MULTI_LANGUAGE_GUIDE.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-MULTI_LANGUAGE_GUIDE)
+- **Multi-Language Guide**: [docs/MULTI_LANGUAGE_GUIDE.md](https://opensynaptic.github.io/en-MULTI_LANGUAGE_GUIDE)
 - **Jekyll Docs**: https://jekyllrb.com/
 - **GitHub Pages**: https://pages.github.com/
 - **Markdown Guide**: https://www.markdownguide.org/
@@ -218,7 +218,7 @@ bundle exec jekyll build
 
 ## Questions?
 
-1. Check [MULTI_LANGUAGE_GUIDE.md](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-MULTI_LANGUAGE_GUIDE) for detailed info
+1. Check [MULTI_LANGUAGE_GUIDE.md](https://opensynaptic.github.io/en-MULTI_LANGUAGE_GUIDE) for detailed info
 2. Review example files in `docs/zh/`
 3. Open an issue on GitHub
 4. Check GitHub Actions logs for deployment errors
