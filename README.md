@@ -345,7 +345,7 @@ pie title Per-Stage Latency Distribution
 - Latency data accuracy , but don't use pps metric for performance tuning
 - Use batch_fused (above) for realistic performance profiling
 
- [Full Benchmark Report](https://opensynaptic.github.io/en-reports-FINAL_PERFORMANCE_REPORT)
+ [Full Benchmark Report](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-reports-FINAL_PERFORMANCE_REPORT)
 
 ---
 
@@ -470,7 +470,7 @@ Key fields:
 | `RESOURCES.transporters_status` | map | `{}` | Legacy merged compatibility map (mirrors layer-specific status maps) |
 | `security_settings.drop_on_crc16_failure` | bool | `true` | Drop packets with bad CRC |
 
-Full schema → [`docs/CONFIG_SCHEMA.md`](https://opensynaptic.github.io/en-CONFIG_SCHEMA)
+Full schema → [`docs/CONFIG_SCHEMA.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)
 
 ---
 
@@ -581,28 +581,28 @@ It also updates per-suite benchmark artifacts under `data/benchmarks/` (compare,
 
 ## Adding a Transporter
 
-See [`docs/TRANSPORTER_PLUGIN.md`](https://opensynaptic.github.io/en-TRANSPORTER_PLUGIN).
+See [`docs/TRANSPORTER_PLUGIN.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN).
 
 ---
 
 ## API Reference
 
-See [`docs/API.md`](https://opensynaptic.github.io/en-API).
+See [`docs/API.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-API).
 
-Core facade and loader reference -> [`docs/CORE_API.md`](https://opensynaptic.github.io/en-CORE_API)
+Core facade and loader reference -> [`docs/CORE_API.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CORE_API)
 
 ---
 
 ## Documentation Hub
 
-- Repository docs map: [`docs/INDEX.md`](https://opensynaptic.github.io/Navigation-EN)
-- Start here: [`docs/README.md`](https://opensynaptic.github.io/)
-- Architecture walkthrough: [`docs/ARCHITECTURE.md`](https://opensynaptic.github.io/en-ARCHITECTURE)
-- Config schema: [`docs/CONFIG_SCHEMA.md`](https://opensynaptic.github.io/en-CONFIG_SCHEMA)
-- Transporter/plugin extension: [`docs/TRANSPORTER_PLUGIN.md`](https://opensynaptic.github.io/en-TRANSPORTER_PLUGIN)
-- Core internals: [`docs/internal/PYCORE_INTERNALS.md`](https://opensynaptic.github.io/en-internal-PYCORE_INTERNALS)
-- Rust core references: [`docs/RSCORE_API.md`](https://opensynaptic.github.io/en-RSCORE_API), [`docs/PYCORE_RUST_API.md`](https://opensynaptic.github.io/en-PYCORE_RUST_API)
-- ID lease docs: [`docs/ID_LEASE_SYSTEM.md`](https://opensynaptic.github.io/en-ID_LEASE_SYSTEM), [`docs/ID_LEASE_CONFIG_REFERENCE.md`](https://opensynaptic.github.io/en-ID_LEASE_CONFIG_REFERENCE)
+- Repository docs map: [`docs/INDEX.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)
+- Start here: [`docs/README.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Home)
+- Architecture walkthrough: [`docs/ARCHITECTURE.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ARCHITECTURE)
+- Config schema: [`docs/CONFIG_SCHEMA.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)
+- Transporter/plugin extension: [`docs/TRANSPORTER_PLUGIN.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)
+- Core internals: [`docs/internal/PYCORE_INTERNALS.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-internal-PYCORE_INTERNALS)
+- Rust core references: [`docs/RSCORE_API.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-RSCORE_API), [`docs/PYCORE_RUST_API.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-PYCORE_RUST_API)
+- ID lease docs: [`docs/ID_LEASE_SYSTEM.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_SYSTEM), [`docs/ID_LEASE_CONFIG_REFERENCE.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_CONFIG_REFERENCE)
 
 ---
 

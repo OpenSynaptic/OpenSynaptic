@@ -250,7 +250,7 @@ If you want to use this optimized wiki:
    ```
 
 3. **Access the Wiki**
-   Visit: `https://opensynaptic.github.io/`
+   Visit: `https://github.com/OpenSynaptic/OpenSynaptic/wiki/Home`
 
 ---
 
