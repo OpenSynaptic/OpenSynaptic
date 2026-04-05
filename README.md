@@ -7,14 +7,14 @@
 🌍 **All documentation has been moved to our comprehensive Wiki.** Choose your language and start exploring:
 
 ### English Documentation
-- **[📖 Full Wiki Navigation](OpenSynaptic.wiki/en_GB/Navigation.md)** — Complete English documentation index
-- **[🏠 Wiki Home](OpenSynaptic.wiki/en_GB/Home.md)** — Start here for role-based navigation
-- **[🔍 Complete Index](OpenSynaptic.wiki/en_GB/INDEX.md)** — All 110+ English documents
+- **[📖 Full Docs Navigation](https://opensynaptic.github.io/docs/Navigation)** — Complete English documentation index
+- **[🏠 Docs Home](https://opensynaptic.github.io)** — Start here for role-based navigation
+- **[🔍 Complete Index](https://opensynaptic.github.io/docs/readme)** — All 110+ English documents
 
 ### 中文文档 (Chinese)
-- **[📖 完整导航](OpenSynaptic.wiki/zh_CN/Navigation.md)** — 完整的中文文档索引
-- **[🏠 Wiki 首页](OpenSynaptic.wiki/zh_CN/Home.md)** — 中文首页
-- **[🔍 完整索引](OpenSynaptic.wiki/zh_CN/INDEX.md)** — 所有 91+ 中文文档
+- **[📖 完整导航](https://opensynaptic.github.io/zh-CN/docs/Navigation)** — 完整的中文文档索引
+- **[🏠 文档首页](https://opensynaptic.github.io/zh-CN/)** — 中文首页
+- **[🔍 完整索引](https://opensynaptic.github.io/zh-CN/docs/INDEX)** — 所有 91+ 中文文档
 
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat&logo=python&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?style=flat&logo=windows&logoColor=white)
@@ -246,7 +246,7 @@ When you deploy IoT sensors from different vendors, you face three universal hea
 | **Payload size** (temperature: 23.5°C) | ~60 bytes | ~40 bytes | **~16 bytes** |
 | **Compression ratio** (vs. JSON) | N/A | N/A | **60–80% reduction** |
 
-*OpenSynaptic: batch_fused mode, 16 processes, R5 9600X. See [Performance at a Glance](#performance-at-a-glance).*
+*OpenSynaptic: batch_fused mode, 16 processes, R5 9600X. See [Performance at a Glance](https://opensynaptic.github.io/zh-CN/docs/reports/reports-PERFORMANCE_OPTIMIZATION_REPORT).*
 
 > ⚠️ **Important**: These are **protocol + serialization** benchmarks, not end-to-end network latency. MQTT/CoAP add 1–10 ms for broker/network round trips — OpenSynaptic would add the same when deployed over real networks. The advantage is in **processing efficiency**, not physics-defying network speed.
 
@@ -345,7 +345,7 @@ pie title Per-Stage Latency Distribution
 - Latency data accuracy , but don't use pps metric for performance tuning
 - Use batch_fused (above) for realistic performance profiling
 
- [Full Benchmark Report](OpenSynaptic.wiki/en_GB/reports-FINAL_PERFORMANCE_REPORT.md)
+ [Full Benchmark Report](https://opensynaptic.github.io/docs/reports/reports-FINAL_PERFORMANCE_REPORT)
 
 ---
 
@@ -452,7 +452,7 @@ All commands are available via `os-node` (installed entrypoint), `./run-main.cmd
 | **Monitor** | `db-status` | Show DB engine status |
 | **Monitor** | `help` | Print full help |
 
-Full usage examples → [`docs/opensynaptic/en_GB/README.md`](docs/opensynaptic/en_GB/README.md)
+Full usage examples → [`docs/README.md`](https://opensynaptic.github.io/docs/README)
 
 ---
 
@@ -470,7 +470,7 @@ Key fields:
 | `RESOURCES.transporters_status` | map | `{}` | Legacy merged compatibility map (mirrors layer-specific status maps) |
 | `security_settings.drop_on_crc16_failure` | bool | `true` | Drop packets with bad CRC |
 
-Full schema → [`docs/opensynaptic/en_GB/CONFIG_SCHEMA.md`](docs/opensynaptic/en_GB/CONFIG_SCHEMA.md)
+Full schema → [`docs/CONFIG_SCHEMA.md`](https://opensynaptic.github.io/docs/CONFIG_SCHEMA)
 
 ---
 
@@ -581,28 +581,28 @@ It also updates per-suite benchmark artifacts under `data/benchmarks/` (compare,
 
 ## Adding a Transporter
 
-See [`docs/opensynaptic/en_GB/TRANSPORTER_PLUGIN.md`](docs/opensynaptic/en_GB/TRANSPORTER_PLUGIN.md).
+See [`docs/TRANSPORTER_PLUGIN.md`](https://opensynaptic.github.io/docs/TRANSPORTER_PLUGIN).
 
 ---
 
 ## API Reference
 
-See [`docs/opensynaptic/en_GB/API.md`](docs/opensynaptic/en_GB/API.md).
+See [`docs/API.md`](https://opensynaptic.github.io/docs/API).
 
-Core facade and loader reference -> [`docs/opensynaptic/en_GB/CORE_API.md`](docs/opensynaptic/en_GB/CORE_API.md)
+Core facade and loader reference -> [`docs/CORE_API.md`](https://opensynaptic.github.io/docs/CORE_API)
 
 ---
 
 ## Documentation Hub
 
-- Repository docs map: [`docs/opensynaptic/en_GB/Navigation.md`](docs/opensynaptic/en_GB/Navigation.md)
-- Start here: [`docs/opensynaptic/en_GB/Home.md`](docs/opensynaptic/en_GB/Home.md)
-- Architecture walkthrough: [`docs/opensynaptic/en_GB/ARCHITECTURE.md`](docs/opensynaptic/en_GB/ARCHITECTURE.md)
-- Config schema: [`docs/opensynaptic/en_GB/CONFIG_SCHEMA.md`](docs/opensynaptic/en_GB/CONFIG_SCHEMA.md)
-- Transporter/plugin extension: [`docs/opensynaptic/en_GB/TRANSPORTER_PLUGIN.md`](docs/opensynaptic/en_GB/TRANSPORTER_PLUGIN.md)
-- Core internals: [`docs/opensynaptic/en_GB/internal/internal-PYCORE_INTERNALS.md`](docs/opensynaptic/en_GB/internal/internal-PYCORE_INTERNALS.md)
-- Rust core references: [`docs/opensynaptic/en_GB/RSCORE_API.md`](docs/opensynaptic/en_GB/RSCORE_API.md), [`docs/opensynaptic/en_GB/PYCORE_RUST_API.md`](docs/opensynaptic/en_GB/PYCORE_RUST_API.md)
-- ID lease docs: [`docs/opensynaptic/en_GB/ID_LEASE_SYSTEM.md`](docs/opensynaptic/en_GB/ID_LEASE_SYSTEM.md), [`docs/opensynaptic/en_GB/ID_LEASE_CONFIG_REFERENCE.md`](docs/opensynaptic/en_GB/ID_LEASE_CONFIG_REFERENCE.md)
+- Repository docs map: [`docs/Navigation.md`](https://opensynaptic.github.io/docs/Navigation)
+- Start here: [`docs/Home.md`](https://opensynaptic.github.io/docs/Home)
+- Architecture walkthrough: [`docs/ARCHITECTURE.md`](https://opensynaptic.github.io/docs/ARCHITECTURE)
+- Config schema: [`docs/CONFIG_SCHEMA.md`](https://opensynaptic.github.io/docs/CONFIG_SCHEMA)
+- Transporter/plugin extension: [`docs/TRANSPORTER_PLUGIN.md`](https://opensynaptic.github.io/docs/TRANSPORTER_PLUGIN)
+- Core internals: [`docs/internal/internal-PYCORE_INTERNALS.md`](https://opensynaptic.github.io/docs/internal/internal-PYCORE_INTERNALS)
+- Rust core references: [`docs/RSCORE_API.md`](https://opensynaptic.github.io/docs/RSCORE_API), [`docs/PYCORE_RUST_API.md`](https://opensynaptic.github.io/docs/PYCORE_RUST_API)
+- ID lease docs: [`docs/ID_LEASE_SYSTEM.md`](https://opensynaptic.github.io/docs/ID_LEASE_SYSTEM), [`docs/ID_LEASE_CONFIG_REFERENCE.md`](https://opensynaptic.github.io/docs/ID_LEASE_CONFIG_REFERENCE)
 
 ---
 
