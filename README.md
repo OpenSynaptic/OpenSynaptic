@@ -7,14 +7,14 @@
 🌍 **All documentation has been moved to our comprehensive Wiki.** Choose your language and start exploring:
 
 ### English Documentation
-- **[📖 Full Wiki Navigation](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-EN.md)** — Complete English documentation index
-- **[🏠 Wiki Home](OpenSynaptic_Wiki/OpenSynaptic.wiki/Home.md)** — Start here for role-based navigation
-- **[🔍 Complete Index](OpenSynaptic_Wiki/OpenSynaptic.wiki/en-INDEX.md)** — All 110+ English documents
+- **[📖 Full Wiki Navigation](OpenSynaptic.wiki/en_GB/Navigation.md)** — Complete English documentation index
+- **[🏠 Wiki Home](OpenSynaptic.wiki/en_GB/Home.md)** — Start here for role-based navigation
+- **[🔍 Complete Index](OpenSynaptic.wiki/en_GB/INDEX.md)** — All 110+ English documents
 
 ### 中文文档 (Chinese)
-- **[📖 完整导航](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-ZH.md)** — 完整的中文文档索引
-- **[🏠 Wiki 首页](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-Home.md)** — 中文首页
-- **[🔍 完整索引](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-INDEX.md)** — 所有 91+ 中文文档
+- **[📖 完整导航](OpenSynaptic.wiki/zh_CN/Navigation.md)** — 完整的中文文档索引
+- **[🏠 Wiki 首页](OpenSynaptic.wiki/zh_CN/Home.md)** — 中文首页
+- **[🔍 完整索引](OpenSynaptic.wiki/zh_CN/INDEX.md)** — 所有 91+ 中文文档
 
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat&logo=python&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?style=flat&logo=windows&logoColor=white)
@@ -345,7 +345,7 @@ pie title Per-Stage Latency Distribution
 - Latency data accuracy , but don't use pps metric for performance tuning
 - Use batch_fused (above) for realistic performance profiling
 
- [Full Benchmark Report](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-reports-FINAL_PERFORMANCE_REPORT)
+ [Full Benchmark Report](OpenSynaptic.wiki/en_GB/reports-FINAL_PERFORMANCE_REPORT.md)
 
 ---
 
@@ -452,7 +452,7 @@ All commands are available via `os-node` (installed entrypoint), `./run-main.cmd
 | **Monitor** | `db-status` | Show DB engine status |
 | **Monitor** | `help` | Print full help |
 
-Full usage examples → [`src/opensynaptic/CLI/README.md`](src/opensynaptic/CLI/README.md)
+Full usage examples → [`docs/opensynaptic/en_GB/README.md`](docs/opensynaptic/en_GB/README.md)
 
 ---
 
@@ -470,7 +470,7 @@ Key fields:
 | `RESOURCES.transporters_status` | map | `{}` | Legacy merged compatibility map (mirrors layer-specific status maps) |
 | `security_settings.drop_on_crc16_failure` | bool | `true` | Drop packets with bad CRC |
 
-Full schema → [`docs/CONFIG_SCHEMA.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)
+Full schema → [`docs/opensynaptic/en_GB/CONFIG_SCHEMA.md`](docs/opensynaptic/en_GB/CONFIG_SCHEMA.md)
 
 ---
 
@@ -581,28 +581,28 @@ It also updates per-suite benchmark artifacts under `data/benchmarks/` (compare,
 
 ## Adding a Transporter
 
-See [`docs/TRANSPORTER_PLUGIN.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN).
+See [`docs/opensynaptic/en_GB/TRANSPORTER_PLUGIN.md`](docs/opensynaptic/en_GB/TRANSPORTER_PLUGIN.md).
 
 ---
 
 ## API Reference
 
-See [`docs/API.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-API).
+See [`docs/opensynaptic/en_GB/API.md`](docs/opensynaptic/en_GB/API.md).
 
-Core facade and loader reference -> [`docs/CORE_API.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CORE_API)
+Core facade and loader reference -> [`docs/opensynaptic/en_GB/CORE_API.md`](docs/opensynaptic/en_GB/CORE_API.md)
 
 ---
 
 ## Documentation Hub
 
-- Repository docs map: [`docs/INDEX.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/Navigation-EN)
-- Start here: [`docs/README.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki)
-- Architecture walkthrough: [`docs/ARCHITECTURE.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ARCHITECTURE)
-- Config schema: [`docs/CONFIG_SCHEMA.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-CONFIG_SCHEMA)
-- Transporter/plugin extension: [`docs/TRANSPORTER_PLUGIN.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-TRANSPORTER_PLUGIN)
-- Core internals: [`docs/internal/PYCORE_INTERNALS.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-internal-PYCORE_INTERNALS)
-- Rust core references: [`docs/RSCORE_API.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-RSCORE_API), [`docs/PYCORE_RUST_API.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-PYCORE_RUST_API)
-- ID lease docs: [`docs/ID_LEASE_SYSTEM.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_SYSTEM), [`docs/ID_LEASE_CONFIG_REFERENCE.md`](https://github.com/OpenSynaptic/OpenSynaptic/wiki/en-ID_LEASE_CONFIG_REFERENCE)
+- Repository docs map: [`docs/opensynaptic/en_GB/Navigation.md`](docs/opensynaptic/en_GB/Navigation.md)
+- Start here: [`docs/opensynaptic/en_GB/Home.md`](docs/opensynaptic/en_GB/Home.md)
+- Architecture walkthrough: [`docs/opensynaptic/en_GB/ARCHITECTURE.md`](docs/opensynaptic/en_GB/ARCHITECTURE.md)
+- Config schema: [`docs/opensynaptic/en_GB/CONFIG_SCHEMA.md`](docs/opensynaptic/en_GB/CONFIG_SCHEMA.md)
+- Transporter/plugin extension: [`docs/opensynaptic/en_GB/TRANSPORTER_PLUGIN.md`](docs/opensynaptic/en_GB/TRANSPORTER_PLUGIN.md)
+- Core internals: [`docs/opensynaptic/en_GB/internal/internal-PYCORE_INTERNALS.md`](docs/opensynaptic/en_GB/internal/internal-PYCORE_INTERNALS.md)
+- Rust core references: [`docs/opensynaptic/en_GB/RSCORE_API.md`](docs/opensynaptic/en_GB/RSCORE_API.md), [`docs/opensynaptic/en_GB/PYCORE_RUST_API.md`](docs/opensynaptic/en_GB/PYCORE_RUST_API.md)
+- ID lease docs: [`docs/opensynaptic/en_GB/ID_LEASE_SYSTEM.md`](docs/opensynaptic/en_GB/ID_LEASE_SYSTEM.md), [`docs/opensynaptic/en_GB/ID_LEASE_CONFIG_REFERENCE.md`](docs/opensynaptic/en_GB/ID_LEASE_CONFIG_REFERENCE.md)
 
 ---
 
