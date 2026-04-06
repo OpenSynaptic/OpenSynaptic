@@ -3,7 +3,6 @@ import socket
 import time
 import threading
 import copy
-from typing import Any, Dict
 from pathlib import Path
 from .standardization import OpenSynapticStandardizer
 from .solidity import OpenSynapticEngine
@@ -28,13 +27,7 @@ try:
     from opensynaptic.services.db_engine import DatabaseManager
 except Exception:
     DatabaseManager = None
-try:
-    from plugins.id_allocator import IDAllocator
-except ImportError:
-    import sys
-    # pycore/core.py is one level deeper than the old core.py layout.
-    sys.path.append(str(Path(__file__).resolve().parents[4]))
-    from plugins.id_allocator import IDAllocator
+from opensynaptic.utils.id_allocator import IDAllocator
 
 class OpenSynaptic:
     MAX_UINT32 = 4294967295
@@ -54,7 +47,15 @@ class OpenSynaptic:
 
     # noinspection PyTypeChecker
     def _create_default_config(self):
-        template: Dict[str, Any] = self._load_json(get_project_config_path()) or {}
+        # 确保 parent[key] 始终是 dict 并返回其引用
+        def _d(parent, key):
+            v = parent.get(key)
+            if not isinstance(v, dict):
+                v = {}
+                parent[key] = v
+            return v
+
+        template = read_json(get_project_config_path()) or {}
         if not isinstance(template, dict):
             template = {}
         if not template:
@@ -74,76 +75,39 @@ class OpenSynaptic:
                 'RESOURCES': {},
                 'security_settings': {},
             }
-        cfg: Dict[str, Any] = copy.deepcopy(template)
+        cfg = copy.deepcopy(template)
         cfg['config_version'] = int(cfg.get('config_version', self.CONFIG_VERSION) or self.CONFIG_VERSION)
-        if 'first_run' not in cfg:
-            cfg['first_run'] = True
-        if 'device_id' not in cfg:
-            cfg['device_id'] = 'DEMO_NODE'
+        cfg.setdefault('first_run', True)
+        cfg.setdefault('device_id', 'DEMO_NODE')
         if cfg.get('assigned_id') in (None, '', 0, '0', self.MAX_UINT32, str(self.MAX_UINT32)):
             cfg['assigned_id'] = 1
 
-        settings = cfg.get('OpenSynaptic_Setting')
-        if not isinstance(settings, dict):
-            settings = {}
-            cfg['OpenSynaptic_Setting'] = settings
-        settings['default_medium'] = 'UDP'
+        _d(cfg, 'OpenSynaptic_Setting')['default_medium'] = 'UDP'
 
-        client = cfg.get('Client_Core')
-        if not isinstance(client, dict):
-            client = {}
-            cfg['Client_Core'] = client
+        client = _d(cfg, 'Client_Core')
         client['server_host'] = '127.0.0.1'
         client['server_port'] = 8080
 
-        server = cfg.get('Server_Core')
-        if not isinstance(server, dict):
-            server = {}
-            cfg['Server_Core'] = server
-        if 'Start_ID' not in server:
-            server['Start_ID'] = 1
-        if 'End_ID' not in server:
-            server['End_ID'] = 4294967294
+        server = _d(cfg, 'Server_Core')
+        server.setdefault('Start_ID', 1)
+        server.setdefault('End_ID', 4294967294)
         server['host'] = '127.0.0.1'
         server['port'] = 8080
 
-        resources = cfg.get('RESOURCES')
-        if not isinstance(resources, dict):
-            resources = {}
-            cfg['RESOURCES'] = resources
-        if 'registry' not in resources:
-            resources['registry'] = 'data/device_registry/'
+        resources = _d(cfg, 'RESOURCES')
+        resources.setdefault('registry', 'data/device_registry/')
 
-        app_status = resources.get('application_status')
-        if not isinstance(app_status, dict):
-            app_status = {}
-            resources['application_status'] = app_status
-        if 'mqtt' not in app_status:
-            app_status['mqtt'] = False
-        if 'matter' not in app_status:
-            app_status['matter'] = False
-        if 'zigbee' not in app_status:
-            app_status['zigbee'] = False
+        app_status = _d(resources, 'application_status')
+        for k in ('mqtt', 'matter', 'zigbee'):
+            app_status.setdefault(k, False)
 
-        transport_status = resources.get('transport_status')
-        if not isinstance(transport_status, dict):
-            transport_status = {}
-            resources['transport_status'] = transport_status
-        transport_status.setdefault('udp', True)
-        transport_status.setdefault('tcp', False)
-        transport_status.setdefault('quic', False)
-        transport_status.setdefault('iwip', False)
-        transport_status.setdefault('uip', False)
+        transport_status = _d(resources, 'transport_status')
+        for k, v in (('udp', True), ('tcp', False), ('quic', False), ('iwip', False), ('uip', False)):
+            transport_status.setdefault(k, v)
 
-        physical_status = resources.get('physical_status')
-        if not isinstance(physical_status, dict):
-            physical_status = {}
-            resources['physical_status'] = physical_status
-        physical_status.setdefault('uart', False)
-        physical_status.setdefault('rs485', False)
-        physical_status.setdefault('can', False)
-        physical_status.setdefault('lora', False)
-        physical_status.setdefault('bluetooth', False)
+        physical_status = _d(resources, 'physical_status')
+        for k in ('uart', 'rs485', 'can', 'lora', 'bluetooth'):
+            physical_status.setdefault(k, False)
 
         resources['transporters_status'] = {
             **{k: bool(v) for k, v in app_status.items()},
@@ -151,44 +115,22 @@ class OpenSynaptic:
             **{k: bool(v) for k, v in physical_status.items()},
         }
 
-        app_cfg = resources.get('application_config')
-        if not isinstance(app_cfg, dict):
-            app_cfg = {}
-            resources['application_config'] = app_cfg
+        app_cfg = _d(resources, 'application_config')
         app_cfg.setdefault('mqtt', {'enabled': False})
         app_cfg.setdefault('matter', {'enabled': False, 'protocol': 'tcp', 'host': '127.0.0.1', 'port': 5540, 'timeout': 2.0})
         app_cfg.setdefault('zigbee', {'enabled': False, 'protocol': 'udp', 'host': '127.0.0.1', 'port': 6638, 'timeout': 2.0})
 
-        transport_cfg = resources.get('transport_config')
-        if not isinstance(transport_cfg, dict):
-            transport_cfg = {}
-            resources['transport_config'] = transport_cfg
-        transport_cfg.setdefault('udp', {'host': '127.0.0.1', 'port': 8080})
+        _d(resources, 'transport_config').setdefault('udp', {'host': '127.0.0.1', 'port': 8080})
 
-        physical_cfg = resources.get('physical_config')
-        if not isinstance(physical_cfg, dict):
-            physical_cfg = {}
-            resources['physical_config'] = physical_cfg
-        physical_cfg.setdefault('uart', {})
-        physical_cfg.setdefault('rs485', {})
-        physical_cfg.setdefault('can', {})
-        physical_cfg.setdefault('lora', {})
+        physical_cfg = _d(resources, 'physical_config')
+        for k in ('uart', 'rs485', 'can', 'lora'):
+            physical_cfg.setdefault(k, {})
         physical_cfg.setdefault('bluetooth', {'enabled': False, 'protocol': 'udp', 'host': '127.0.0.1', 'port': 5454, 'timeout': 2.0})
 
-        service_plugins = resources.get('service_plugins')
-        if not isinstance(service_plugins, dict):
-            service_plugins = {}
-            resources['service_plugins'] = service_plugins
-        web_cfg = service_plugins.get('web_user')
-        if not isinstance(web_cfg, dict):
-            web_cfg = {}
-            service_plugins['web_user'] = web_cfg
-        web_cfg.setdefault('enabled', True)
-        web_cfg.setdefault('mode', 'manual')
-        web_cfg.setdefault('host', '127.0.0.1')
-        web_cfg.setdefault('port', 8765)
-        web_cfg.setdefault('auto_start', False)
-        web_cfg.setdefault('auth_enabled', False)
+        web_cfg = _d(_d(resources, 'service_plugins'), 'web_user')
+        for k, v in (('enabled', True), ('mode', 'manual'), ('host', '127.0.0.1'), ('port', 8765), ('auto_start', False), ('auth_enabled', False)):
+            web_cfg.setdefault(k, v)
+
         return cfg
 
     def _ensure_config_exists(self):
@@ -198,7 +140,7 @@ class OpenSynaptic:
             return False
         legacy = Path(get_project_config_path())
         if legacy.exists() and legacy.resolve() != cfg_path.resolve():
-            base = self._load_json(str(legacy)) or {}
+            base = read_json(str(legacy)) or {}
             if not isinstance(base, dict):
                 base = {}
             changed = self._deep_merge_missing(base, self._create_default_config())
@@ -228,7 +170,7 @@ class OpenSynaptic:
             self.config_path = str(Path(get_user_config_path()))
         self.base_dir = str(Path(self.config_path).resolve().parent)
         self._ensure_config_exists()
-        self.config = self._load_json(self.config_path) or {}
+        self.config = read_json(self.config_path) or {}
         self.settings = self.config.get('OpenSynaptic_Setting', {})
         self.res_conf = self.config.get('RESOURCES', {})
         self.security_settings = self.config.get('security_settings', {})
@@ -290,12 +232,16 @@ class OpenSynaptic:
             registry_dir=registry_dir,
             expire_seconds=int(self.security_settings.get('secure_session_expire_seconds', 86400)),
             secure_store_path=secure_store_path,
+            device_role=str(self.settings.get('device_role', 'duplex') or 'duplex'),
         )
         self.protocol.min_valid_timestamp = int(self.security_settings.get('time_sync_threshold', self.protocol.min_valid_timestamp))
         self.protocol.id_allocator = self.id_allocator
         self.protocol.parser = self.fusion
         try:
             self.fusion.protocol = self.protocol
+            # rx_only 角色跳过时间戳解码（constrained receiver 不关心时间）
+            if getattr(self.protocol, 'device_role', 'duplex') == 'rx_only':
+                self.fusion.skip_ts_decode = True
         except Exception as e:
             os_log.err('FUS', 'ASSIGN', e, {})
         self.active_transporters = {}
@@ -341,12 +287,7 @@ class OpenSynaptic:
         return 0
 
     def _apply_fusion_local_id(self, value):
-        set_local_id = getattr(self.fusion, '_set_local_id', None)
-        if callable(set_local_id):
-            set_local_id(value)
-        else:
-            self.fusion.local_id = value
-            self.fusion.local_id_str = str(value)
+        self.fusion._set_local_id(value)
 
     def _sync_assigned_id_to_fusion(self):
         try:
@@ -408,9 +349,6 @@ class OpenSynaptic:
             if now_ts - int(self._lease_metrics_last_flush or 0) >= self._lease_metrics_flush_interval:
                 self._save_config()
                 self._lease_metrics_last_flush = now_ts
-
-    def _load_json(self, path):
-        return read_json(path)
 
     def _to_wire_payload(self, payload, config=None, force_zero_copy=False):
         active_cfg = config if isinstance(config, dict) else self.config
@@ -508,14 +446,23 @@ class OpenSynaptic:
     def transmit(self, sensors, device_id=None, device_status='ONLINE', **kwargs):
         if self._is_id_missing():
             raise RuntimeError(f"[transmit] Device '{self.device_id}' has no assigned physical ID. Call ensure_id() first.")
-        try:
-            outbound_ts = int(float(kwargs.get('t', time.time())))
-        except Exception:
-            outbound_ts = int(time.time())
-        if outbound_ts < int(getattr(self.protocol, 'min_valid_timestamp', 1000000)) and (not self.protocol.has_secure_dict(self.assigned_id)):
-            synced_time = self.ensure_time()
-            if synced_time:
-                kwargs['t'] = synced_time
+        no_ts = bool(kwargs.pop('no_timestamp', False))
+        if no_ts:
+            # 无 RTC 设备：写入 sentinel TS=0，服务器会盖章并回复服务器时间
+            kwargs['t'] = 0
+        else:
+            try:
+                outbound_ts = int(float(kwargs.get('t', time.time())))
+            except Exception:
+                outbound_ts = int(time.time())
+            if outbound_ts < int(getattr(self.protocol, 'min_valid_timestamp', 1000000)) and (not self.protocol.has_secure_dict(self.assigned_id)):
+                # 优先使用 ID_ASSIGN 已损带的时间，无需额外一次 UDP 往返
+                cached_srv_t = getattr(self.protocol, 'last_server_time', 0)
+                if cached_srv_t > int(getattr(self.protocol, 'min_valid_timestamp', 1000000)):
+                    kwargs['t'] = cached_srv_t
+                else:
+                    synced_time = self.ensure_time()
+                    kwargs['t'] = synced_time if synced_time else int(time.time())
         target_name = device_id or self.device_id
         fact = self.standardizer.standardize(target_name, device_status, sensors, **kwargs)
         if self.db_manager:
@@ -525,9 +472,9 @@ class OpenSynaptic:
                 os_log.err('DB', 'EXPORT', e, {})
         compressed_str = self.engine.compress(fact)
         raw_input_str = f'{self.assigned_id};{compressed_str}'
-        decomp = self.fusion._auto_decompose(raw_input_str)
-        src_aid = decomp[3] if decomp else self.assigned_id
-        ts_raw = self.fusion._decode_ts_token(decomp[0]) if decomp else 0
+        src_aid = int(self.assigned_id or 0)
+        _t = fact.get('t', 0)
+        ts_raw = (int(_t * 1000) if self.engine.USE_MS and _t < 10 ** 11 else int(_t)) if _t else 0
         reg = self.fusion._get_active_registry(src_aid)
         has_template = len(reg['data']['templates']) > 0
         strategy_label = self.protocol.get_strategy(src_aid, has_template)
@@ -542,6 +489,11 @@ class OpenSynaptic:
     def transmit_fast(self, sensors=None, device_id=None, device_status='ONLINE', **kwargs):
         # pycore keeps the same semantics as transmit; rscore can override with fused FFI.
         return self.transmit(sensors=sensors, device_id=device_id, device_status=device_status, **kwargs)
+
+    def transmit_notimestamp(self, sensors=None, device_id=None, device_status='ONLINE', **kwargs):
+        """RTC-less 设备专用入口。发挂 sentinel TS=0，服务器盖章并回复当前时间。
+        收到回复后 last_server_time 更新，后续调用 transmit() 即可自动使用真实时间戳。"""
+        return self.transmit(sensors=sensors, device_id=device_id, device_status=device_status, no_timestamp=True, **kwargs)
 
     def transmit_batch(self, batch_items, **kwargs):
         out = []

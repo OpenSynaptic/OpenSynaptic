@@ -13,9 +13,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(feature = "worker")]
+use std::sync::mpsc::{sync_channel, SyncSender, Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
+use bumpalo::Bump;
+use smallvec::SmallVec;
 #[cfg(feature = "python-module")]
 use pyo3::prelude::*;
 
@@ -177,15 +182,13 @@ fn b64_urlsafe_decode_nopad(input: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(input.as_bytes()).ok()
 }
 
+/// ② Decode 8-char base64url timestamp token → 6-byte array on the stack; zero heap allocation.
 fn decode_ts_token_to_6bytes(ts_token: &str) -> Option<[u8; 6]> {
-    let raw = b64_urlsafe_decode_nopad(ts_token)?;
     let mut ts6 = [0u8; 6];
-    if raw.len() >= 6 {
-        ts6.copy_from_slice(&raw[..6]);
-        Some(ts6)
-    } else {
-        None
-    }
+    let n = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode_slice(ts_token.as_bytes(), &mut ts6)
+        .ok()?;
+    if n == 6 { Some(ts6) } else { None }
 }
 
 fn finalize_packet(cmd: u8, src_aid: u32, tid: u32, ts_token: &str, body: &[u8]) -> Option<Vec<u8>> {
@@ -304,6 +307,198 @@ fn base64_urlsafe_no_pad(src: &[u8]) -> String {
         out.push(TBL[((n >> 6) & 63) as usize] as char);
     }
     out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-call bump arena for auto_decompose_input_inner's temporary structures.
+// ─────────────────────────────────────────────────────────────────────────────
+
+thread_local! {
+    static DECOMP_BUMP: RefCell<Bump> = RefCell::new(Bump::with_capacity(512));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zero-alloc helper functions for compress_fact_inner hot path
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Borrow a UTF-8 string directly from the binary input slice (no heap copy).
+fn read_str_ref<'a>(src: &'a [u8], off: &mut usize) -> Option<&'a str> {
+    let len = read_u32_be(src, off)? as usize;
+    let bytes = src.get(*off..(*off + len))?;
+    *off += len;
+    std::str::from_utf8(bytes).ok()
+}
+
+/// Write Base62-encoded i64 directly into `dst` without heap allocation.
+fn push_b62_i64(dst: &mut String, value: i64) {
+    if value == 0 {
+        dst.push('0');
+        return;
+    }
+    let neg = value < 0;
+    let mut n: u64 = if neg { value.unsigned_abs() } else { value as u64 };
+    let mut tmp = [0u8; 22];
+    let mut idx = 0usize;
+    while n > 0 && idx < tmp.len() - 1 {
+        tmp[idx] = B62[(n % 62) as usize];
+        n /= 62;
+        idx += 1;
+    }
+    if neg { dst.push('-'); }
+    while idx > 0 {
+        idx -= 1;
+        dst.push(tmp[idx] as char);
+    }
+}
+
+/// Write Base62-encoded float directly into `dst` without heap allocation.
+#[inline]
+fn push_b62_num(dst: &mut String, n: f64, precision_val: i64, use_precision: bool) {
+    let normalized = if use_precision {
+        py_round_ties_even_to_i64(n * precision_val as f64)
+    } else if n >= 0.0 {
+        n.trunc() as i64
+    } else {
+        n.ceil() as i64
+    };
+    push_b62_i64(dst, normalized);
+}
+
+/// Write symbol-map lookup result into `dst`.
+/// Uses a 64-byte stack buffer for the lowercase key to avoid allocation
+/// for keys ≤ 64 bytes (covers virtually all real-world symbol names).
+fn push_symbol(dst: &mut String, map: &HashMap<String, String>, key: &str) {
+    let kb = key.as_bytes();
+    if kb.len() <= 64 {
+        let mut buf = [0u8; 64];
+        for (i, &b) in kb.iter().enumerate() {
+            buf[i] = b.to_ascii_lowercase();
+        }
+        // SAFETY: to_ascii_lowercase always produces valid ASCII ⊆ UTF-8
+        let k = unsafe { std::str::from_utf8_unchecked(&buf[..kb.len()]) };
+        if let Some(sym) = map.get(k) {
+            dst.push_str(sym);
+            return;
+        }
+    } else {
+        let k = key.to_ascii_lowercase();
+        if let Some(sym) = map.get(&k) {
+            dst.push_str(sym);
+            return;
+        }
+    }
+    dst.push_str(key);
+}
+
+/// Write URL-safe no-pad base64 directly into `dst` without allocating
+/// a temporary String (inline version of `base64_urlsafe_no_pad`).
+fn push_base64_urlsafe_no_pad(dst: &mut String, src: &[u8]) {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut i = 0usize;
+    while i + 3 <= src.len() {
+        let n = ((src[i] as u32) << 16) | ((src[i + 1] as u32) << 8) | (src[i + 2] as u32);
+        dst.push(TBL[((n >> 18) & 63) as usize] as char);
+        dst.push(TBL[((n >> 12) & 63) as usize] as char);
+        dst.push(TBL[((n >> 6) & 63) as usize] as char);
+        dst.push(TBL[(n & 63) as usize] as char);
+        i += 3;
+    }
+    let rem = src.len() - i;
+    if rem == 1 {
+        let n = (src[i] as u32) << 16;
+        dst.push(TBL[((n >> 18) & 63) as usize] as char);
+        dst.push(TBL[((n >> 12) & 63) as usize] as char);
+    } else if rem == 2 {
+        let n = ((src[i] as u32) << 16) | ((src[i + 1] as u32) << 8);
+        dst.push(TBL[((n >> 18) & 63) as usize] as char);
+        dst.push(TBL[((n >> 12) & 63) as usize] as char);
+        dst.push(TBL[((n >> 6) & 63) as usize] as char);
+    }
+}
+
+/// Write a compressed unit directly into `dst` — zero-alloc inline version of
+/// `compress_unit` that produces identical output.
+fn push_compressed_unit(state: &CompressorState, unit_str: &str, dst: &mut String) {
+    if unit_str.is_empty() || unit_str == "unknown" {
+        dst.push('Z');
+        return;
+    }
+    let mut first = true;
+    for p in unit_str.split('/') {
+        if !first { dst.push('/'); }
+        first = false;
+        let s = p.trim();
+        if s.is_empty() { continue; }
+        let bytes = s.as_bytes();
+        // Locate trailing decimal-digit run (power suffix, e.g. "m2" → pwr="2")
+        let mut i = bytes.len();
+        while i > 0 && bytes[i - 1].is_ascii_digit() { i -= 1; }
+        let pwr = &s[i..];
+        let core = &s[..i];
+        // Find where a leading numeric coefficient ends
+        let mut last_ok = 0usize;
+        for j in 1..=core.len() {
+            if core.is_char_boundary(j) && core[..j].parse::<f64>().is_ok() {
+                last_ok = j;
+            }
+        }
+        if last_ok > 0 && last_ok < core.len() {
+            // coefficient + attribute (e.g. "1000m")
+            let attr = &core[last_ok..];
+            let Ok(mut c_val) = core[..last_ok].parse::<f64>() else {
+                push_symbol(dst, &state.units_map, core);
+                dst.push_str(pwr);
+                continue;
+            };
+            // Macro-prefix substitution (G/M/k/da).  Build "prefix+attr" in a
+            // 68-byte stack buffer to avoid heap allocation.
+            let mut combined = [0u8; 68];
+            let attr_b = attr.as_bytes();
+            let base_len = attr_b.len().min(combined.len());
+            combined[..base_len].copy_from_slice(&attr_b[..base_len]);
+            let mut combined_len = base_len;
+            for (ms, factor) in [
+                ("G", 1_000_000_000.0f64),
+                ("M", 1_000_000.0),
+                ("k", 1_000.0),
+                ("da", 10.0),
+            ] {
+                if c_val >= factor {
+                    let div = c_val / factor;
+                    if (div - div.round()).abs() <= 1e-12 {
+                        c_val = div;
+                        let mp = ms.as_bytes();
+                        let new_len = (mp.len() + attr_b.len()).min(combined.len());
+                        // Shift attr bytes right to make room for prefix
+                        combined.copy_within(0..attr_b.len().min(new_len - mp.len()), mp.len());
+                        combined[..mp.len()].copy_from_slice(mp);
+                        combined_len = new_len;
+                        break;
+                    }
+                }
+            }
+            // SAFETY: combined is built from ASCII-only bytes
+            let final_key = unsafe { std::str::from_utf8_unchecked(&combined[..combined_len]) };
+            let is_direct = (c_val - c_val.trunc()).abs() <= 1e-12 && c_val.abs() >= 1.0;
+            push_b62_num(dst, c_val, state.precision_val, !is_direct);
+            dst.push(',');
+            push_symbol(dst, &state.units_map, final_key);
+            dst.push_str(pwr);
+        } else if last_ok == core.len() && !core.is_empty() {
+            // Pure number (no attribute)
+            let Ok(c_val) = core.parse::<f64>() else {
+                push_symbol(dst, &state.units_map, s);
+                continue;
+            };
+            let is_direct = (c_val - c_val.trunc()).abs() <= 1e-12 && c_val.abs() >= 1.0;
+            push_b62_num(dst, c_val, state.precision_val, !is_direct);
+            dst.push_str(pwr);
+        } else {
+            // Pure attribute (no coefficient)
+            push_symbol(dst, &state.units_map, core);
+            dst.push_str(pwr);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -545,25 +740,11 @@ fn compress_unit(state: &CompressorState, unit_str: &str) -> String {
 
 fn compress_fact_inner(state: &CompressorState, input: &[u8]) -> Option<Vec<u8>> {
     let mut off = 0usize;
-    let device_id = read_string(input, &mut off)?;
-    let dev_state = read_string(input, &mut off)?;
-    let t_in = read_f64_be(input, &mut off)?;
+    // read_str_ref: borrowed from `input`, zero allocation
+    let device_id    = read_str_ref(input, &mut off)?;
+    let dev_state    = read_str_ref(input, &mut off)?;
+    let t_in         = read_f64_be(input, &mut off)?;
     let sensor_count = read_u32_be(input, &mut off)? as usize;
-
-    let mut sensors: Vec<(String, String, f64, String)> = Vec::with_capacity(sensor_count);
-    for _ in 0..sensor_count {
-        let sid = read_string(input, &mut off)?;
-        let sst = read_string(input, &mut off)?;
-        let val = read_f64_be(input, &mut off)?;
-        let unit = read_string(input, &mut off)?;
-        sensors.push((sid, sst, val, unit));
-    }
-    let geohash = read_opt_string(input, &mut off)?;
-    let url = read_opt_string(input, &mut off)?;
-    let msg = read_opt_string(input, &mut off)?;
-    if off != input.len() {
-        return None;
-    }
 
     let t_raw = if state.use_ms && t_in < 100_000_000_000.0 {
         (t_in * 1000.0).trunc() as u64
@@ -571,29 +752,37 @@ fn compress_fact_inner(state: &CompressorState, input: &[u8]) -> Option<Vec<u8>>
         t_in.trunc() as u64
     };
     let t_bytes = t_raw.to_be_bytes();
-    let t_enc = base64_urlsafe_no_pad(&t_bytes[2..]);
-    let s_sym = get_symbol(&state.states_map, &dev_state);
 
-    let mut body = String::with_capacity(256 + sensors.len() * 24);
-    body.push_str(&device_id);
+    // Single heap allocation for the entire body string
+    let mut body = String::with_capacity(256 + sensor_count * 28);
+    body.push_str(device_id);
     body.push('.');
-    body.push_str(&s_sym);
+    push_symbol(&mut body, &state.states_map, dev_state);
     body.push('.');
-    body.push_str(&t_enc);
+    push_base64_urlsafe_no_pad(&mut body, &t_bytes[2..]);  // 6-byte ts → 8 chars, no alloc
     body.push('|');
 
-    for (sid, sst, val, unit_raw) in sensors {
-        let un = compress_unit(state, &unit_raw);
-        let v = encode_b62_num(val, state.precision_val, true);
-        let sst_sym = get_symbol(&state.states_map, &sst);
-        body.push_str(&sid);
+    // Single-pass sensor loop: no intermediate Vec<(String,String,f64,String)>
+    for _ in 0..sensor_count {
+        let sid  = read_str_ref(input, &mut off)?;
+        let sst  = read_str_ref(input, &mut off)?;
+        let val  = read_f64_be(input, &mut off)?;
+        let unit = read_str_ref(input, &mut off)?;
+        body.push_str(sid);
         body.push('>');
-        body.push_str(&sst_sym);
+        push_symbol(&mut body, &state.states_map, sst);
         body.push('.');
-        body.push_str(&un);
+        push_compressed_unit(state, unit, &mut body);
         body.push(':');
-        body.push_str(&v);
+        push_b62_num(&mut body, val, state.precision_val, true);
         body.push('|');
+    }
+
+    let geohash = read_opt_string(input, &mut off)?;
+    let url     = read_opt_string(input, &mut off)?;
+    let msg     = read_opt_string(input, &mut off)?;
+    if off != input.len() {
+        return None;
     }
 
     if let Some(geo) = geohash {
@@ -604,12 +793,12 @@ fn compress_fact_inner(state: &CompressorState, input: &[u8]) -> Option<Vec<u8>>
     if let Some(url_val) = url {
         let trimmed = url_val.strip_prefix("https://").unwrap_or(url_val.as_str());
         body.push('#');
-        body.push_str(&base64_urlsafe_no_pad(trimmed.as_bytes()));
+        push_base64_urlsafe_no_pad(&mut body, trimmed.as_bytes());
         body.push('|');
     }
     if let Some(msg_val) = msg {
         body.push('@');
-        body.push_str(&base64_urlsafe_no_pad(msg_val.as_bytes()));
+        push_base64_urlsafe_no_pad(&mut body, msg_val.as_bytes());
     }
 
     Some(body.into_bytes())
@@ -639,22 +828,41 @@ fn get_or_init_aid_state<'a>(state: &'a mut FusionState, src_aid: u32) -> &'a mu
     })
 }
 
-fn apply_fusion_state(
+/// ③ Write u32 as decimal ASCII into a 10-byte stack buffer; return the filled slice.
+#[inline]
+fn u32_to_decimal_slice(n: u32, buf: &mut [u8; 10]) -> &[u8] {
+    if n == 0 {
+        buf[0] = b'0';
+        return &buf[..1];
+    }
+    let mut i = 10usize;
+    let mut x = n;
+    while x > 0 {
+        i -= 1;
+        buf[i] = b'0' + (x % 10) as u8;
+        x /= 10;
+    }
+    &buf[i..]
+}
+
+fn apply_fusion_state<V: AsRef<[u8]>>(
     state: &mut FusionState,
     src_aid: u32,
     strategy_full: bool,
-    sig: Vec<u8>,
-    vals_bin: Vec<Vec<u8>>,
+    sig: &[u8],
+    vals_bin: &[V],
 ) -> Option<Vec<u8>> {
     let aid_state = get_or_init_aid_state(state, src_aid);
     let mut new_template = false;
-    let tid = match aid_state.sig_to_tid.get(&sig).copied() {
+    // HashMap<Vec<u8>>::get accepts &[u8] via Borrow – no allocation in DIFF path
+    let tid = match aid_state.sig_to_tid.get(sig).copied() {
         Some(v) => v,
         None => {
             let tid = aid_state.next_tid;
             aid_state.next_tid = aid_state.next_tid.saturating_add(1);
-            aid_state.sig_to_tid.insert(sig.clone(), tid);
-            aid_state.tid_to_sig.insert(tid, sig);
+            let sig_owned = sig.to_vec();
+            aid_state.sig_to_tid.insert(sig_owned.clone(), tid);
+            aid_state.tid_to_sig.insert(tid, sig_owned);
             new_template = true;
             tid
         }
@@ -663,8 +871,10 @@ fn apply_fusion_state(
     let mut runtime_changed = false;
 
     if strategy_full {
-        if tid_vals.len() != vals_bin.len() || *tid_vals != vals_bin {
-            *tid_vals = vals_bin;
+        let same = tid_vals.len() == vals_bin.len()
+            && tid_vals.iter().zip(vals_bin.iter()).all(|(s, v)| s.as_slice() == v.as_ref());
+        if !same {
+            *tid_vals = vals_bin.iter().map(|v| v.as_ref().to_vec()).collect();
             runtime_changed = true;
         }
         let mut flags = 0u8;
@@ -675,7 +885,7 @@ fn apply_fusion_state(
     }
 
     if tid_vals.len() != vals_bin.len() {
-        *tid_vals = vals_bin;
+        *tid_vals = vals_bin.iter().map(|v| v.as_ref().to_vec()).collect();
         runtime_changed = true;
         let mut flags = 0u8;
         if new_template { flags |= 0x01; }
@@ -685,18 +895,20 @@ fn apply_fusion_state(
     }
 
     let mut mask: u128 = 0;
-    let mut diff_body: Vec<u8> = Vec::new();
+    // ⑤ SmallVec: most diffs are tiny (1-2 changed sensors × ~10 bytes each)
+    let mut diff_body: SmallVec<[u8; 64]> = SmallVec::new();
     let mut changed = false;
     for (i, v) in vals_bin.iter().enumerate() {
-        if tid_vals.get(i)? != v {
+        let v_bytes = v.as_ref();
+        if tid_vals.get(i).map(|s| s.as_slice()) != Some(v_bytes) {
             if i >= 128 {
                 return None;
             }
             mask |= 1u128 << i;
-            let v_len = u8::try_from(v.len()).ok()?;
+            let v_len = u8::try_from(v_bytes.len()).ok()?;
             diff_body.push(v_len);
-            diff_body.extend_from_slice(v);
-            tid_vals[i] = v.clone();
+            diff_body.extend_from_slice(v_bytes);
+            tid_vals[i] = v_bytes.to_vec();
             changed = true;
         }
     }
@@ -709,7 +921,8 @@ fn apply_fusion_state(
     let mask_len = (vals_bin.len() + 7) / 8;
     let mask_bytes_full = mask.to_be_bytes();
     let mask_start = mask_bytes_full.len().saturating_sub(mask_len);
-    let mut body = Vec::with_capacity(mask_len + diff_body.len());
+    // ⑤ SmallVec: mask (≤16 bytes) + diff_body together rarely exceed 80 bytes
+    let mut body: SmallVec<[u8; 96]> = SmallVec::new();
     body.extend_from_slice(&mask_bytes_full[mask_start..]);
     body.extend_from_slice(&diff_body);
     let mut flags = 0u8;
@@ -1065,7 +1278,13 @@ pub unsafe extern "C" fn os_parse_header_min(
     1
 }
 
-fn auto_decompose_input_inner(input: &str) -> Option<(Vec<u8>, Vec<u8>, Vec<Vec<u8>>)> {
+/// ④⑥ Core decompose: writes sig into caller-supplied `sig_buf` (cleared on entry).
+/// raw_vals uses SmallVec<16> — fits ≤8 sensors without heap allocation.
+/// Callers that process many items in a loop should reuse the same `sig_buf`.
+fn auto_decompose_fill_sig<'a>(
+    input: &'a str,
+    sig_buf: &mut Vec<u8>,
+) -> Option<(&'a str, SmallVec<[&'a [u8]; 16]>)> {
     let work = match input.split_once(';') {
         Some((_, tail)) => tail,
         None => input,
@@ -1073,26 +1292,47 @@ fn auto_decompose_input_inner(input: &str) -> Option<(Vec<u8>, Vec<u8>, Vec<Vec<
     let (head, payload) = work.split_once('|')?;
     let (h_base, ts_str) = head.rsplit_once('.')?;
 
-    let mut raw_vals: Vec<Vec<u8>> = Vec::new();
-    let mut sig_segments: Vec<String> = Vec::new();
+    // ④ SmallVec<16>: ≤8 sensors × 2 slices fits entirely on the stack
+    let mut raw_vals: SmallVec<[&'a [u8]; 16]> = SmallVec::new();
 
-    for seg in payload.split('|') {
-        if seg.is_empty() {
-            continue;
-        }
-        if let Some((tag, content)) = seg.split_once('>') {
-            if let Some((meta, val)) = content.rsplit_once(':') {
-                raw_vals.push(meta.as_bytes().to_vec());
-                raw_vals.push(val.as_bytes().to_vec());
-                sig_segments.push(format!("{}>\x01:\x01", tag));
+    // ⑥ Write sig into the provided buffer (reset first); zero heap alloc per call
+    //    when the buffer is reused across iterations.
+    DECOMP_BUMP.with(|cell| {
+        let mut bump = cell.borrow_mut();
+        bump.reset();
+        let mut s = bumpalo::collections::String::new_in(&*bump);
+        s.push_str(h_base);
+        s.push_str(".{TS}|");
+        for seg in payload.split('|') {
+            if seg.is_empty() {
                 continue;
             }
+            if let Some((tag, content)) = seg.split_once('>') {
+                if let Some((meta, val)) = content.rsplit_once(':') {
+                    raw_vals.push(meta.as_bytes());
+                    raw_vals.push(val.as_bytes());
+                    s.push_str(tag);
+                    s.push_str(">\x01:\x01|");
+                    continue;
+                }
+            }
+            s.push_str(seg);
+            s.push('|');
         }
-        sig_segments.push(seg.to_string());
-    }
+        sig_buf.clear();
+        sig_buf.extend_from_slice(s.as_bytes());
+    });
 
-    let full_sig = format!("{}.{{TS}}|{}|", h_base, sig_segments.join("|")).into_bytes();
-    Some((ts_str.as_bytes().to_vec(), full_sig, raw_vals))
+    Some((ts_str, raw_vals))
+}
+
+/// Thin wrapper: allocates a fresh sig Vec per call (for single-item callers).
+fn auto_decompose_input_inner<'a>(
+    input: &'a str,
+) -> Option<(&'a str, Vec<u8>, SmallVec<[&'a [u8]; 16]>)> {
+    let mut sig_buf = Vec::new();
+    let (ts, vals) = auto_decompose_fill_sig(input, &mut sig_buf)?;
+    Some((ts, sig_buf, vals))
 }
 
 /// Decompose a compressed OpenSynaptic string payload into:
@@ -1138,13 +1378,13 @@ pub unsafe extern "C" fn os_auto_decompose_input(
     {
         return 0;
     }
-    encoded.extend_from_slice(&ts);
+    encoded.extend_from_slice(ts.as_bytes());
     encoded.extend_from_slice(&full_sig);
     for v in &vals {
         if push_u32_be(&mut encoded, v.len()).is_none() {
             return 0;
         }
-        encoded.extend_from_slice(v);
+        encoded.extend_from_slice(*v);
     }
 
     let needed = encoded.len();
@@ -1465,7 +1705,7 @@ pub unsafe extern "C" fn os_fusion_state_apply_v1(
             Ok(v) => v,
             Err(_) => return 0,
         };
-        match apply_fusion_state(&mut state, src_aid, strategy_full, sig, vals) {
+        match apply_fusion_state(&mut state, src_aid, strategy_full, &sig, &vals) {
             Some(v) => v,
             None => return 0,
         }
@@ -1567,7 +1807,7 @@ pub unsafe extern "C" fn os_fusion_state_receive_apply_v1(
 /// `out` must point to a buffer of at least `out_len` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn os_rscore_version(out: *mut c_char, out_len: usize) -> i32 {
-    const VER: &[u8] = b"opensynaptic_rscore/0.1.0\0";
+    const VER: &[u8] = b"opensynaptic_rscore/1.2.0\0";
     if out.is_null() || out_len < VER.len() {
         return 0;
     }
@@ -1678,7 +1918,8 @@ fn parse_src_aid(raw_input: &str) -> u32 {
     0
 }
 
-fn parse_apply_blob(encoded: &[u8]) -> Option<(u8, u32, u8, Vec<u8>)> {
+/// ① Zero-copy: returns a borrow of the body slice instead of to_vec().
+fn parse_apply_blob(encoded: &[u8]) -> Option<(u8, u32, u8, &[u8])> {
     if encoded.len() < 10 {
         return None;
     }
@@ -1689,7 +1930,7 @@ fn parse_apply_blob(encoded: &[u8]) -> Option<(u8, u32, u8, Vec<u8>)> {
     if encoded.len() < 10 + body_len {
         return None;
     }
-    Some((cmd, tid, flags, encoded[10..10 + body_len].to_vec()))
+    Some((cmd, tid, flags, &encoded[10..10 + body_len]))
 }
 
 /// JSON ABI export for fusion run path.
@@ -1726,7 +1967,7 @@ pub unsafe extern "C" fn os_fusion_run_json_v1(
             Err(_) => return 0,
         };
         load_aid_registry_into_state(&mut state, src_aid, req.registry_root.as_deref());
-        let out = match apply_fusion_state(&mut state, src_aid, strategy_full, sig, vals) {
+        let out = match apply_fusion_state(&mut state, src_aid, strategy_full, &sig, &vals) {
             Some(v) => v,
             None => return 0,
         };
@@ -1742,18 +1983,19 @@ pub unsafe extern "C" fn os_fusion_run_json_v1(
         None => return 0,
     };
 
-    let body = if (flags & 0x04) != 0 {
-        req.raw_input.as_bytes().to_vec()
+    // ① body_native: &[u8] — no to_vec() in DIFF path
+    // ts is &str borrowed from req.raw_input; finalize_packet accepts &str directly
+    let packet = if (flags & 0x04) != 0 {
+        let full_body = req.raw_input.as_bytes().to_vec();
+        match finalize_packet(cmd, src_aid, tid, ts, &full_body) {
+            Some(v) => v,
+            None => return 0,
+        }
     } else {
-        body_native
-    };
-    let ts_str = match String::from_utf8(ts) {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    let packet = match finalize_packet(cmd, src_aid, tid, &ts_str, &body) {
-        Some(v) => v,
-        None => return 0,
+        match finalize_packet(cmd, src_aid, tid, ts, body_native) {
+            Some(v) => v,
+            None => return 0,
+        }
     };
     write_out_bytes(out, out_len, &packet)
 }
@@ -1839,7 +2081,8 @@ pub unsafe extern "C" fn os_fusion_decompress_json_v1(
                 let aid_state = get_or_init_aid_state(&mut state, source_aid);
                 aid_state.sig_to_tid.insert(sig.clone(), tid);
                 aid_state.tid_to_sig.insert(tid, sig);
-                aid_state.runtime_vals.insert(tid, vals);
+                // Convert borrowed slices to owned Vec<u8> for persistent storage
+                aid_state.runtime_vals.insert(tid, vals.into_iter().map(|s| s.to_vec()).collect());
                 aid_state.next_tid = aid_state.next_tid.max(tid.saturating_add(1));
                 dump_aid_registry_from_state(&state, source_aid, req.registry_root.as_deref());
             }
@@ -1957,6 +2200,7 @@ pub unsafe extern "C" fn os_node_dispatch_json_v1(
 ///       u32  packet_len  (BE, 0 when that item failed)
 ///       bytes packet[packet_len]
 ///   }
+
 fn pipeline_batch_inner(raw: &[u8]) -> Option<Vec<u8>> {
     if raw.len() < 20 {
         return None;
@@ -1990,6 +2234,9 @@ fn pipeline_batch_inner(raw: &[u8]) -> Option<Vec<u8>> {
     let mut out: Vec<u8> = Vec::with_capacity(4 + item_count * 24);
     push_u32_be(&mut out, item_count)?;
 
+    // ⑦ Allocate sig_buf once per batch; reused across all items — saves N-1 sig allocs per batch.
+    let mut sig_buf: Vec<u8> = Vec::with_capacity(256);
+
     for _ in 0..item_count {
         // Read per-item header
         let aid = match read_u32_be(raw, &mut off) {
@@ -2022,23 +2269,25 @@ fn pipeline_batch_inner(raw: &[u8]) -> Option<Vec<u8>> {
             None => { push_u32_be(&mut out, 0)?; continue; }
         };
 
-        // Build raw_input string used by decompose + fusion
-        let raw_input = format!("{};{}", aid, compressed_str);
-
-        // Auto-decompose into (ts, sig, vals)
-        let (ts, sig, vals) = match auto_decompose_input_inner(&raw_input) {
+        // ③ Pass compressed_str directly (no format!("{};{}", ...) in the common path).
+        // ⑦ sig_buf is cleared and reused by auto_decompose_fill_sig on every call.
+        let (ts_ref, vals) = match auto_decompose_fill_sig(&compressed_str, &mut sig_buf) {
             Some(v) => v,
             None => { push_u32_be(&mut out, 0)?; continue; }
         };
+        // Copy timestamp to a 32-byte stack buffer (ASCII, ≤20 chars).
+        let mut ts_buf = [0u8; 32];
+        let ts_len = ts_ref.len().min(ts_buf.len());
+        ts_buf[..ts_len].copy_from_slice(&ts_ref.as_bytes()[..ts_len]);
 
         // Apply fusion state (lock already held for whole batch)
         load_aid_registry_into_state(&mut fusion_state, aid, registry_root.as_deref());
-        let encoded = match apply_fusion_state(&mut fusion_state, aid, strategy_full, sig, vals) {
+        let encoded = match apply_fusion_state(&mut fusion_state, aid, strategy_full, &sig_buf, &vals) {
             Some(v) => v,
             None => { push_u32_be(&mut out, 0)?; continue; }
         };
 
-        // Decode apply-blob and build packet
+        // ① parse_apply_blob now returns &[u8] — no to_vec() for DIFF body.
         let (cmd, tid, flags, body_native) = match parse_apply_blob(&encoded) {
             Some(v) => v,
             None => { push_u32_be(&mut out, 0)?; continue; }
@@ -2046,18 +2295,28 @@ fn pipeline_batch_inner(raw: &[u8]) -> Option<Vec<u8>> {
         if (flags & 0x03) != 0 {
             dump_aid_registry_from_state(&fusion_state, aid, registry_root.as_deref());
         }
-        let ts_str = match String::from_utf8(ts) {
-            Ok(v) => v,
+        let ts_str = match std::str::from_utf8(&ts_buf[..ts_len]) {
+            Ok(s) => s,
             Err(_) => { push_u32_be(&mut out, 0)?; continue; }
         };
-        let body = if (flags & 0x04) != 0 {
-            raw_input.into_bytes()
+        // ① DIFF path: finalize_packet receives body_native: &[u8] directly (0 alloc).
+        // ③ FULL path: only now build "aid;compressed_str" (rare, < 5% of packets).
+        let packet = if (flags & 0x04) != 0 {
+            let mut aid_tmp = [0u8; 10];
+            let aid_dec = u32_to_decimal_slice(aid, &mut aid_tmp);
+            let mut full_body = Vec::with_capacity(aid_dec.len() + 1 + compressed_str.len());
+            full_body.extend_from_slice(aid_dec);
+            full_body.push(b';');
+            full_body.extend_from_slice(compressed_str.as_bytes());
+            match finalize_packet(cmd, aid, tid, ts_str, &full_body) {
+                Some(v) => v,
+                None => { push_u32_be(&mut out, 0)?; continue; }
+            }
         } else {
-            body_native
-        };
-        let packet = match finalize_packet(cmd, aid, tid, &ts_str, &body) {
-            Some(v) => v,
-            None => { push_u32_be(&mut out, 0)?; continue; }
+            match finalize_packet(cmd, aid, tid, ts_str, body_native) {
+                Some(v) => v,
+                None => { push_u32_be(&mut out, 0)?; continue; }
+            }
         };
 
         push_u32_be(&mut out, packet.len())?;
@@ -2105,6 +2364,188 @@ pub unsafe extern "C" fn os_pipeline_batch_v1(
     }
     std::ptr::copy_nonoverlapping(result.as_ptr(), out, needed);
     needed_i32
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Persistent fusion worker – zero-mutex single-item fuse path
+// (compiled only when the "worker" feature is enabled; omitting it keeps the
+//  hot-path DLL smaller and reduces icache pressure on pipeline_batch_inner)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(feature = "worker")]
+struct WorkerItem {
+    input: Vec<u8>,
+    reply: std::sync::mpsc::SyncSender<Vec<u8>>,
+}
+
+#[cfg(feature = "worker")]
+struct WorkerHandle {
+    sender: std::sync::mpsc::SyncSender<WorkerItem>,
+}
+
+#[cfg(feature = "worker")]
+fn worker_registry() -> &'static Mutex<HashMap<u64, WorkerHandle>> {
+    static REG: OnceLock<Mutex<HashMap<u64, WorkerHandle>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(feature = "worker")]
+fn next_worker_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(100_000_000);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Process one item: auto_decompose + apply_fusion + finalize_packet.
+///
+/// Input wire format: `u8(strategy) | u32_be(str_len) | utf8_bytes`
+/// where utf8_bytes is exactly `raw_input` (e.g. `"42;DEVICE.OK.AAAA|..."`)
+#[cfg(feature = "worker")]
+fn worker_process_item(
+    input: &[u8],
+    registry_root: &Option<String>,
+    fusion_state: &mut FusionState,
+) -> Option<Vec<u8>> {
+    let mut off = 0usize;
+    let strategy_byte = read_u8(input, &mut off)?;
+    let strategy_full = strategy_byte != 0;
+    let str_len = read_u32_be(input, &mut off)? as usize;
+    if off + str_len > input.len() {
+        return None;
+    }
+    let raw_input = std::str::from_utf8(&input[off..off + str_len]).ok()?;
+    let (ts, sig, vals) = auto_decompose_input_inner(raw_input)?;
+    let aid = parse_src_aid(raw_input);
+    load_aid_registry_into_state(fusion_state, aid, registry_root.as_deref());
+    let encoded = apply_fusion_state(fusion_state, aid, strategy_full, &sig, &vals)?;
+    // ① body_native: &[u8] borrow of encoded — no to_vec() needed in DIFF path.
+    let (cmd, tid, flags, body_native) = parse_apply_blob(&encoded)?;
+    if (flags & 0x03) != 0 {
+        dump_aid_registry_from_state(fusion_state, aid, registry_root.as_deref());
+    }
+    // ts is &str borrowed from raw_input — pass directly, no String allocation needed
+    if (flags & 0x04) != 0 {
+        let full_body = raw_input.as_bytes().to_vec();
+        finalize_packet(cmd, aid, tid, ts, &full_body)
+    } else {
+        finalize_packet(cmd, aid, tid, ts, body_native)
+    }
+}
+
+#[cfg(feature = "worker")]
+fn run_worker_thread(receiver: std::sync::mpsc::Receiver<WorkerItem>, registry_root: Option<String>) {
+    let mut fusion_state = FusionState::default();
+    loop {
+        match receiver.recv() {
+            Ok(item) => {
+                let result = worker_process_item(&item.input, &registry_root, &mut fusion_state)
+                    .unwrap_or_default();
+                let _ = item.reply.send(result);
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+/// Create a persistent fusion worker thread.
+///
+/// The worker owns a private `FusionState` (no global mutex per call).
+/// Registry disk reads happen at most once per AID; writes only on template change.
+///
+/// Returns: worker handle (`u64 > 0`), or `0` on error.
+///
+/// # Safety
+/// `registry_root` must point to `registry_root_len` valid UTF-8 bytes, or be null.
+#[cfg(feature = "worker")]
+#[no_mangle]
+pub unsafe extern "C" fn os_worker_create_v1(
+    _ctx_id: u64,
+    registry_root: *const u8,
+    registry_root_len: usize,
+    queue_depth: u32,
+) -> u64 {
+    let reg_root: Option<String> = if registry_root.is_null() || registry_root_len == 0 {
+        None
+    } else {
+        let bytes = std::slice::from_raw_parts(registry_root, registry_root_len);
+        String::from_utf8(bytes.to_vec()).ok()
+    };
+    let depth = (queue_depth as usize).clamp(8, 65536);
+    let (tx, rx) = sync_channel::<WorkerItem>(depth);
+    let reg_root_clone = reg_root.clone();
+    std::thread::spawn(move || run_worker_thread(rx, reg_root_clone));
+    let handle_id = next_worker_id();
+    match worker_registry().lock() {
+        Ok(mut reg) => { reg.insert(handle_id, WorkerHandle { sender: tx }); }
+        Err(_) => return 0,
+    }
+    handle_id
+}
+
+/// Submit one item to the worker and block until the binary packet is returned.
+///
+/// Input wire format: `u8(strategy) | u32_be(str_len) | utf8_str`
+/// Returns bytes written (> 0), 0 for structural error, negative = required buf size.
+///
+/// # Safety
+/// `input` / `out` must be valid pointers of the stated lengths.
+#[cfg(feature = "worker")]
+#[no_mangle]
+pub unsafe extern "C" fn os_worker_submit_v1(
+    worker_handle: u64,
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    if input.is_null() || input_len == 0 {
+        return 0;
+    }
+    let raw = std::slice::from_raw_parts(input, input_len).to_vec();
+    let sender = {
+        let reg = match worker_registry().lock() {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
+        match reg.get(&worker_handle) {
+            Some(wh) => wh.sender.clone(),
+            None => return 0,
+        }
+    };
+    let (reply_tx, reply_rx) = sync_channel::<Vec<u8>>(1);
+    if sender.send(WorkerItem { input: raw, reply: reply_tx }).is_err() {
+        return 0;
+    }
+    let result = match reply_rx.recv() {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    if result.is_empty() {
+        return 0;
+    }
+    let needed_i32 = match i32::try_from(result.len()) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    if out.is_null() || out_len < result.len() {
+        return -needed_i32;
+    }
+    std::ptr::copy_nonoverlapping(result.as_ptr(), out, result.len());
+    needed_i32
+}
+
+/// Destroy a persistent worker and release its background thread.
+///
+/// Dropping the `WorkerHandle` drops the `SyncSender`, causing the worker
+/// thread's `recv()` to return `Err` and exit cleanly.
+///
+/// # Safety
+/// `worker_handle` must be a valid value returned by `os_worker_create_v1`.
+#[cfg(feature = "worker")]
+#[no_mangle]
+pub unsafe extern "C" fn os_worker_destroy_v1(worker_handle: u64) {
+    if let Ok(mut reg) = worker_registry().lock() {
+        reg.remove(&worker_handle);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

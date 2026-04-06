@@ -55,8 +55,10 @@ class OpenSynapticEngine(BaseOpenSynapticEngine):
         candidates = []
         if sym_ref:
             candidates.append(base_dir / str(sym_ref))
+        _pkg_lib = Path(__file__).resolve().parent.parent.parent / 'libraries'
         candidates.extend(
             [
+                _pkg_lib / 'OS_Symbols.json',
                 base_dir / 'libraries' / 'OS_Symbols.json',
                 Path(ctx.root) / 'libraries' / 'OS_Symbols.json',
                 base_dir / 'OS_Symbols.json',

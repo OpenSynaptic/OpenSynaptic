@@ -12,6 +12,8 @@ from opensynaptic.utils import (
     derive_session_key,
 )
 
+_RETRY = object()  # extract_fn 返回此哨兵表示"忽略本次响应，继续循环"
+
 class CMD:
     DATA_FULL = 63
     DATA_FULL_SEC = 64
@@ -40,7 +42,24 @@ class CMD:
 
 class OSHandshakeManager:
 
-    def __init__(self, target_sync_count=3, registry_dir=None, expire_seconds=86400, secure_store_path=None):
+    # 有效角色名及其允许处理的 CMD 集合
+    # 'duplex' : 默认双向，无限制
+    # 'tx_only': 仅发送 — 只处理自身发起的 CTRL 响应（ID_ASSIGN/ID_POOL_RES/TIME_RESPONSE/ACK/NACK/PONG/SECURE_*）
+    # 不解析入向 DATA，不分配 ID，不回复不相关的 CTRL
+    # 'rx_only': 仅接收 — 只处理入向 DATA 和服务端 CTRL（TIME_REQUEST/PING）
+    # 不发起 ID_REQUEST/TIME_REQUEST，不再连接远端检测
+    ROLE_TX_ONLY_CMDS = {
+        CMD.ID_ASSIGN, CMD.ID_POOL_RES,
+        CMD.HANDSHAKE_ACK, CMD.HANDSHAKE_NACK,
+        CMD.PONG, CMD.TIME_RESPONSE,
+        CMD.SECURE_DICT_READY, CMD.SECURE_CHANNEL_ACK,
+    }
+    ROLE_RX_ONLY_CMDS = (
+        CMD.DATA_CMDS |
+        {CMD.PING, CMD.TIME_REQUEST, CMD.HANDSHAKE_ACK, CMD.HANDSHAKE_NACK}
+    )
+
+    def __init__(self, target_sync_count=3, registry_dir=None, expire_seconds=86400, secure_store_path=None, device_role='duplex'):
         self.target_sync_count = target_sync_count
         self.registry_dir = registry_dir
         self.expire_seconds = expire_seconds
@@ -58,6 +77,9 @@ class OSHandshakeManager:
         self._secure_dirty = False
         self._secure_last_persist = 0
         self._secure_persist_interval = 5
+        # 角色：'duplex' | 'tx_only' | 'rx_only'
+        _role = str(device_role or 'duplex').lower().strip()
+        self.device_role = _role if _role in ('duplex', 'tx_only', 'rx_only') else 'duplex'
         self._load_secure_sessions()
 
     def _session_to_json(self, session):
@@ -128,6 +150,7 @@ class OSHandshakeManager:
         if not key:
             return None
         self._cleanup_expired()
+        _session_updated = False
         with self._lock:
             session = self.secure_sessions.get(key)
             if not session and create:
@@ -139,7 +162,10 @@ class OSHandshakeManager:
                 if addr:
                     session['peer_addr'] = str(addr)
                 self._mark_secure_dirty()
-        self._save_secure_sessions()
+                _session_updated = True
+        # save outside the lock to avoid re-entrancy deadlock with threading.Lock
+        if _session_updated:
+            self._save_secure_sessions()
         return session
 
     def get_session_key(self, aid):
@@ -173,11 +199,12 @@ class OSHandshakeManager:
         session = self._get_secure_session(aid, addr=addr, create=True)
         if not session:
             return None
-        if not session.get('key'):
-            key = derive_session_key(int(aid), int(timestamp_raw or 0))
+        ts_int = int(timestamp_raw or 0)
+        if not session.get('key') and ts_int > self.min_valid_timestamp:
+            key = derive_session_key(int(aid), ts_int)
             session['key'] = key
             session['key_hex'] = key.hex()
-            session['first_plaintext_ts'] = int(timestamp_raw or 0)
+            session['first_plaintext_ts'] = ts_int
         session['dict_ready'] = True
         session['state'] = 'DICT_READY'
         self._mark_secure_dirty()
@@ -194,10 +221,12 @@ class OSHandshakeManager:
                 session['key_hex'] = session.get('pending_key_hex')
                 session['first_plaintext_ts'] = int(session.get('pending_timestamp') or 0)
             elif timestamp_raw is not None:
-                key = derive_session_key(int(aid), int(timestamp_raw or 0))
-                session['key'] = key
-                session['key_hex'] = key.hex()
-                session['first_plaintext_ts'] = int(timestamp_raw or 0)
+                ts_c = int(timestamp_raw or 0)
+                if ts_c > self.min_valid_timestamp:  # 与 establish_remote_plaintext 保持一致
+                    key = derive_session_key(int(aid), ts_c)
+                    session['key'] = key
+                    session['key_hex'] = key.hex()
+                    session['first_plaintext_ts'] = ts_c
         session['dict_ready'] = bool(session.get('key'))
         if session['dict_ready']:
             session['state'] = 'DICT_READY'
@@ -217,9 +246,11 @@ class OSHandshakeManager:
 
     def note_server_time(self, server_time):
         try:
-            self.last_server_time = int(server_time or 0)
+            t = int(server_time or 0)
+            if t > self.min_valid_timestamp:
+                self.last_server_time = t
         except Exception:
-            self.last_server_time = 0
+            pass
 
     def is_secure_data_cmd(self, cmd):
         return cmd in CMD.SECURE_DATA_CMDS
@@ -234,6 +265,13 @@ class OSHandshakeManager:
         if not packet or len(packet) < 1:
             return {'type': 'ERROR', 'cmd': 0, 'result': {'error': 'Empty packet'}, 'response': None}
         cmd = packet[0]
+        # 角色过滤：不属于本角色允许范围的 CMD 直接丢弃
+        if self.device_role == 'tx_only' and cmd in CMD.DATA_CMDS:
+            return {'type': 'IGNORED', 'cmd': cmd, 'result': {'reason': 'tx_only: inbound DATA ignored'}, 'response': None}
+        if self.device_role == 'tx_only' and cmd in CMD.CTRL_CMDS and cmd not in self.ROLE_TX_ONLY_CMDS:
+            return {'type': 'IGNORED', 'cmd': cmd, 'result': {'reason': f'tx_only: CTRL 0x{cmd:02X} ignored'}, 'response': None}
+        if self.device_role == 'rx_only' and cmd in CMD.CTRL_CMDS and cmd not in self.ROLE_RX_ONLY_CMDS:
+            return {'type': 'IGNORED', 'cmd': cmd, 'result': {'reason': f'rx_only: CTRL 0x{cmd:02X} ignored'}, 'response': None}
         if cmd in CMD.DATA_CMDS:
             result = None
             response = None
@@ -257,7 +295,12 @@ class OSHandshakeManager:
                     session = self._get_secure_session(src_aid, addr=addr, create=False)
                     if not (session and session.get('dict_ready')):
                         self.establish_remote_plaintext(src_aid, ts_raw, addr=addr)
-                        response = self._build_secure_dict_ready(src_aid, ts_raw)
+                        if meta.get('server_stamped'):
+                            # RTC-less 设备：返回当前服务器时间，客户端收到后更新 last_server_time
+                            # 避免与任何加密会话绑定（ts=0 未派生密鑰）
+                            response = self._build_time_response(0, ts_raw)
+                        else:
+                            response = self._build_secure_dict_ready(src_aid, ts_raw)
                 elif is_secure:
                     session = self._get_secure_session(src_aid, addr=addr, create=False)
                     if not (session and session.get('decrypt_confirmed')):
@@ -268,31 +311,25 @@ class OSHandshakeManager:
             return self._handle_ctrl(cmd, packet, addr)
         return {'type': 'UNKNOWN', 'cmd': cmd, 'result': {'error': f'Unknown command 0x{cmd:02X}'}, 'response': self._build_nack(reason=f'Unknown CMD 0x{cmd:02X}')}
 
+    _CTRL_DISPATCH = {
+        CMD.ID_REQUEST: '_on_id_request',
+        CMD.ID_ASSIGN: '_on_id_assign',
+        CMD.ID_POOL_REQ: '_on_id_pool_request',
+        CMD.ID_POOL_RES: '_on_id_pool_response',
+        CMD.HANDSHAKE_ACK: '_on_ack',
+        CMD.HANDSHAKE_NACK: '_on_nack',
+        CMD.PING: '_on_ping',
+        CMD.PONG: '_on_pong',
+        CMD.TIME_REQUEST: '_on_time_request',
+        CMD.TIME_RESPONSE: '_on_time_response',
+        CMD.SECURE_DICT_READY: '_on_secure_dict_ready',
+        CMD.SECURE_CHANNEL_ACK: '_on_secure_channel_ack',
+    }
+
     def _handle_ctrl(self, cmd, packet, addr):
-        if cmd == CMD.ID_REQUEST:
-            return self._on_id_request(packet, addr)
-        elif cmd == CMD.ID_ASSIGN:
-            return self._on_id_assign(packet, addr)
-        elif cmd == CMD.ID_POOL_REQ:
-            return self._on_id_pool_request(packet, addr)
-        elif cmd == CMD.ID_POOL_RES:
-            return self._on_id_pool_response(packet, addr)
-        elif cmd == CMD.HANDSHAKE_ACK:
-            return self._on_ack(packet, addr)
-        elif cmd == CMD.HANDSHAKE_NACK:
-            return self._on_nack(packet, addr)
-        elif cmd == CMD.PING:
-            return self._on_ping(packet, addr)
-        elif cmd == CMD.PONG:
-            return self._on_pong(packet, addr)
-        elif cmd == CMD.TIME_REQUEST:
-            return self._on_time_request(packet, addr)
-        elif cmd == CMD.TIME_RESPONSE:
-            return self._on_time_response(packet, addr)
-        elif cmd == CMD.SECURE_DICT_READY:
-            return self._on_secure_dict_ready(packet, addr)
-        elif cmd == CMD.SECURE_CHANNEL_ACK:
-            return self._on_secure_channel_ack(packet, addr)
+        name = self._CTRL_DISPATCH.get(cmd)
+        if name:
+            return getattr(self, name)(packet, addr)
         return {'type': 'CTRL', 'cmd': cmd, 'result': {'error': 'Unhandled CTRL'}, 'response': None}
 
     def _on_id_request(self, packet, addr):
@@ -313,7 +350,7 @@ class OSHandshakeManager:
             except RuntimeError:
                 return {'type': 'CTRL', 'cmd': CMD.ID_REQUEST, 'result': {'status': 'REJECTED', 'reason': 'ID pool exhausted'}, 'response': self._build_nack(seq=seq, reason='ID_POOL_EXHAUSTED')}
         if assigned_id is not None:
-            response = self._build_id_assign(seq, assigned_id)
+            response = self._build_id_assign(seq, assigned_id, server_time=int(time.time()))
             os_log.log_with_const('info', LogMsg.ID_ASSIGNED, addr=addr, assigned=assigned_id)
             return {'type': 'CTRL', 'cmd': CMD.ID_REQUEST, 'result': {'status': 'ASSIGNED', 'assigned_id': assigned_id, 'addr': addr}, 'response': response}
         else:
@@ -322,19 +359,23 @@ class OSHandshakeManager:
     def _on_id_assign(self, packet, addr):
         seq = 0
         assigned_id = None
+        server_time = None
         try:
             if len(packet) >= 3:
                 seq = struct.unpack('>H', packet[1:3])[0]
             if len(packet) >= 7:
                 assigned_id = struct.unpack('>I', packet[3:7])[0]
+            if len(packet) >= 15:  # 可选的损带时间字段
+                server_time = struct.unpack('>Q', packet[7:15])[0]
         except Exception as e:
             os_log.err('HND', 'PARSE', e, {'stage': 'id_assign'})
         if assigned_id is not None and assigned_id != 0:
+            self.note_server_time(server_time)  # 损带时间可省去独立 TIME_REQUEST 往返
             ack = self._build_ack(seq)
             os_log.log_with_const('info', LogMsg.ID_RECEIVED, assigned=assigned_id)
-            return {'type': 'CTRL', 'cmd': CMD.ID_ASSIGN, 'result': {'status': 'RECEIVED', 'assigned_id': assigned_id}, 'response': ack}
+            return {'type': 'CTRL', 'cmd': CMD.ID_ASSIGN, 'result': {'status': 'RECEIVED', 'assigned_id': assigned_id, 'seq': seq, 'server_time': server_time}, 'response': ack}
         else:
-            return {'type': 'CTRL', 'cmd': CMD.ID_ASSIGN, 'result': {'status': 'INVALID', 'raw': packet.hex()}, 'response': None}
+            return {'type': 'CTRL', 'cmd': CMD.ID_ASSIGN, 'result': {'status': 'INVALID', 'raw': packet.hex(), 'seq': seq}, 'response': self._build_nack(seq=seq, reason='INVALID_ID')}
 
     def _on_id_pool_request(self, packet, addr):
         seq = 0
@@ -454,14 +495,19 @@ class OSHandshakeManager:
         seq = self._next_seq()
         return struct.pack('>BH', CMD.TIME_REQUEST, seq)
 
-    def _build_id_assign(self, seq, assigned_id):
-        return struct.pack('>BHI', CMD.ID_ASSIGN, seq, assigned_id)
+    def _build_id_assign(self, seq, assigned_id, server_time=None):
+        # 格式：[CMD:1][seq:2][aid:4]  延伸字段（向后兼容，旧客户端只读前 7 字节）：
+        #           [server_time:8]
+        base = struct.pack('>BHI', CMD.ID_ASSIGN, seq, assigned_id)
+        if server_time is not None:
+            base += struct.pack('>Q', int(server_time))
+        return base
 
     def _build_id_pool_response(self, seq, pool):
         header = struct.pack('>BHH', CMD.ID_POOL_RES, seq, len(pool))
         body = b''
         for pid in pool:
-            body += struct.pack('>I', int(pid))
+            body += struct.pack('>I', int(pid) & 0xFFFFFFFF)
         return header + body
 
     def _build_ack(self, seq=0):
@@ -545,70 +591,70 @@ class OSHandshakeManager:
             self._last_cleanup = now
         self._save_secure_sessions()
 
-    def request_id_via_transport(self, transport_send_fn, transport_recv_fn, device_meta=None, timeout=5.0):
-        req_packet = self.build_id_request(device_meta)
-        try:
-            transport_send_fn(req_packet)
-        except Exception as e:
-            os_log.err('ID_REQUEST', 'SEND_FAILED', e)
-            return None
+    def _run_transport_loop(self, req_packet, send_fn, recv_fn,
+                            success_cmd, extract_fn, fail_default,
+                            log_tag, timeout, nack_log=False):
+        """发送/重发/接收公共骨架。extract_fn(result)->value，返回 _RETRY 则继续等待。"""
         start = time.time()
+        last_send = start - timeout  # 触发循环内立即首次发送
+        resend_interval = max(1.0, timeout / 2.0)
         while time.time() - start < timeout:
+            now = time.time()
+            remaining = timeout - (now - start)
+            if now - last_send >= resend_interval:
+                try:
+                    send_fn(req_packet)
+                    last_send = now
+                except Exception as e:
+                    os_log.err(log_tag, 'SEND_FAILED', e, {})
+                    if now - start >= resend_interval:
+                        return fail_default
             try:
-                resp = transport_recv_fn(timeout=min(0.5, timeout - (time.time() - start)))
+                resp = recv_fn(timeout=min(0.5, remaining))
                 if resp and len(resp) >= 1:
                     result = self.classify_and_dispatch(resp)
-                    if result['cmd'] == CMD.ID_ASSIGN:
-                        return result['result'].get('assigned_id')
-                    elif result['cmd'] == CMD.HANDSHAKE_NACK:
-                        os_log.err('ID_REQUEST', 'REJECTED', result['result'].get('reason'))
-                        return None
+                    if result['cmd'] == success_cmd:
+                        val = extract_fn(result)
+                        if val is _RETRY:
+                            continue
+                        return val
+                    if result['cmd'] == CMD.HANDSHAKE_NACK:
+                        if nack_log:
+                            os_log.err(log_tag, 'REJECTED', result['result'].get('reason'), {})
+                        return fail_default
             except Exception as e:
-                os_log.err('ID_REQUEST', 'RECV_FAILED', e)
+                os_log.err(log_tag, 'RECV_FAILED', e, {})
                 time.sleep(0.05)
-        os_log.err('ID_REQUEST', f'TIMEOUT ({timeout}s)')
-        return None
+        os_log.err(log_tag, f'TIMEOUT ({timeout}s)', None, {})
+        return fail_default
+
+    def request_id_via_transport(self, transport_send_fn, transport_recv_fn, device_meta=None, timeout=5.0):
+        req_packet = self.build_id_request(device_meta)
+        req_seq = struct.unpack('>H', req_packet[1:3])[0]
+        def _extract(result):
+            if result['result'].get('seq', req_seq) != req_seq:
+                return _RETRY  # 延迟ID_ASSIGN，seq 不匹配，继续等待
+            return result['result'].get('assigned_id')
+        return self._run_transport_loop(
+            req_packet, transport_send_fn, transport_recv_fn,
+            CMD.ID_ASSIGN, _extract, None, 'ID_REQUEST', timeout, nack_log=True,
+        )
 
     def request_id_pool_via_transport(self, transport_send_fn, transport_recv_fn, count=10, meta=None, timeout=5.0):
         req_packet = self.build_id_pool_request(count, meta)
-        try:
-            transport_send_fn(req_packet)
-        except Exception as e:
-            os_log.err('ID_POOL_REQUEST', 'SEND_FAILED', e)
-            return []
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                resp = transport_recv_fn(timeout=min(0.5, timeout - (time.time() - start)))
-                if resp and len(resp) >= 1:
-                    result = self.classify_and_dispatch(resp)
-                    if result['cmd'] == CMD.ID_POOL_RES:
-                        return result['result'].get('pool', [])
-                    elif result['cmd'] == CMD.HANDSHAKE_NACK:
-                        return []
-            except Exception as e:
-                os_log.err('ID_POOL_REQUEST', 'RECV_FAILED', e)
-                time.sleep(0.05)
-        return []
+        return self._run_transport_loop(
+            req_packet, transport_send_fn, transport_recv_fn,
+            CMD.ID_POOL_RES, lambda r: r['result'].get('pool', []), [], 'ID_POOL_REQUEST', timeout,
+        )
 
     def request_time_via_transport(self, transport_send_fn, transport_recv_fn, timeout=3.0):
         req_packet = self.build_time_request()
-        try:
-            transport_send_fn(req_packet)
-        except Exception as e:
-            os_log.err('TIME', 'SEND', e, {})
-            return None
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                resp = transport_recv_fn(timeout=min(0.5, timeout - (time.time() - start)))
-                if resp and len(resp) >= 1:
-                    result = self.classify_and_dispatch(resp)
-                    if result['cmd'] == CMD.TIME_RESPONSE:
-                        return result['result'].get('server_time')
-                    if result['cmd'] == CMD.HANDSHAKE_NACK:
-                        return None
-            except Exception as e:
-                os_log.err('TIME', 'RECV', e, {})
-                time.sleep(0.05)
-        return None
+        req_seq = struct.unpack('>H', req_packet[1:3])[0]
+        def _extract(result):
+            if result['result'].get('seq', req_seq) != req_seq:
+                return _RETRY  # 旧超时响应，不更新时间
+            return result['result'].get('server_time')
+        return self._run_transport_loop(
+            req_packet, transport_send_fn, transport_recv_fn,
+            CMD.TIME_RESPONSE, _extract, None, 'TIME', timeout,
+        )

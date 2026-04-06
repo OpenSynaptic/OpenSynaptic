@@ -27,7 +27,9 @@ def register(sub: argparse._SubParsersAction) -> None:
     add_config_arg(plugin_load)
     plugin_load.add_argument('--name', required=True,
                              help='Plugin name to load (e.g. tui / web_user)')
-    plugin_load._actions[-1].completer = complete_plugin_name
+    _name_action = next((a for a in plugin_load._actions if '--name' in (a.option_strings or [])), None)
+    if _name_action:
+        _name_action.completer = complete_plugin_name
 
     # --- plugin-cmd ---
     plugin_cmd = sub.add_parser(
@@ -39,12 +41,16 @@ def register(sub: argparse._SubParsersAction) -> None:
         '--plugin', required=True,
         help='Plugin name, e.g. tui / test_plugin / web_user',
     )
-    plugin_cmd._actions[-1].completer = complete_plugin_name
+    _plugin_action = next((a for a in plugin_cmd._actions if '--plugin' in (a.option_strings or [])), None)
+    if _plugin_action:
+        _plugin_action.completer = complete_plugin_name
     plugin_cmd.add_argument(
         '--cmd', required=True,
         help='Plugin sub-command, e.g. render / interactive / component',
     )
-    plugin_cmd._actions[-1].completer = complete_plugin_subcommand
+    _cmd_action = next((a for a in plugin_cmd._actions if '--cmd' in (a.option_strings or [])), None)
+    if _cmd_action:
+        _cmd_action.completer = complete_plugin_subcommand
     plugin_cmd.add_argument(
         'args', nargs=argparse.REMAINDER,
         help='Extra arguments passed to the plugin sub-command',

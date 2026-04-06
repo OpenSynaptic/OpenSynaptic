@@ -1,0 +1,38 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"2",
+        "standard_name": "OpenSynaptic_Ucum_Electromagnetism",
+        "class_name": "Electromagnetism",
+        "class_id": "0x0B",
+        "base_unit": "V"
+    },
+    "units": {
+        "V": {
+            "name": "volt",
+            "ucum_code": "V",
+            "tid": "0x0B00",
+            "physical_attribute": "voltage",
+            "standard_unit_name": "volt",
+            "to_standard_factor": 1.0,
+            "can_take_prefix": true
+        },
+        "Ohm": {
+            "name": "ohm",
+            "ucum_code": "Ohm",
+            "tid": "0x0B01",
+            "physical_attribute": "resistance",
+            "standard_unit_name": "ohm",
+            "to_standard_factor": 1.0,
+            "can_take_prefix": true
+        },
+        "F": {
+            "name": "farad",
+            "ucum_code": "F",
+            "tid": "0x0B02",
+            "physical_attribute": "capacitance",
+            "standard_unit_name": "farad",
+            "to_standard_factor": 1.0,
+            "can_take_prefix": true
+        }
+    }
+}

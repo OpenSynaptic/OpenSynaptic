@@ -10,11 +10,15 @@
 - **[📖 Full Wiki Navigation](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-EN.md)** — Complete English documentation index
 - **[🏠 Wiki Home](OpenSynaptic_Wiki/OpenSynaptic.wiki/Home.md)** — Start here for role-based navigation
 - **[🔍 Complete Index](OpenSynaptic_Wiki/OpenSynaptic.wiki/en-INDEX.md)** — All 110+ English documents
+- **[📄 v1.3.0 Release Notes](RELEASE_NOTES_v1.3.0.md)** — Package install equivalence, cross-platform wheel fixes & UCUM data bundling
+- **[🧪 v1.3.0 Test Report](TEST_REPORT_v1.3.0.md)** — 1275 tests, 1273 pass, 0 fail across 6 suites
 
 ### 中文文档 (Chinese)
 - **[📖 完整导航](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-ZH.md)** — 完整的中文文档索引
 - **[🏠 Wiki 首页](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-Home.md)** — 中文首页
 - **[🔍 完整索引](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-INDEX.md)** — 所有 91+ 中文文档
+- **[📄 v1.3.0 发布公告](RELEASE_NOTES_v1.3.0.md)** — pip 安装等效性、跨平台 wheel 修复与 UCUM 数据打包
+- **[🧪 v1.3.0 测试报告 (EN)](TEST_REPORT_v1.3.0.md)** — 1275 项测试，1273 通过，0 失败
 
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat&logo=python&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?style=flat&logo=windows&logoColor=white)
@@ -24,6 +28,12 @@
 ![Core Backend](https://img.shields.io/badge/Core-pycore%20%7C%20rscore-2E8B57?style=flat)
 ![Transport](https://img.shields.io/badge/Transport-UDP%20%7C%20TCP%20%7C%20UART%20%7C%20LoRa%20%7C%20MQTT%20%7C%20CAN-E67E22?style=flat)
 ![License](https://img.shields.io/badge/License-Apache--2.0-D22128?style=flat&logo=apache&logoColor=white)
+![Tests](https://img.shields.io/badge/Tests-1273%20pass%20%7C%202%20skip%20%7C%200%20fail-22863A?style=flat&logo=pytest&logoColor=white)
+![CI](https://img.shields.io/badge/CI-5%20platforms-0A7BCC?style=flat&logo=githubactions&logoColor=white)
+![Coverage](https://img.shields.io/badge/Coverage-6%20suites%20%7C%201275%20tests-8B5CF6?style=flat)
+![Rust](https://img.shields.io/badge/Rust-rscore%20extension-CE422B?style=flat&logo=rust&logoColor=white)
+![UCUM](https://img.shields.io/badge/Units-UCUM%20compliant-0EA5E9?style=flat)
+![IoT](https://img.shields.io/badge/IoT-Protocol%20Stack-10B981?style=flat)
 
 ## Try In 30 Seconds
 
@@ -452,7 +462,7 @@ All commands are available via `os-node` (installed entrypoint), `./run-main.cmd
 | **Monitor** | `db-status` | Show DB engine status |
 | **Monitor** | `help` | Print full help |
 
-Full usage examples → [`src/opensynaptic/CLI/README.md`](src/opensynaptic/CLI/README.md)
+Full usage examples → [`CLI README`](https://opensynaptic.github.io/docs/opensynaptic/en_GB/internal/internal-CLI_README)
 
 ---
 
@@ -511,6 +521,18 @@ python scripts/integration_test.py
 python scripts/udp_receive_test.py --protocol udp --host 127.0.0.1 --port 8080 --config Config.json
 python scripts/audit_driver_capabilities.py
 python scripts/services_smoke_check.py
+
+# Exhaustive test suites (full protocol, plugin, security infra, orthogonal)
+python scripts/exhaustive_business_logic.py
+python scripts/exhaustive_plugin_test.py
+python scripts/exhaustive_security_infra_test.py
+python scripts/exhaustive_orthogonal_test.py
+
+# Unified local test runner (all suites in one command)
+python test.py              # run all 6 suites
+python test.py --fast       # skip slow suites (business logic + plugin)
+python test.py --suite infra  # run a single suite by name
+python test.py --list       # list all available suites
 ```
 
 **Comprehensive Repeatable Pipeline:**
@@ -531,6 +553,8 @@ The runner writes a single aggregated JSON report to:
 `data/benchmarks/extreme_validation_report_latest.json`
 
 It also updates per-suite benchmark artifacts under `data/benchmarks/` (compare, stress, protocol matrix, CLI exhaustive report).
+
+**Full test report**: See [TEST_REPORT_v1.3.0.md](TEST_REPORT_v1.3.0.md) — 1275 tests across 6 suites, 1273 pass, 0 fail.
 
 ---
 

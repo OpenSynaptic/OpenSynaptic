@@ -30,6 +30,7 @@ _has_auto_decompose = False
 _has_solidity_compressor = False
 _has_fusion_state = False
 _has_pipeline_batch = False
+_has_worker = False
 
 ABI_CORE_SYMBOLS = (
     'os_b62_encode_i64',
@@ -156,7 +157,7 @@ def rscore_abi_status() -> dict:
 
 
 def _lib():
-    global _lib_cache, _lib_configured, _has_header_parser, _has_crc_helpers, _has_auto_decompose, _has_solidity_compressor, _has_fusion_state, _has_pipeline_batch
+    global _lib_cache, _lib_configured, _has_header_parser, _has_crc_helpers, _has_auto_decompose, _has_solidity_compressor, _has_fusion_state, _has_pipeline_batch, _has_worker
     if _lib_cache is None:
         _lib_cache = load_native_library(_LIB_NAME)
     if _lib_cache is None:
@@ -295,6 +296,31 @@ def _lib():
             _has_pipeline_batch = False
         lib.os_rscore_version.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
         lib.os_rscore_version.restype = ctypes.c_int
+        # Optional persistent worker ABI (os_worker_create_v1 / _submit_v1 / _destroy_v1)
+        worker_create = getattr(lib, 'os_worker_create_v1', None)
+        worker_submit = getattr(lib, 'os_worker_submit_v1', None)
+        worker_destroy = getattr(lib, 'os_worker_destroy_v1', None)
+        if worker_create is not None and worker_submit is not None and worker_destroy is not None:
+            worker_create.argtypes = [
+                ctypes.c_ulonglong,
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_size_t,
+                ctypes.c_uint,
+            ]
+            worker_create.restype = ctypes.c_ulonglong
+            worker_submit.argtypes = [
+                ctypes.c_ulonglong,
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_size_t,
+            ]
+            worker_submit.restype = ctypes.c_int
+            worker_destroy.argtypes = [ctypes.c_ulonglong]
+            worker_destroy.restype = None
+            _has_worker = True
+        else:
+            _has_worker = False
         _lib_configured = True
     return _lib_cache
 
@@ -351,6 +377,91 @@ def has_pipeline_batch() -> bool:
     except Exception:
         return False
     return bool(_has_pipeline_batch)
+
+
+def has_persistent_worker() -> bool:
+    """Return True when the loaded RSCore DLL exports the persistent worker ABI."""
+    try:
+        _lib()
+    except Exception:
+        return False
+    return bool(_has_worker)
+
+
+class RsFusionWorker:
+    """Persistent Rust worker for run_engine – eliminates per-call global mutex + disk I/O.
+
+    The worker owns a private FusionState in its background thread:
+    - Registry disk reads happen at most once per AID (cached afterwards)
+    - Disk writes only when templates actually change
+    - No global mutex acquisition per call
+
+    Wire input for ``submit()``: ``u8(strategy) | u32_be(str_len) | utf8_str``
+    where ``utf8_str`` is the full ``raw_input`` string (e.g. ``"42;DEV.OK.AAAA|..."``).
+    """
+
+    def __init__(self, ctx_id: int, registry_root: str, queue_depth: int = 256):
+        if not has_persistent_worker():
+            raise RuntimeError('os_rscore: persistent worker ABI is unavailable')
+        self._lib = _lib()
+        self._handle = 0
+        reg_root_b = (registry_root or '').encode('utf-8')
+        arr_t = ctypes.c_ubyte * len(reg_root_b)
+        arr = arr_t.from_buffer_copy(reg_root_b) if reg_root_b else (ctypes.c_ubyte * 0)()
+        handle = int(self._lib.os_worker_create_v1(
+            ctypes.c_ulonglong(int(ctx_id)),
+            arr if reg_root_b else None,
+            ctypes.c_size_t(len(reg_root_b)),
+            ctypes.c_uint(int(queue_depth)),
+        ))
+        if handle == 0:
+            raise RuntimeError('os_rscore: failed to create persistent worker')
+        self._handle = handle
+        self._out_cap = 4096
+        self._out_arr = (ctypes.c_ubyte * self._out_cap)()
+
+    def submit(self, raw_input: str, strategy: str) -> bytes:
+        """Send one item synchronously; returns the binary packet bytes."""
+        handle = int(getattr(self, '_handle', 0) or 0)
+        if handle == 0:
+            raise RuntimeError('os_rscore: worker handle is invalid')
+        raw_bytes = raw_input.encode('utf-8')
+        strategy_byte = 1 if str(strategy).upper() == 'FULL' else 0
+        import struct
+        blob = struct.pack('>BI', strategy_byte, len(raw_bytes)) + raw_bytes
+        in_arr_t = ctypes.c_ubyte * len(blob)
+        in_arr = in_arr_t.from_buffer_copy(blob)
+        for _ in range(2):
+            written = int(self._lib.os_worker_submit_v1(
+                ctypes.c_ulonglong(handle),
+                in_arr,
+                ctypes.c_size_t(len(blob)),
+                self._out_arr,
+                ctypes.c_size_t(self._out_cap),
+            ))
+            if written == 0:
+                return b''
+            if written < 0:
+                new_cap = max(self._out_cap * 2, -written)
+                self._out_cap = new_cap
+                self._out_arr = (ctypes.c_ubyte * new_cap)()
+                continue
+            return bytes(bytearray(self._out_arr[:written]))
+        return b''
+
+    def close(self):
+        handle = int(getattr(self, '_handle', 0) or 0)
+        if handle > 0:
+            try:
+                self._lib.os_worker_destroy_v1(ctypes.c_ulonglong(handle))
+            finally:
+                self._handle = 0
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class RsPipelineBatch:
@@ -1173,6 +1284,18 @@ class RsOSVisualFusionEngine:
                 ]
                 fn.restype = ctypes.c_int
 
+        # Persistent worker: eliminates per-call global mutex + disk I/O overhead
+        self._worker: RsFusionWorker | None = None
+        try:
+            if has_persistent_worker():
+                self._worker = RsFusionWorker(
+                    ctx_id=self._ctx_id,
+                    registry_root=self._registry_root,
+                    queue_depth=256,
+                )
+        except Exception:
+            self._worker = None
+
     @staticmethod
     def _derive_ctx_id(args, kwargs) -> int:
         global _JSON_CTX_COUNTER
@@ -1271,19 +1394,65 @@ class RsOSVisualFusionEngine:
             return
 
     def _persist_full_payload(self, raw_input: str, source_aid: int, tid: int):
-        decomp = auto_decompose_input(raw_input)
-        if not decomp:
-            return
-        _ts, sig, vals = decomp
-        sig_str = sig.decode('utf-8', errors='ignore') if isinstance(sig, (bytes, bytearray)) else str(sig)
-        vals_b64 = [base64.b64encode(v).decode('ascii') for v in (vals or [])]
+        # Always persist last_raw first; legacy DIFF fallback depends on it even
+        # when auto_decompose_input is unavailable or returns nothing.
         data = self._load_registry_disk(int(source_aid))
         templates = data.setdefault('templates', {})
         tid_key = str(int(tid)).zfill(2)
-        templates[tid_key] = {'sig': sig_str, 'last_vals_bin': vals_b64}
+        tpl = templates.setdefault(tid_key, {})
+        tpl['last_raw'] = str(raw_input)
+        decomp = auto_decompose_input(raw_input)
+        if decomp:
+            _ts, sig, vals = decomp
+            sig_str = sig.decode('utf-8', errors='ignore') if isinstance(sig, (bytes, bytearray)) else str(sig)
+            vals_b64 = [base64.b64encode(v).decode('ascii') for v in (vals or [])]
+            tpl.update({'sig': sig_str, 'last_vals_bin': vals_b64})
+        templates[tid_key] = tpl
         if tid_key != str(int(tid)):
             templates.pop(str(int(tid)), None)
         self._save_registry_disk(int(source_aid), data)
+
+    @staticmethod
+    def _rewrite_template_ts(raw_payload: str, timestamp_raw: int) -> str:
+        if not raw_payload:
+            return raw_payload
+        parts = raw_payload.split('|')
+        if not parts:
+            return raw_payload
+        header = parts[0]
+        h = header.split('.')
+        if len(h) < 3:
+            return raw_payload
+        h[2] = str(int(timestamp_raw))
+        parts[0] = '.'.join(h)
+        return '|'.join(parts)
+
+    def _apply_legacy_segment_diff(self, tpl: dict, body: bytes, timestamp_raw: int):
+        if not isinstance(tpl, dict):
+            return None
+        last_raw = str(tpl.get('last_raw', '') or '')
+        if not last_raw:
+            return None
+        diff_segment = body.decode('utf-8', errors='ignore').strip()
+        if not diff_segment or '>' not in diff_segment or ':' not in diff_segment:
+            return None
+
+        stripped = last_raw.rstrip('|')
+        segments = stripped.split('|')
+        if len(segments) < 2:
+            return None
+
+        segments[-1] = diff_segment
+        rebuilt = '|'.join(segments) + '|'
+        rebuilt = self._rewrite_template_ts(rebuilt, timestamp_raw)
+
+        decomp = auto_decompose_input(rebuilt)
+        if not decomp:
+            return None
+        _ts, sig_new, vals_new = decomp
+        sig_str = sig_new.decode('utf-8', errors='ignore') if isinstance(sig_new, (bytes, bytearray)) else str(sig_new)
+        vals_bin = list(vals_new or [])
+        return (sig_str, vals_bin, rebuilt)
 
     def _decode_with_registry_fallback(self, packet: bytes, meta: dict):
         if not isinstance(meta, dict):
@@ -1350,19 +1519,49 @@ class RsOSVisualFusionEngine:
                 vals_bin.append(b'')
 
         if base_cmd == 170:
-            mask_len = (len(vals_bin) + 7) // 8
-            mask = int.from_bytes(body[:mask_len], 'big') if mask_len > 0 else 0
-            off = mask_len
-            for idx in range(len(vals_bin)):
-                if (mask >> idx) & 1:
-                    if off >= len(body):
-                        return {'error': 'Malformed DIFF payload', '__packet_meta__': fallback_meta}
-                    v_len = int(body[off])
-                    nxt = off + 1 + v_len
-                    if nxt > len(body):
-                        return {'error': 'Malformed DIFF payload', '__packet_meta__': fallback_meta}
-                    vals_bin[idx] = body[off + 1:nxt]
-                    off = nxt
+            parsed = False
+
+            # Compatibility fallback: C-side legacy DIFF may carry the whole last
+            # sensor segment text instead of bitmask+len binary deltas.
+            legacy = self._apply_legacy_segment_diff(
+                tpl,
+                body,
+                int(fallback_meta.get('timestamp_raw', 0) or 0),
+            )
+            if legacy:
+                sig, vals_bin, rebuilt = legacy
+                tpl['last_raw'] = rebuilt
+                parsed = True
+
+            if not parsed:
+                mask_len = (len(vals_bin) + 7) // 8
+                if len(body) >= mask_len:
+                    mask = int.from_bytes(body[:mask_len], 'big') if mask_len > 0 else 0
+                    off = mask_len
+                    malformed = False
+                    for idx in range(len(vals_bin)):
+                        if (mask >> idx) & 1:
+                            if off >= len(body):
+                                malformed = True
+                                break
+                            v_len = int(body[off])
+                            nxt = off + 1 + v_len
+                            if nxt > len(body):
+                                malformed = True
+                                break
+                            vals_bin[idx] = body[off + 1:nxt]
+                            off = nxt
+                    if not malformed:
+                        parsed = True
+
+            # Secondary compatibility: single-tail plain value payload.
+            if not parsed and vals_bin:
+                vals_bin[-1] = bytes(body)
+                parsed = True
+
+            if not parsed:
+                return {'error': 'Malformed DIFF payload', '__packet_meta__': fallback_meta}
+
             tpl['last_vals_bin'] = [base64.b64encode(v).decode('ascii') for v in vals_bin]
             templates[tid_key] = tpl
             self._save_registry_disk(src_aid, data)
@@ -1407,6 +1606,15 @@ class RsOSVisualFusionEngine:
             raw_input = str(raw_input)
 
         strategy = str(kwargs.get('strategy', 'DIFF')).upper()
+
+        # Fast path: persistent worker eliminates JSON overhead + per-call disk I/O
+        if self._worker is not None:
+            try:
+                packet = self._worker.submit(raw_input, strategy)
+                if packet:
+                    return packet
+            except Exception:
+                pass  # fall through to JSON path on any worker error
 
         payload = json.dumps(
             {
@@ -1502,6 +1710,13 @@ class RsOSVisualFusionEngine:
         self._single_route_ids = (self.local_id,)
 
     def close(self):
+        worker = getattr(self, '_worker', None)
+        if worker is not None:
+            try:
+                worker.close()
+            except Exception:
+                pass
+            self._worker = None
         fusion = getattr(self, '_rs_fusion_state', None)
         if fusion is not None:
             try:

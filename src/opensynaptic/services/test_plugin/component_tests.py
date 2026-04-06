@@ -350,7 +350,7 @@ class TestIDAllocator(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import tempfile
-        from plugins.id_allocator import IDAllocator
+        from opensynaptic.utils.id_allocator import IDAllocator
         cls.tmp_dir = tempfile.mkdtemp()
         cls.allocator = IDAllocator(base_dir=cls.tmp_dir, start_id=1000, end_id=2000)
 

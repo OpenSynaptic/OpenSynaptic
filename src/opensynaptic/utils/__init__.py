@@ -37,6 +37,7 @@ from opensynaptic.utils.security.security_core import (
     xor_payload,
     xor_payload_into,
 )
+from opensynaptic.utils.id_allocator import IDAllocator
 
 __version__ = '1.1.0rc1'
 crc16 = crc16_ccitt

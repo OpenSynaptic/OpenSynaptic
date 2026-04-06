@@ -69,7 +69,9 @@ class OSVisualFusionEngine:
             except Exception as e:
                 os_log.err('FUS', 'B62_DECODE', e, {'val': assigned})
                 self._set_local_id(0)
-
+        self._config_path = config_path
+        self._decoder = None  # 延迟初始化，跨包复用避免重复构造
+        self.skip_ts_decode = False  # rx_only 极端受限设备可设为 True，跳过时间戳解码
     def _set_local_id(self, local_id):
         val = int(local_id or 0)
         self.local_id = val
@@ -128,21 +130,15 @@ class OSVisualFusionEngine:
             return '0'
 
     def _coerce_text(self, raw_input):
-        if isinstance(raw_input, bytes):
-            return codecs.decode(raw_input, 'utf-8', errors='ignore')
-        if isinstance(raw_input, bytearray):
-            return codecs.decode(raw_input, 'utf-8', errors='ignore')
-        if isinstance(raw_input, memoryview):
+        if isinstance(raw_input, (bytes, bytearray, memoryview)):
             return codecs.decode(raw_input, 'utf-8', errors='ignore')
         return str(raw_input)
 
     def _coerce_bytes(self, raw_input):
-        if isinstance(raw_input, bytes):
+        if isinstance(raw_input, (bytes, memoryview)):
             return raw_input
         if isinstance(raw_input, bytearray):
             return memoryview(raw_input)
-        if isinstance(raw_input, memoryview):
-            return raw_input
         return str(raw_input).encode('utf-8')
 
     def _prune_cache_locked(self, now_ts=None):
@@ -511,10 +507,24 @@ class OSVisualFusionEngine:
                 return {'error': 'CRC16 mismatch', '__packet_meta__': meta}
             reg = self._get_active_registry(src_val)
             tid_str = str(packet_view[tid_pos]).zfill(2)
-            ts_raw = packet_view[tid_pos + 1:tid_pos + 7]
-            ts_enc = base64.urlsafe_b64encode(ts_raw).decode().rstrip('=')
-            ts_raw_val = struct.unpack('>Q', b'\x00\x00' + ts_raw)[0]
-            meta['timestamp_raw'] = ts_raw_val
+            # sentinel TS = 6 \x00: RTC-less 设备未提供时间戳，由服务器盖章
+            _ts_raw_bytes = bytes(packet_view[tid_pos + 1:tid_pos + 7])
+            if self.skip_ts_decode:
+                # rx_only 极端受限设备：字节偏移不变，跳过解码节省 CPU
+                ts_raw_val = 0
+                ts_enc = 'AAAAAAAA'  # base64 of 6×\x00，下游 t=0
+                meta['timestamp_raw'] = 0
+                meta['server_stamped'] = False
+            else:
+                _server_stamped = (_ts_raw_bytes == b'\x00\x00\x00\x00\x00\x00')
+                if _server_stamped:
+                    ts_raw_val = int(time.time())
+                    ts_enc = base64.urlsafe_b64encode(struct.pack('>Q', ts_raw_val)[2:]).decode().rstrip('=')
+                else:
+                    ts_raw_val = struct.unpack('>Q', b'\x00\x00' + _ts_raw_bytes)[0]
+                    ts_enc = base64.urlsafe_b64encode(_ts_raw_bytes).decode().rstrip('=')
+                meta['timestamp_raw'] = ts_raw_val
+                meta['server_stamped'] = _server_stamped
             meta['tid'] = tid_str
             crc8_recv = packet_view[-3]
             wire_body = packet_view[tid_pos + 7:-3]
@@ -533,8 +543,10 @@ class OSVisualFusionEngine:
             meta['crc8_ok'] = crc8_calc == crc8_recv
             if crc8_calc != crc8_recv:
                 return {'error': 'CRC8 mismatch', '__packet_meta__': meta}
-            from .solidity import OpenSynapticEngine
-            decoder = OpenSynapticEngine()
+            if self._decoder is None:
+                from .solidity import OpenSynapticEngine
+                self._decoder = OpenSynapticEngine(self._config_path)
+            decoder = self._decoder
             with reg['lock']:
                 reg_data = reg['data']
                 if not isinstance(reg.get('runtime_vals'), dict):

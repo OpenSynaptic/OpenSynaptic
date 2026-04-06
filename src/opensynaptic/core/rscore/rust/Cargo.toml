@@ -1,6 +1,6 @@
 [package]
 name = "opensynaptic_rscore"
-version = "1.1.0-rc1"
+version = "1.3.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "RSCore native primitives for OpenSynaptic (Base62 codec + CMD helpers)"
@@ -18,13 +18,20 @@ crate-type = ["cdylib"]
 # invocations cannot accidentally fall back to cffi autodetection.
 default = ["python-module"]
 python-module = ["dep:pyo3"]
+# Gate the persistent-worker exports behind this flag so the hot-path DLL
+# remains as small as possible (worker code adds ~140 KB of icache pressure).
+worker = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+bumpalo = { version = "3", features = ["collections"] }
+smallvec = { version = "1", features = ["union"] }
 
 [profile.release]
 opt-level = 3
+lto = "thin"
+codegen-units = 1
 strip = true

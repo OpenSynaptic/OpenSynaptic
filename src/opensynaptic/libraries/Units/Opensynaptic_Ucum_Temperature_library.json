@@ -1,0 +1,52 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"A",
+        "standard_name": "OpenSynaptic_Ucum_Temperature",
+        "class_name": "temperature",
+        "class_id": "0x04",
+        "version": "1.1.0",
+        "base_unit": "K"
+    },
+    "units": {
+        "K": {
+            "name": "kelvin",
+            "ucum_code": "K",
+            "tid": "0x0400",
+            "physical_attribute": "temperature",
+            "standard_unit_name": "kelvin",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "Cel": {
+            "name": "degree_Celsius",
+            "ucum_code": "Cel",
+            "tid": "0x0401",
+            "physical_attribute": "temperature",
+            "standard_unit_name": "kelvin",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 273.15,
+            "can_take_prefix": false
+        },
+        "degF": {
+            "name": "degree_Fahrenheit",
+            "ucum_code": "[degF]",
+            "tid": "0x0402",
+            "physical_attribute": "temperature",
+            "standard_unit_name": "kelvin",
+            "to_standard_factor": 0.5555555555555556,
+            "to_standard_offset": 255.37222222222223,
+            "can_take_prefix": false
+        },
+        "degRe": {
+            "name": "degree_Reaumur",
+            "ucum_code": "[degRe]",
+            "tid": "0x0403",
+            "physical_attribute": "temperature",
+            "standard_unit_name": "kelvin",
+            "to_standard_factor": 1.25,
+            "to_standard_offset": 273.15,
+            "can_take_prefix": false
+        }
+    }
+}
