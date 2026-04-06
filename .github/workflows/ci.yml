@@ -6,6 +6,21 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      scale:
+        description: "Validation pipeline scale (ubuntu-latest/py3.11 shard only)"
+        required: false
+        default: "smoke"
+        type: choice
+        options:
+          - smoke
+          - full
+          - extreme
+      random_rounds:
+        description: "Rounds for randomized protocol e2e (ubuntu-latest/py3.11 shard only)"
+        required: false
+        default: "20"
+        type: string
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,6 +30,7 @@ jobs:
   test:
     name: test (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
     env:
       OPENSYNAPTIC_CORE: pycore
       PYTHONPATH: ${{ github.workspace }}/src
@@ -142,6 +158,108 @@ jobs:
           python -u scripts/exhaustive_plugin_test.py
           python -u scripts/exhaustive_security_infra_test.py
           python -u scripts/exhaustive_orthogonal_test.py
+
+      - name: Resolve pipeline inputs (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.scale }}" ]]; then
+            echo "PIPELINE_SCALE=${{ github.event.inputs.scale }}" >> "$GITHUB_ENV"
+          else
+            echo "PIPELINE_SCALE=smoke" >> "$GITHUB_ENV"
+          fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.random_rounds }}" ]]; then
+            echo "RANDOM_ROUNDS=${{ github.event.inputs.random_rounds }}" >> "$GITHUB_ENV"
+          else
+            echo "RANDOM_ROUNDS=20" >> "$GITHUB_ENV"
+          fi
+
+      - name: Script - integration_test (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: timeout 15m python -u scripts/integration_test.py
+
+      - name: Script - udp_receive_test (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          timeout 5m python -u scripts/udp_receive_test.py \
+            --protocol udp \
+            --host 127.0.0.1 \
+            --port 18080 \
+            --config Config.json \
+            --once \
+            --timeout 0.5
+
+      - name: Script - audit_driver_capabilities (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: timeout 15m python -u scripts/audit_driver_capabilities.py
+
+      - name: Script - cli_exhaustive_check (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: timeout 40m python -u scripts/cli_exhaustive_check.py
+
+      - name: Script - protocol_matrix_exhaustive (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          timeout 20m python -u scripts/protocol_matrix_exhaustive.py \
+            --host 127.0.0.1 \
+            --base-port 21080 \
+            --timeout 1.2 \
+            --output data/benchmarks/protocol_matrix_exhaustive_ci.json
+
+      - name: Script - random_registration_protocol_e2e (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          timeout 20m python -u scripts/random_registration_protocol_e2e.py \
+            --rounds "$RANDOM_ROUNDS" \
+            --seed 202611 \
+            --host 127.0.0.1 \
+            --listen-base-port 22080 \
+            --handshake-port 22888 \
+            --timeout 1.2 \
+            --backend pycore \
+            --output data/benchmarks/random_registration_protocol_e2e_ci.json
+
+      - name: Script - services_smoke_check (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: timeout 20m python -u scripts/services_smoke_check.py
+
+      - name: Script - port_forwarder_roundtrip_check (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: timeout 10m python -u scripts/port_forwarder_roundtrip_check.py
+
+      - name: Script - port_forwarder_matrix_sim_check (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          timeout 15m python -u scripts/port_forwarder_matrix_sim_check.py \
+            --json-out data/benchmarks/port_forwarder_matrix_sim_ci.json
+
+      - name: Script - extreme_validation_pipeline (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          timeout 120m python -u scripts/extreme_validation_pipeline.py \
+            --scale "$PIPELINE_SCALE" \
+            --strict \
+            --output data/benchmarks/extreme_validation_report_ci.json
+
+      - name: Upload script benchmark artifacts
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scripts-benchmarks-${{ github.run_id }}
+          path: |
+            data/benchmarks/*.json
+            data/benchmarks/**/*.json
+          if-no-files-found: warn
 
       - name: Upload coverage report
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
