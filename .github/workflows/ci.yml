@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (${{ matrix.os }} / py${{ matrix.python-version }})
@@ -18,7 +22,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Platforms: Linux x86_64, Linux ARM64, macOS Intel, macOS Apple Silicon, Windows x86_64
+        # Windows ARM is intentionally excluded.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest, windows-latest]
         # PyO3 0.23.x supports up to Python 3.13.
         python-version: ["3.11", "3.12", "3.13"]
     steps:
@@ -32,6 +38,18 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/rscore
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('src/opensynaptic/core/rscore/rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-
 
       - name: Install maturin
         run: pip install maturin cffi
@@ -115,6 +133,14 @@ jobs:
         run: |
           python -u src/main.py plugin-test --suite component
 
+      - name: Run exhaustive test suites (single matrix shard)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        run: |
+          python -u scripts/exhaustive_business_logic.py
+          python -u scripts/exhaustive_plugin_test.py
+          python -u scripts/exhaustive_security_infra_test.py
+          python -u scripts/exhaustive_orthogonal_test.py
+
       - name: Upload coverage report
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
@@ -160,7 +186,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Platforms: Linux x86_64, Linux ARM64, macOS Intel, macOS Apple Silicon, Windows x86_64
+        # Windows ARM is intentionally excluded.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Checkout
@@ -170,6 +198,21 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/rscore
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('src/opensynaptic/core/rscore/rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
@@ -205,5 +248,5 @@ jobs:
       - name: Upload Rust wheel
         uses: actions/upload-artifact@v4
         with:
-          name: rust-wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: rust-wheel-${{ matrix.os }}-${{ runner.arch }}-py${{ matrix.python-version }}
           path: dist/*.whl

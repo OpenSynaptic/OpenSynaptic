@@ -1,0 +1,39 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"5",
+        "standard_name": "OpenSynaptic_Ucum_Informatics",
+        "class_name": "Informatics",
+        "class_id": "0x0C",
+        "version": "1.1.0",
+        "base_unit": "bit"
+    },
+    "units": {
+        "bit": {
+            "name": "bit",
+            "ucum_code": "bit",
+            "tid": "0x0C00",
+            "physical_attribute": "data",
+            "standard_unit_name": "bit",
+            "to_standard_factor": 1.0,
+            "can_take_prefix": true
+        },
+        "By": {
+            "name": "byte",
+            "ucum_code": "By",
+            "tid": "0x0C01",
+            "physical_attribute": "data",
+            "standard_unit_name": "bit",
+            "to_standard_factor": 8.0,
+            "can_take_prefix": true
+        },
+        "Bd": {
+            "name": "baud",
+            "ucum_code": "Bd",
+            "tid": "0x0C02",
+            "physical_attribute": "bandwidth",
+            "standard_unit_name": "baud",
+            "to_standard_factor": 1.0,
+            "can_take_prefix": true
+        }
+    }
+}

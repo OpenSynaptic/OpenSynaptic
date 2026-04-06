@@ -37,10 +37,7 @@ def read_json(path):
             break
         except json.JSONDecodeError as e:
             last_exc = e
-            if attempt < 2:
-                time.sleep(0.01 * (attempt + 1))
-                continue
-            break
+            break  # 文件格式已损坏，重试无法修复
         except Exception as e:
             os_log.err('PTH', 'IO', e, {'path': path})
             return {}
@@ -175,4 +172,11 @@ def get_registry_path(aid):
 
 def get_lib_path(*args):
     res_root = ctx.config.get('RESOURCES', {}).get('root', 'libraries')
-    return os.path.join(ctx.root, res_root, *args)
+    candidate = os.path.join(ctx.root, res_root, *args)
+    if not os.path.exists(candidate):
+        # Fall back to package-internal libraries when running pip-installed
+        _pkg_lib = Path(__file__).resolve().parent.parent / 'libraries'
+        pkg_candidate = str(_pkg_lib.joinpath(*args)) if args else str(_pkg_lib)
+        if os.path.exists(pkg_candidate):
+            return pkg_candidate
+    return candidate

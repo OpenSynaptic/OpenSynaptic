@@ -16,7 +16,9 @@ env_guard - 环境守卫插件
 """
 import argparse
 import json
+import os
 import queue
+import shlex
 import subprocess
 import threading
 import time
@@ -323,7 +325,8 @@ class EnvironmentGuardService:
     @staticmethod
     def _run_shell_command(command):
         try:
-            proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=180)
+            args = shlex.split(str(command), posix=(os.name != 'nt'))
+            proc = subprocess.run(args, shell=False, capture_output=True, text=True, timeout=180)
             return {
                 'ok': proc.returncode == 0,
                 'command': command,

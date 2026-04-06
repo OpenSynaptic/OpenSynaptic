@@ -1,0 +1,62 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"9",
+        "standard_name": "OpenSynaptic_Ucum_Pressure_Derived",
+        "class_name": "Pressure",
+        "class_id": "0x08",
+        "version": "1.1.0",
+        "author": "OpenSynaptic_Protocol_Core",
+        "base_unit": "Pa"
+    },
+    "units": {
+        "Pa": {
+            "name": "pascal",
+            "ucum_code": "Pa",
+            "tid": "0x0800",
+            "physical_attribute": "pressure",
+            "standard_unit_name": "pascal",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "bar": {
+            "name": "bar",
+            "ucum_code": "bar",
+            "tid": "0x0801",
+            "physical_attribute": "pressure",
+            "standard_unit_name": "pascal",
+            "to_standard_factor": 100000.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "psi": {
+            "name": "pound-force per square inch",
+            "ucum_code": "[psi]",
+            "tid": "0x0802",
+            "physical_attribute": "pressure",
+            "standard_unit_name": "pascal",
+            "to_standard_factor": 6894.75729,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "atm": {
+            "name": "standard atmosphere",
+            "ucum_code": "atm",
+            "physical_attribute": "pressure",
+            "standard_unit_name": "pascal",
+            "to_standard_factor": 101325.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "mm[Hg]": {
+            "name": "millimeter of mercury",
+            "ucum_code": "mm[Hg]",
+            "tid": "0x0803",
+            "physical_attribute": "pressure",
+            "standard_unit_name": "pascal",
+            "to_standard_factor": 133.322387,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        }
+    }
+}

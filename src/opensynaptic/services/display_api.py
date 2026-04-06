@@ -12,6 +12,7 @@ Architecture:
 """
 
 import abc
+import html
 import threading
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -144,17 +145,17 @@ class DisplayProvider(abc.ABC):
         
         if isinstance(data, dict):
             for key, value in data.items():
-                safe_key = str(key).replace('<', '&lt;').replace('>', '&gt;')
-                safe_val = str(value).replace('<', '&lt;').replace('>', '&gt;')
+                safe_key = html.escape(str(key), quote=True)
+                safe_val = html.escape(str(value), quote=True)
                 rows.append(f"<tr><td><strong>{safe_key}</strong></td><td>{safe_val}</td></tr>")
         elif isinstance(data, list):
             # List of dicts
             if data and isinstance(data[0], dict):
                 keys = list(data[0].keys())
-                rows.append("<tr>" + "".join(f"<th>{k}</th>" for k in keys) + "</tr>")
+                rows.append("<tr>" + "".join(f"<th>{html.escape(str(k), quote=True)}</th>" for k in keys) + "</tr>")
                 for item in data:
                     row_html = "".join(
-                        f"<td>{str(item.get(k, '')).replace('<', '&lt;').replace('>', '&gt;')}</td>"
+                        f"<td>{html.escape(str(item.get(k, '')), quote=True)}</td>"
                         for k in keys
                     )
                     rows.append(f"<tr>{row_html}</tr>")
@@ -458,8 +459,11 @@ def _auto_load_builtin_providers():
         from opensynaptic.services.builtin_display_providers import auto_load_builtin_providers
         auto_load_builtin_providers()
     except Exception as e:
-        # Fail silently - builtin providers are optional
-        pass
+        try:
+            from opensynaptic.utils import os_log
+            os_log.warn('DISPLAY_API', 'BUILTIN_LOAD_FAILED', str(e), {})
+        except Exception:
+            pass
 
 
 _auto_load_builtin_providers()

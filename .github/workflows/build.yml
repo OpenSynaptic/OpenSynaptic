@@ -1,4 +1,7 @@
 name: Build
+# NOTE: This workflow is superseded by ci.yml for full matrix testing.
+# It remains as a fast smoke-build for main-branch pushes (Ubuntu-only, no Rust ext).
+# For full multi-OS / multi-Python builds, see ci.yml.
 
 on:
   push:
@@ -10,6 +13,10 @@ jobs:
   test:
     name: Test (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      OPENSYNAPTIC_CORE: pycore
+      PYTHONPATH: ${{ github.workspace }}/src
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/rscore
     strategy:
       fail-fast: false
       matrix:
@@ -26,14 +33,39 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install maturin
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/rscore
+          key: ubuntu-cargo-${{ hashFiles('src/opensynaptic/core/rscore/rust/Cargo.lock') }}
+          restore-keys: |
+            ubuntu-cargo-
+
+      - name: Install maturin and cffi
         run: |
           python -m pip install --upgrade pip
-          python -m pip install maturin
+          python -m pip install maturin cffi
+
+      - name: Build Rust extension
+        run: |
+          cd src/opensynaptic/core/rscore/rust
+          mkdir -p "${{ github.workspace }}/dist"
+          maturin build --release --bindings pyo3 --features python-module --out "${{ github.workspace }}/dist"
+          cd ${{ github.workspace }}
 
       - name: Install project and test dependencies
         run: |
-          python -m pip install -e .[dev]
+          pip install dist/*.whl
+          python -m pip install -e ".[dev]"
+
+      - name: Build native C runtime libraries
+        run: |
+          python -u src/opensynaptic/utils/c/check_native_toolchain.py
+          python -u src/opensynaptic/utils/c/build_native.py
 
       - name: Run tests
         run: |

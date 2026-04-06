@@ -58,6 +58,11 @@ class OSLogger:
         self.logger.info(out)
         return out
 
+    def warn(self, mid, eid, msg, ctx=None):
+        out = self._format(mid, eid, msg, ctx)
+        self.logger.warning(out)
+        return out
+
     def log(self, mid, msg, ctx=None, level=None):
         """Compatibility shim for legacy call-sites using os_log.log(...).
 

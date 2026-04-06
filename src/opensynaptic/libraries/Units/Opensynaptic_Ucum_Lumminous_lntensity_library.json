@@ -1,0 +1,42 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"7",
+        "standard_name": "OpenSynaptic_Ucum_Luminous_Intensity",
+        "class_name": "LuminousIntensity",
+        "class_id": "0x07",
+        "version": "1.1.0",
+        "base_unit": "cd"
+    },
+    "units": {
+        "cd": {
+            "name": "candela",
+            "ucum_code": "cd",
+            "tid": "0x0700",
+            "physical_attribute": "luminous intensity",
+            "standard_unit_name": "candela",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "cp": {
+            "name": "candlepower",
+            "ucum_code": "[cp_i]",
+            "tid": "0x0701",
+            "physical_attribute": "luminous intensity",
+            "standard_unit_name": "candela",
+            "to_standard_factor": 0.981,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "hk": {
+            "name": "hefnerkerze",
+            "ucum_code": "[hk_i]",
+            "tid": "0x0702",
+            "physical_attribute": "luminous intensity",
+            "standard_unit_name": "candela",
+            "to_standard_factor": 0.903,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        }
+    }
+}

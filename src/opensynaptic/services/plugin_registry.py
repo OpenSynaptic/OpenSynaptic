@@ -123,7 +123,9 @@ def list_builtin_plugins():
     return sorted(PLUGIN_SPECS.keys())
 
 
-def _deep_merge_missing(target, source):
+def _deep_merge_missing(target, source, _depth=0):
+    if _depth >= 10:
+        return False
     changed = False
     for key, value in (source or {}).items():
         if key not in target:
@@ -131,7 +133,7 @@ def _deep_merge_missing(target, source):
             changed = True
             continue
         if isinstance(target.get(key), dict) and isinstance(value, dict):
-            if _deep_merge_missing(target[key], value):
+            if _deep_merge_missing(target[key], value, _depth + 1):
                 changed = True
     return changed
 
@@ -151,9 +153,12 @@ def ensure_plugin_defaults(config, plugin_name):
 
 def get_plugin_config(config, plugin_name):
     key = normalize_plugin_name(plugin_name)
-    resources = config.get('RESOURCES', {}) if isinstance(config.get('RESOURCES', {}), dict) else {}
-    service_cfg = resources.get('service_plugins', {}) if isinstance(resources.get('service_plugins', {}), dict) else {}
-    plugin_cfg = service_cfg.get(key, {}) if isinstance(service_cfg.get(key, {}), dict) else {}
+    _res = config.get('RESOURCES', {})
+    resources = _res if isinstance(_res, dict) else {}
+    _svc = resources.get('service_plugins', {})
+    service_cfg = _svc if isinstance(_svc, dict) else {}
+    _pcfg = service_cfg.get(key, {})
+    plugin_cfg = _pcfg if isinstance(_pcfg, dict) else {}
     return plugin_cfg
 
 

@@ -1,0 +1,72 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"B",
+        "standard_name": "OpenSynaptic_Ucum_Time",
+        "class_name": "Time",
+        "class_id": "0x03",
+        "version": "1.1.0",
+        "base_unit": "s"
+    },
+    "units": {
+        "s": {
+            "name": "second",
+            "ucum_code": "s",
+            "tid": "0x0300",
+            "physical_attribute": "time",
+            "standard_unit_name": "second",
+            "to_standard_factor": 1.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        },
+        "min": {
+            "name": "minute",
+            "ucum_code": "min",
+            "tid": "0x0301",
+            "physical_attribute": "time",
+            "standard_unit_name": "second",
+            "to_standard_factor": 60.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "h": {
+            "name": "hour",
+            "ucum_code": "h",
+            "tid": "0x0302",
+            "physical_attribute": "time",
+            "standard_unit_name": "second",
+            "to_standard_factor": 3600.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "d": {
+            "name": "day",
+            "ucum_code": "d",
+            "tid": "0x0303",
+            "physical_attribute": "time",
+            "standard_unit_name": "second",
+            "to_standard_factor": 86400.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "wk": {
+            "name": "week",
+            "ucum_code": "wk",
+            "tid": "0x0304",
+            "physical_attribute": "time",
+            "standard_unit_name": "second",
+            "to_standard_factor": 604800.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": false
+        },
+        "ann": {
+            "name": "year",
+            "ucum_code": "year",
+            "tid": "0x0305",
+            "physical_attribute": "time",
+            "standard_unit_name": "second",
+            "to_standard_factor": 31557600.0,
+            "to_standard_offset": 0.0,
+            "can_take_prefix": true
+        }
+    }
+}

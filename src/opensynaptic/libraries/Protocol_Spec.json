@@ -1,0 +1,1 @@
+{"BIT_SWITCH": {"SCALES": {"0x10": {"macro": "da", "micro": "d"}, "0x20": {"macro": "k", "micro": "m"}, "0x40": {"macro": "M", "micro": "u"}, "0x80": {"macro": "G", "micro": "p"}}}}

@@ -1,0 +1,48 @@
+{
+    "__METADATA__": {
+        "OS_UNIT_SYMBOLS":"3",
+        "standard_name": "OpenSynaptic_Ucum_Energy_Power",
+        "class_name": "EnergyPower",
+        "class_id": "0x0A",
+        "version": "1.1.0",
+        "base_unit": "W"
+    },
+    "units": {
+        "W": {
+            "name": "watt",
+            "ucum_code": "W",
+            "tid": "0x0A00",
+            "physical_attribute": "power",
+            "standard_unit_name": "watt",
+            "to_standard_factor": 1.0,
+            "can_take_prefix": true
+        },
+        "J": {
+            "name": "joule",
+            "ucum_code": "J",
+            "tid": "0x0A01",
+            "physical_attribute": "energy",
+            "standard_unit_name": "joule",
+            "to_standard_factor": 1.0,
+            "can_take_prefix": true
+        },
+        "cal": {
+            "name": "calorie",
+            "ucum_code": "cal_IT",
+            "tid": "0x0A02",
+            "physical_attribute": "energy",
+            "standard_unit_name": "joule",
+            "to_standard_factor": 4.1868,
+            "can_take_prefix": true
+        },
+        "hp": {
+            "name": "horsepower",
+            "ucum_code": "[hp_m]",
+            "tid": "0x0A03",
+            "physical_attribute": "power",
+            "standard_unit_name": "watt",
+            "to_standard_factor": 735.49875,
+            "can_take_prefix": false
+        }
+    }
+}

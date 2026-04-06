@@ -36,7 +36,9 @@ class OpenSynapticEngine:
         else:
             sym_candidate = Path(base_path) / 'data' / 'symbols.json'
         if not sym_candidate.exists():
+            _pkg_lib = Path(__file__).resolve().parent.parent.parent / 'libraries'
             fallback_candidates = (
+                _pkg_lib / 'OS_Symbols.json',
                 Path(base_path) / 'libraries' / 'OS_Symbols.json',
                 Path(ctx.root) / 'libraries' / 'OS_Symbols.json',
                 Path(base_path) / 'OS_Symbols.json',
@@ -47,7 +49,6 @@ class OpenSynapticEngine:
                     break
         self.sym_path = str(sym_candidate)
         self.sol_path = str(Path(base_path) / 'cache' / 'solidity_cache.json')
-        settings = self.config.get('engine_settings', {})
         self.USE_MS = settings.get('use_ms', True)
         self.precision_val = 10 ** settings.get('precision', 4)
         self.CHARS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -60,11 +61,8 @@ class OpenSynapticEngine:
         self.registry = read_json(self.sol_path).get('cached_units', {})
         self._refresh_maps()
 
-    def _load_json(self, path):
-        return read_json(path)
-
     def _refresh_maps(self):
-        lib = self._load_json(self.sym_path)
+        lib = read_json(self.sym_path)
         if not isinstance(lib, dict):
             lib = {}
         self._symbols_cache = lib
@@ -108,7 +106,10 @@ class OpenSynapticEngine:
         encoded = self.codec.encode(n, use_precision=use_precision)
         cache = self._b62_encode_cache
         if len(cache) >= self._b62_cache_limit:
-            cache.clear()
+            # 保留最新一半，避免全清导致的命中率悬崖
+            keep = list(cache)[-self._b62_cache_limit // 2:]
+            self._b62_encode_cache = {k: cache[k] for k in keep}
+            cache = self._b62_encode_cache
         cache[cache_key] = encoded
         return encoded
 
@@ -188,6 +189,8 @@ class OpenSynapticEngine:
             else:
                 compressed.append(get_unit_symbol(attr, 'units') + p_suffix)
         result = '/'.join(compressed)
+        if len(self._unit_token_cache) >= 4096:
+            self._unit_token_cache.clear()
         self._unit_token_cache[unit_str] = result
         return result
 

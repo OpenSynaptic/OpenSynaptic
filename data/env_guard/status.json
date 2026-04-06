@@ -2,8 +2,8 @@
   "ok": true,
   "service": "env_guard",
   "auto_install": false,
-  "status_json_path": "E:\\新建文件夹 (2)\\data\\env_guard\\status.json",
-  "resource_library_json_path": "E:\\新建文件夹 (2)\\data\\env_guard\\resources.json",
+  "status_json_path": "E:\\新建文件夹 (4)\\OpenSynaptic\\data\\env_guard\\status.json",
+  "resource_library_json_path": "E:\\新建文件夹 (4)\\OpenSynaptic\\data\\env_guard\\resources.json",
   "resource_summary": {
     "kinds": [
       "compiler",

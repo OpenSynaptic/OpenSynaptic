@@ -24,7 +24,7 @@
         "End_ID": 0
     },
     "RESOURCES": {
-        "root": "OS_library/opensynaptic_core/",
+        "root": "../libraries/",
         "registry": "data/device_registry/",
         "symbols": "data/symbols.json",
         "application_status": {
@@ -74,7 +74,7 @@
             "quic": {
                 "port": 4433,
                 "timeout": 2.0,
-                "insecure": true
+                "insecure": false
             },
             "iwip": {},
             "uip": {}
@@ -204,7 +204,7 @@
     },
     "engine_settings": {
         "core_backend": "rscore",
-        "global_secret_key": "2B",
+        "global_secret_key": "6356f6b4753162e0bbfa5bad1cf882959f172e6f6c3654821f938360b0aa024e",
         "precision": 4,
         "lock_threshold": 3,
         "active_standardization": true,

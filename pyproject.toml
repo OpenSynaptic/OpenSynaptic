@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "opensynaptic"
-version = "1.1.0rc1"
+version = "1.3.0"
 description = "2-N-2 high-performance protocol stack"
 authors = [{name = "OpenSynaptic Contributors"}]
 readme = "README.md"
@@ -84,6 +84,24 @@ manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
 features = ["python-module"]
 python-source = "src"
 python-packages = ["opensynaptic", "opensynaptic_rscore"]
+# Exclude source/build files that must not appear in binary wheels.
+# (They are kept in the sdist via sdist-include.)
+exclude = [
+    # Rust source — compiled into the .pyd, not needed at runtime
+    "src/opensynaptic/core/rscore/rust/src/**",
+    "src/opensynaptic/core/rscore/rust/Cargo.toml",
+    "src/opensynaptic/core/rscore/rust/Cargo.lock",
+    "src/opensynaptic/core/rscore/rust/.cargo/**",
+    # C source — compiled into .dll/.so by build_native.py, not needed at runtime
+    "src/opensynaptic/utils/base62/base62_native.c",
+    "src/opensynaptic/utils/security/security_native.c",
+    # MSVC intermediate/import-library files (generated on Windows dev machines)
+    "src/opensynaptic/utils/c/*.obj",
+    "src/opensynaptic/utils/c/bin/*.obj",
+    "src/opensynaptic/utils/c/bin/*.lib",
+    "src/opensynaptic/utils/c/bin/*.exp",
+    "src/opensynaptic/utils/c/bin/*.tmp.*",
+]
 sdist-include = [
     "LICENSE", 
     "README.md",
