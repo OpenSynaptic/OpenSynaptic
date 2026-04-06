@@ -22,9 +22,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Platforms: Linux x86_64, Linux ARM64, macOS Intel, macOS Apple Silicon, Windows x86_64
+        # Platforms: Linux x86_64, Linux ARM64, macOS Apple Silicon, Windows x86_64
+        # macOS Intel (x86_64) is covered by build.yml cibuildwheel cross-compile.
+        # macos-13 runner was deprecated by GitHub in 2025.
         # Windows ARM is intentionally excluded.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
         # PyO3 0.23.x supports up to Python 3.13.
         python-version: ["3.11", "3.12", "3.13"]
     steps:
@@ -166,11 +168,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Build sdist/wheel and validate metadata
+      - name: Build sdist and validate metadata
         run: |
           python -m pip install -U pip build twine
-          python -m build
-          python -m twine check dist/*
+          python -m build --sdist
+          python -m twine check dist/*.tar.gz
 
       - name: Upload built distributions
         uses: actions/upload-artifact@v4
@@ -186,9 +188,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Platforms: Linux x86_64, Linux ARM64, macOS Intel, macOS Apple Silicon, Windows x86_64
+        # Platforms: Linux x86_64, Linux ARM64, macOS Apple Silicon, Windows x86_64
+        # macOS Intel (x86_64) is covered by build.yml cibuildwheel cross-compile.
+        # macos-13 runner was deprecated by GitHub in 2025.
         # Windows ARM is intentionally excluded.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Checkout

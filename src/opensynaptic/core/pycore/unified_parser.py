@@ -391,7 +391,21 @@ class OSVisualFusionEngine:
             sig_index = reg.setdefault('sig_index', {})
             tid = sig_index.get(sig)
             if not tid:
-                tid = str(len(reg_data['templates']) + 1).zfill(2)
+                _MAX_TIDS = 255  # TID is a 1-byte wire field (0x01–0xFF)
+                if len(reg_data['templates']) < _MAX_TIDS:
+                    tid = str(len(reg_data['templates']) + 1).zfill(2)
+                else:
+                    # FIFO eviction: reclaim the lowest-numbered TID slot so
+                    # TID never overflows the single-byte frame field.  The
+                    # next packet for this sig will be a FULL packet so the
+                    # receiver re-learns the structure under the recycled TID.
+                    _existing = sorted(reg_data['templates'], key=lambda t: int(t))
+                    tid = _existing[0]
+                    _old_sig = reg_data['templates'][tid].get('sig')
+                    if _old_sig and sig_index.get(_old_sig) == tid:
+                        del sig_index[_old_sig]
+                    reg['runtime_vals'].pop(tid, None)
+                    del reg_data['templates'][tid]
                 reg_data['templates'][tid] = {'sig': sig}
                 sig_index[sig] = tid
                 reg['dirty'] = True
@@ -470,7 +484,8 @@ class OSVisualFusionEngine:
         off += 2
         frame[off:off + len(r_bin)] = r_bin
         off += len(r_bin)
-        frame[off] = int(tid)
+        tid_byte = int(tid) & 0xFF  # guard: TID must fit in one byte (1-255)
+        frame[off] = tid_byte
         frame[off + 1:off + 7] = ts_raw
         off += 7
         out_slice = memoryview(frame)[off:off + body_len]
