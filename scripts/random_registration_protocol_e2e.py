@@ -241,7 +241,7 @@ class LocalHandshakeResponder:
     def _run(self) -> None:
         try:
             from opensynaptic.core.pycore.handshake import OSHandshakeManager
-            from plugins.id_allocator import IDAllocator
+            from opensynaptic.utils.id_allocator import IDAllocator
 
             self.state_dir.mkdir(parents=True, exist_ok=True)
             handshake = OSHandshakeManager(
