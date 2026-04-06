@@ -16,6 +16,15 @@ on:
           - smoke
           - full
           - extreme
+      global_scale:
+        description: "Validation pipeline scale (all other shards — Windows, macOS, ARM)"
+        required: false
+        default: "smoke"
+        type: choice
+        options:
+          - smoke
+          - full
+          - extreme
       random_rounds:
         description: "Rounds for randomized protocol e2e (ubuntu-latest/py3.11 shard only)"
         required: false
@@ -267,6 +276,36 @@ jobs:
         with:
           name: coverage-report
           path: coverage.xml
+
+      # ── Global shard pipeline (all shards except ubuntu-latest/py3.11) ──────
+      - name: Resolve global pipeline inputs
+        if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') }}
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.global_scale }}" ]]; then
+            echo "GLOBAL_PIPELINE_SCALE=${{ github.event.inputs.global_scale }}" >> "$GITHUB_ENV"
+          else
+            echo "GLOBAL_PIPELINE_SCALE=smoke" >> "$GITHUB_ENV"
+          fi
+
+      - name: Script - extreme_validation_pipeline (global shards)
+        if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') }}
+        shell: bash
+        timeout-minutes: 120
+        run: |
+          python -u scripts/extreme_validation_pipeline.py \
+            --scale "$GLOBAL_PIPELINE_SCALE" \
+            --strict \
+            --output "data/benchmarks/extreme_validation_report_global_ci.json"
+
+      - name: Upload global shard benchmark artifacts
+        if: ${{ always() && !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-benchmarks-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_id }}
+          path: |
+            data/benchmarks/*.json
+          if-no-files-found: warn
 
   build-python-dist:
     name: build-python-dist (py${{ matrix.python-version }})
