@@ -28,6 +28,7 @@ class OS_Registry:
 
         self.atomic_map = {}
         self.ucum_to_id = {}
+        self.unit_detail_map = {}
         self._build_dual_index()
 
     def _load_json(self, path):
@@ -52,13 +53,15 @@ class OS_Registry:
             data = self._load_json(str(f))
             cid = int(data.get("__METADATA__", {}).get("class_id", "0x00"), 16)
             units = data.get("units", {})
+            base_found = False
             for u_key, u_info in units.items():
-                if float(u_info.get("to_standard_factor", 0)) == 1.0:
-                    ucum = u_info.get("ucum_code", u_key)
-                    u_info["ucum"] = ucum
-                    self.atomic_map[cid] = u_info
+                ucum = u_info.get("ucum_code", u_key)
+                entry = {**u_info, "ucum": ucum, "class_id": cid}
+                self.unit_detail_map[ucum] = entry
+                if not base_found and float(u_info.get("to_standard_factor", 0)) == 1.0:
+                    self.atomic_map[cid] = entry
                     self.ucum_to_id[ucum] = cid
-                    break
+                    base_found = True
 
     def resolve(self, byte1, byte2):
         base_info = self.atomic_map.get(byte1)
@@ -80,6 +83,14 @@ class OS_Registry:
         label = f"{prefix}{ucum}{suffix}"
         if byte2 & 0x01: label = f"1/{label}"
         return base_info, label
+
+    def lookup(self, ucum_code):
+        """Return full unit info for any ucum_code, including operation units.
+
+        Returns the unit dict (with class_id, tid, direction, requires_value, etc.)
+        or None if not found.
+        """
+        return self.unit_detail_map.get(ucum_code)
 
     def compose(self, ucum_base, prefix="", suffix="", inv=False):
         byte1 = self.ucum_to_id.get(ucum_base)

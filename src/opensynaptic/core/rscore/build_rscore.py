@@ -61,14 +61,28 @@ def _find_cargo():
 
 
 def _cargo_target_root():
-    """Return Cargo target root, honoring CARGO_TARGET_DIR when provided."""
+    """Return Cargo target root, honoring CARGO_TARGET_DIR, then .cargo/config.toml, then default."""
     raw = str(os.environ.get('CARGO_TARGET_DIR', '') or '').strip()
-    if not raw:
-        return _CRATE_DIR / 'target'
-    p = Path(raw).expanduser()
-    if not p.is_absolute():
-        p = (_CRATE_DIR / p).resolve()
-    return p
+    if raw:
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = (_CRATE_DIR / p).resolve()
+        return p
+    # Check .cargo/config.toml for target-dir
+    config_toml = _CRATE_DIR / '.cargo' / 'config.toml'
+    if config_toml.exists():
+        try:
+            import re as _re
+            text = config_toml.read_text(encoding='utf-8')
+            m = _re.search(r'target-dir\s*=\s*"([^"]+)"', text)
+            if m:
+                p = Path(m.group(1))
+                if not p.is_absolute():
+                    p = (_CRATE_DIR / p).resolve()
+                return p
+        except Exception:
+            pass
+    return _CRATE_DIR / 'target'
 
 
 def build_rscore(

@@ -2,8 +2,11 @@ name: Scripts Comprehensive CI
 
 on:
   push:
-    branches: ["**"]
+    # Only run on main integration branches — this job takes up to 180 min.
+    # Feature branches should use the standard ci.yml instead.
+    branches: ["main", "develop", "Beta"]
   pull_request:
+    branches: ["main", "develop"]
   workflow_dispatch:
     inputs:
       scale:
@@ -132,6 +135,26 @@ jobs:
         shell: bash
         run: |
           timeout 20m python -u scripts/services_smoke_check.py
+
+      - name: Script - exhaustive_business_logic
+        shell: bash
+        run: |
+          timeout 30m python -u scripts/exhaustive_business_logic.py
+
+      - name: Script - exhaustive_plugin_test
+        shell: bash
+        run: |
+          timeout 30m python -u scripts/exhaustive_plugin_test.py
+
+      - name: Script - exhaustive_security_infra_test
+        shell: bash
+        run: |
+          timeout 20m python -u scripts/exhaustive_security_infra_test.py
+
+      - name: Script - exhaustive_orthogonal_test
+        shell: bash
+        run: |
+          timeout 20m python -u scripts/exhaustive_orthogonal_test.py
 
       - name: Script - port_forwarder_roundtrip_check
         shell: bash

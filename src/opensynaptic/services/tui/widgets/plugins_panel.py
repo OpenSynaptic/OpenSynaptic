@@ -38,15 +38,21 @@ class PluginsPanel(BaseTUIPanel):
         if not TEXTUAL_AVAILABLE:
             return
 
-        self.get_data()
-        self._update_table()
+        try:
+            self.get_data()
+            self._update_table()
+        except Exception as e:
+            self.log.error(f"Failed to initialize plugins panel: {e}")
 
     def _update_table(self):
         """Update the DataTable with plugin data."""
         if not TEXTUAL_AVAILABLE:
             return
 
-        table = self.query_one("#plugins-table", DataTable)
+        try:
+            table = self.query_one("#plugins-table", DataTable)
+        except Exception:
+            return
         table.clear(columns=True)
 
         data = self._data or {}

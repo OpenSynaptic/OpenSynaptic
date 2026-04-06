@@ -1,4 +1,5 @@
 from typing import Any, Iterable, Sequence
+import os
 from .base import BaseDBDriver
 MYSQL_CREATE_PACKETS = '\nCREATE TABLE IF NOT EXISTS os_packets (\n    packet_uuid VARCHAR(64) PRIMARY KEY,\n    device_id VARCHAR(255) NOT NULL,\n    device_status VARCHAR(32) NOT NULL,\n    timestamp_raw BIGINT NOT NULL,\n    payload_json JSON NOT NULL,\n    created_at BIGINT NOT NULL\n)\n'
 MYSQL_CREATE_SENSORS = '\nCREATE TABLE IF NOT EXISTS os_sensors (\n    packet_uuid VARCHAR(64) NOT NULL,\n    sensor_index INT NOT NULL,\n    sensor_id VARCHAR(255) NOT NULL,\n    sensor_status VARCHAR(32) NOT NULL,\n    normalized_value DOUBLE NULL,\n    normalized_unit VARCHAR(64) NULL,\n    INDEX idx_os_sensors_packet_uuid (packet_uuid)\n)\n'
@@ -15,7 +16,7 @@ class MySQLDriver(BaseDBDriver):
             import mysql.connector
         except ImportError as exc:
             raise RuntimeError('mysql-connector-python is required for MySQL driver') from exc
-        params = {'host': self.config.get('host', '127.0.0.1'), 'port': int(self.config.get('port', 3306)), 'user': self.config.get('user'), 'password': self.config.get('password'), 'database': self.config.get('database'), 'autocommit': False}
+        params = {'host': self.config.get('host', '127.0.0.1'), 'port': int(self.config.get('port', 3306)), 'user': self.config.get('user'), 'password': os.getenv('OS_DB_PASSWORD') or self.config.get('password'), 'database': self.config.get('database'), 'autocommit': False}
         self.conn = mysql.connector.connect(**params)
         return self.conn
 

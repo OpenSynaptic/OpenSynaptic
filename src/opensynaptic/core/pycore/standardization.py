@@ -31,12 +31,20 @@ class OpenSynapticStandardizer:
             candidate = Path(project_root) / res_root
             if candidate.exists():
                 lib_dir = str(candidate)
+            else:
+                os_log.warn('STD', 'INIT', f"RESOURCES.root '{res_root}' not found at '{candidate}'; falling back to 'libraries/'")
         if not lib_dir:
             candidate = Path(project_root) / 'libraries'
             if candidate.exists():
                 lib_dir = str(candidate)
         if not lib_dir:
+            # Package-internal libraries (pip-installed path)
+            candidate = BASE_DIR.parent.parent / 'libraries'
+            if candidate.exists():
+                lib_dir = str(candidate)
+        if not lib_dir:
             lib_dir = str(Path(BASE_DIR) / 'OS_Library')
+            os_log.warn('STD', 'INIT', f"No unit library directory resolved; using fallback '{lib_dir}' (may not exist)")
         units_dir = Path(lib_dir) / 'Units'
         if not units_dir.is_dir():
             alt = Path(lib_dir) / 'units'
@@ -48,7 +56,9 @@ class OpenSynapticStandardizer:
                 sys.path.append(lib_dir)
         except Exception as e:
             os_log.err('STD', 'INIT', e, {'lib_dir': lib_dir})
-        self.cache_path = str(Path(BASE_DIR) / 'cache' / 'standardization_cache.json')
+        # Write cache next to Config.json (user-writable), not inside site-packages
+        _cache_base = Path(project_root) / 'cache'
+        self.cache_path = str(_cache_base / 'standardization_cache.json')
         Path(self.cache_path).parent.mkdir(parents=True, exist_ok=True)
         cache_data = self._load_json(self.cache_path)
         self.registry = cache_data.get('cached_units', {})
