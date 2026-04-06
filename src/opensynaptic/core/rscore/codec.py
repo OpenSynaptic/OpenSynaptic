@@ -1265,6 +1265,7 @@ class RsOSVisualFusionEngine:
         # Keep context stable across repeated CLI commands in the same process so
         # Rust-side fusion templates survive node re-instantiation.
         self._ctx_id = int(self._derive_ctx_id(args, kwargs))
+        self._config_path = args[0] if args else kwargs.get('config_path')
         self._registry_root = self._resolve_registry_root(args, kwargs)
         self._decode_engine = None
         self.local_id = 0xFFFFFFFE
@@ -1454,6 +1455,43 @@ class RsOSVisualFusionEngine:
         vals_bin = list(vals_new or [])
         return (sig_str, vals_bin, rebuilt)
 
+    def _ensure_decode_engine(self):
+        if self._decode_engine is None:
+            from opensynaptic.core.rscore.solidity import OpenSynapticEngine as _RsEngine
+            try:
+                self._decode_engine = _RsEngine(config_path=self._config_path)
+            except Exception:
+                try:
+                    self._decode_engine = _RsEngine()
+                except Exception:
+                    pass
+
+    def _resolve_string_fields(self, decoded: dict) -> dict:
+        """Expand compressed state/unit tokens returned by the Rust decoder."""
+        if not isinstance(decoded, dict) or 'error' in decoded:
+            return decoded
+        self._ensure_decode_engine()
+        engine = self._decode_engine
+        if engine is None:
+            return decoded
+        rev_state = getattr(engine, 'REV_STATE', {}) or {}
+        rev_unit = getattr(engine, 'REV_UNIT', {}) or {}
+        if not rev_state and not rev_unit:
+            return decoded
+        result = dict(decoded)
+        if 's' in result:
+            result['s'] = rev_state.get(str(result['s']), str(result['s'])).upper()
+        idx = 1
+        while f's{idx}_s' in result or f's{idx}_u' in result:
+            sk = f's{idx}_s'
+            uk = f's{idx}_u'
+            if sk in result:
+                result[sk] = rev_state.get(str(result[sk]), str(result[sk])).upper()
+            if uk in result:
+                result[uk] = rev_unit.get(str(result[uk]), str(result[uk]))
+            idx += 1
+        return result
+
     def _decode_with_registry_fallback(self, packet: bytes, meta: dict):
         if not isinstance(meta, dict):
             return None
@@ -1490,9 +1528,7 @@ class RsOSVisualFusionEngine:
         if not bool(fallback_meta.get('crc8_ok')):
             return {'error': 'CRC8 mismatch', '__packet_meta__': fallback_meta}
 
-        if self._decode_engine is None:
-            from opensynaptic.core.rscore.solidity import OpenSynapticEngine as _RsEngine
-            self._decode_engine = _RsEngine()
+        self._ensure_decode_engine()
 
         if base_cmd == 63:
             raw_str = body.decode('utf-8', errors='ignore')
@@ -1664,7 +1700,8 @@ class RsOSVisualFusionEngine:
             recovered = self._decode_with_registry_fallback(raw, hdr)
             if recovered is not None:
                 decoded = recovered
-        if isinstance(decoded, dict):
+        if isinstance(decoded, dict) and 'error' not in decoded:
+            decoded = self._resolve_string_fields(decoded)
             meta = decoded.get('__packet_meta__', {}) if isinstance(decoded.get('__packet_meta__', {}), dict) else {}
             if int(meta.get('base_cmd', meta.get('cmd', 0)) or 0) == 63:
                 try:

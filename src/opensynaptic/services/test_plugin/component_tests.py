@@ -1633,8 +1633,11 @@ class TestRscoreFusionEngine(unittest.TestCase):
         changed_input = '42;{}'.format(eng.compress(fact))
         py_fusion = type(self.py_fusion)(cfg)
         rs_fusion = type(self.rs_fusion)(cfg)
-        py_fusion.run_engine(self.raw_input, strategy='FULL')
-        rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        full_pkt = py_fusion.run_engine(self.raw_input, strategy='FULL')
+        # Prime decode-side template registry: receiver must see a FULL packet
+        # before it can decode DIFF packets from the same source.
+        py_fusion.decompress(full_pkt)
+        rs_fusion.decompress(full_pkt)
         diff_pkt = py_fusion.run_engine(changed_input, strategy='DIFF')
         py_dec = py_fusion.decompress(diff_pkt)
         rs_dec = rs_fusion.decompress(diff_pkt)
@@ -1716,8 +1719,11 @@ class TestRscoreFusionEngine(unittest.TestCase):
         changed_input = '42;{}'.format(eng.compress(fact))
         py_fusion = type(self.py_fusion)(cfg)
         rs_fusion = type(self.rs_fusion)(cfg)
-        py_fusion.run_engine(self.raw_input, strategy='FULL')
-        rs_fusion.run_engine(self.raw_input, strategy='FULL')
+        full_pkt = py_fusion.run_engine(self.raw_input, strategy='FULL')
+        # Prime decode-side template registry: receiver must see a FULL packet
+        # before it can decode DIFF packets from the same source.
+        py_fusion.decompress(full_pkt)
+        rs_fusion.decompress(full_pkt)
         diff_pkt = py_fusion.run_engine(changed_input, strategy='DIFF')
         py_dec = py_fusion.decompress(diff_pkt)
         rs_dec = rs_fusion.decompress(diff_pkt)

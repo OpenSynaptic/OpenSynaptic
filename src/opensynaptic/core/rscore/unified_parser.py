@@ -38,6 +38,10 @@ class OSVisualFusionEngine(BaseOSVisualFusionEngine, RsFFIProxyBase):
                 patched['crc8_ok'] = True
                 changed = True
 
+        if 'server_stamped' not in patched and 'error' not in decoded:
+            patched['server_stamped'] = False
+            changed = True
+
         if changed:
             decoded['__packet_meta__'] = patched
         return decoded

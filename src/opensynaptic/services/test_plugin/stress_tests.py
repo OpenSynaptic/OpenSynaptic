@@ -1314,6 +1314,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     # to simulate a complete request/response cycle
     receiver_thread = None
     receiver_stop_flag = threading.Event()
+    receiver_ready = threading.Event()
     
     if chain_mode == 'e2e_loopback' and use_transport:
         # Start background listener for the transport driver
@@ -1321,6 +1322,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             try:
                 # Guard: use_transport must be set and valid
                 if not use_transport:
+                    receiver_ready.set()
                     return
                 
                 # Get listen configuration from config
@@ -1340,6 +1342,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                         sock.bind((listen_host, listen_port))
                         sock.settimeout(0.5)
+                        receiver_ready.set()  # signal: socket bound and ready
                         
                         while not receiver_stop_flag.is_set():
                             try:
@@ -1357,6 +1360,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                         sock.bind((listen_host, listen_port))
                         sock.listen(64)
                         sock.settimeout(0.5)
+                        receiver_ready.set()  # signal: socket bound and listening
 
                         while not receiver_stop_flag.is_set():
                             try:
@@ -1382,12 +1386,17 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                                     pass
                         sock.close()
                 # For other transports (uart, mqtt, etc), no network listener needed
+                receiver_ready.set()
             except Exception as e:
+                receiver_ready.set()  # unblock main thread even on error
                 os_log.err('RECV', 'INIT', e, {'transport': use_transport})
         
         # Start receiver thread as daemon
         receiver_thread = threading.Thread(target=_start_receiver, daemon=True)
         receiver_thread.start()
+        # Wait for receiver socket to be ready before starting senders (prevents
+        # "connection refused" race on slow CI environments).
+        receiver_ready.wait(timeout=5.0)
     
     _thread_node_tls = threading.local()
     # Pre-build sensor sets

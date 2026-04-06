@@ -221,7 +221,8 @@ class OSVisualFusionEngine:
             if reg:
                 reg['last_seen'] = now_ts
                 return reg
-        f_path = get_registry_path(val)
+        aid_str_z = str(int(val)).zfill(10)
+        f_path = str(Path(self.root_dir) / aid_str_z[0:2] / aid_str_z[2:4] / f'{val}.json')
         p_dir = Path(f_path).parent
         p_dir.mkdir(parents=True, exist_ok=True)
         data = {'aid': key, 'templates': {}}
