@@ -199,24 +199,62 @@ def _try_load_rs_from_python_extension(base_name):
     except Exception:
         pass
 
+    # Phase 2: attempt to import the Rust extension via Python's own loader so
+    # that dlopen is invoked by the interpreter (which handles libpython symbol
+    # dependencies correctly).  Any resulting __file__ is added as a candidate.
+    # On Linux the interpreter's dlopen flags ensure libpython symbols are
+    # resolvable; a subsequent ctypes.CDLL call for the same path will then
+    # reuse the cached dlopen handle and succeed.
+    _preloaded_paths = set()
     for mod_name in ('opensynaptic_rscore.opensynaptic_rscore', 'opensynaptic_rscore._native', '_native'):
         try:
             mod = importlib.import_module(mod_name)
             mod_file = getattr(mod, '__file__', None)
             if mod_file:
                 _add_candidate(mod_file)
+                try:
+                    _preloaded_paths.add(str(Path(mod_file).resolve()))
+                except Exception:
+                    pass
         except Exception:
             continue
 
     for candidate in candidate_paths:
         if not candidate.exists():
             continue
+        # If the extension has not been pre-loaded via Python's import machinery,
+        # try to import it now so that dlopen (and libpython symbol resolution)
+        # is handled by the interpreter before ctypes accesses the handle.
+        # On Linux, ctypes.CDLL on a PyO3 .so that was never imported by Python
+        # may raise "undefined symbol: PyModule_Create2" because the interpreter
+        # process is not exported with RTLD_GLOBAL.  Once Python has imported the
+        # module the OS dlopen cache returns the same handle for the same path,
+        # so a subsequent ctypes.CDLL call will succeed.
         try:
-            lib = ctypes.CDLL(str(candidate))
-            if all(hasattr(lib, symbol) for symbol in required_symbols):
-                return lib
+            resolved_str = str(candidate.resolve())
         except Exception:
-            continue
+            resolved_str = str(candidate)
+        if resolved_str not in _preloaded_paths:
+            # Derive a plausible module stem from the filename and try importing.
+            stem = candidate.name.split('.')[0]
+            for try_mod in (
+                'opensynaptic_rscore.' + stem,
+                stem,
+            ):
+                try:
+                    importlib.import_module(try_mod)
+                    _preloaded_paths.add(resolved_str)
+                    break
+                except Exception:
+                    pass
+
+        for _loader in (ctypes.PyDLL, ctypes.CDLL):
+            try:
+                lib = _loader(str(candidate))
+                if all(hasattr(lib, symbol) for symbol in required_symbols):
+                    return lib
+            except Exception:
+                continue
     return None
 
 
