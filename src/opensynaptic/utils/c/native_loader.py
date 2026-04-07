@@ -11,6 +11,16 @@ _LIB_CACHE = {}
 _BUILD_ATTEMPTED = False
 
 
+def _rs_extension_symbol_requirements(base_name):
+    key = str(base_name or '').strip().lower()
+    requirements = {
+        'os_rscore': (),
+        'os_base62': ('os_b62_encode_i64', 'os_b62_decode_i64'),
+        'os_security': ('os_crc8', 'os_crc16_ccitt', 'os_xor_payload', 'os_derive_session_key'),
+    }
+    return requirements.get(key)
+
+
 class NativeLibraryUnavailable(EnvironmentMissingError):
     def __init__(self, base_name, ext, message):
         install_urls = [
@@ -102,12 +112,14 @@ def _try_build_once():
 
 
 def _try_load_rs_from_python_extension(base_name):
-    """Load os_rscore from an installed opensynaptic_rscore extension fallback.
+    """Load ABI-compatible symbols from the installed opensynaptic_rscore extension.
 
-    This supports environments where Rust is distributed as a Python extension
-    wheel (maturin) rather than copied into utils/c/bin as os_rscore.*.
+    This supports wheel layouts where the Rust extension is shipped as the
+    runtime carrier for os_rscore and compatible os_base62 / os_security C ABI
+    symbols instead of separate utils/c/bin shared libraries.
     """
-    if str(base_name or '').strip().lower() != 'os_rscore':
+    required_symbols = _rs_extension_symbol_requirements(base_name)
+    if required_symbols is None:
         return None
 
     candidate_paths = []
@@ -196,7 +208,9 @@ def _try_load_rs_from_python_extension(base_name):
         if not candidate.exists():
             continue
         try:
-            return ctypes.CDLL(str(candidate))
+            lib = ctypes.CDLL(str(candidate))
+            if all(hasattr(lib, symbol) for symbol in required_symbols):
+                return lib
         except Exception:
             continue
     return None

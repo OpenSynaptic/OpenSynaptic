@@ -18,6 +18,7 @@ use std::sync::mpsc::{sync_channel, SyncSender, Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use bumpalo::Bump;
 use smallvec::SmallVec;
@@ -1172,7 +1173,7 @@ pub unsafe extern "C" fn os_crc8(
 /// # Safety
 /// `data` must point to `len` readable bytes (or be null when `len == 0`).
 #[no_mangle]
-pub unsafe extern "C" fn os_crc16_ccitt_pub(
+pub unsafe extern "C" fn os_crc16_ccitt(
     data: *const u8,
     len: usize,
     poly: u16,
@@ -1183,6 +1184,79 @@ pub unsafe extern "C" fn os_crc16_ccitt_pub(
     }
     let slice = std::slice::from_raw_parts(data, len);
     crc16_ccitt(slice, poly, init)
+}
+
+/// Backward-compatible alias used by the Rust codec helpers.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes (or be null when `len == 0`).
+#[no_mangle]
+pub unsafe extern "C" fn os_crc16_ccitt_pub(
+    data: *const u8,
+    len: usize,
+    poly: u16,
+    init: u16,
+) -> u16 {
+    os_crc16_ccitt(data, len, poly, init)
+}
+
+/// XOR payload bytes with the session key stream.
+///
+/// Signature matches `os_security: os_xor_payload(payload, payload_len, key, key_len, offset, out)`.
+///
+/// # Safety
+/// `payload`, `key`, and `out` must point to readable/writable buffers of the
+/// stated lengths when their lengths are non-zero.
+#[no_mangle]
+pub unsafe extern "C" fn os_xor_payload(
+    payload: *const u8,
+    payload_len: usize,
+    key: *const u8,
+    key_len: usize,
+    offset: u32,
+    out: *mut u8,
+) {
+    if out.is_null() {
+        return;
+    }
+    if payload.is_null() || payload_len == 0 {
+        return;
+    }
+
+    let payload_slice = std::slice::from_raw_parts(payload, payload_len);
+    let out_slice = std::slice::from_raw_parts_mut(out, payload_len);
+    let off = (offset & 31) as u8;
+
+    if key.is_null() || key_len == 0 {
+        out_slice.copy_from_slice(payload_slice);
+        return;
+    }
+
+    let key_slice = std::slice::from_raw_parts(key, key_len);
+    for (index, byte) in payload_slice.iter().enumerate() {
+        out_slice[index] = byte ^ key_slice[(index + off as usize) % key_len] ^ off;
+    }
+}
+
+/// Derive the 32-byte session key from `(assigned_id * timestamp_raw)`.
+///
+/// Signature matches `os_security: os_derive_session_key(assigned_id, timestamp_raw, out32)`.
+///
+/// # Safety
+/// `out32` must point to at least 32 writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn os_derive_session_key(
+    assigned_id: u64,
+    timestamp_raw: u64,
+    out32: *mut u8,
+) {
+    if out32.is_null() {
+        return;
+    }
+
+    let seed = assigned_id.wrapping_mul(timestamp_raw);
+    let digest = Sha256::digest(seed.to_string().as_bytes());
+    std::ptr::copy_nonoverlapping(digest.as_ptr(), out32, digest.len());
 }
 
 /// Return 1 if `cmd` is a telemetry-data command (plain or secure), 0 otherwise.

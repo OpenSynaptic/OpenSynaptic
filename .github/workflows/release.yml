@@ -190,20 +190,37 @@ jobs:
         run: |
           set -euo pipefail
           VERIFY_ROOT="${RUNNER_TEMP}/opensynaptic-wheel-smoke"
-          WHEEL="$(ls dist/opensynaptic-*-${{ matrix.smoke_wheel_tag }}-*.whl | head -n 1)"
+          WHEEL="$(ls dist/opensynaptic-*-${{ matrix.smoke_wheel_tag }}-*.whl | head -n 1 || true)"
+
+          if [[ -z "$WHEEL" ]]; then
+            echo "::error::No wheel found for smoke tag ${{ matrix.smoke_wheel_tag }}"
+            exit 1
+          fi
 
           rm -rf "$VERIFY_ROOT"
           mkdir -p "$VERIFY_ROOT/home" "$VERIFY_ROOT/work"
           export HOME="$VERIFY_ROOT/home"
           export PYTHONNOUSERSITE=1
+          export OPENSYNAPTIC_AUTO_BUILD_NATIVE=0
+          export OPENSYNAPTIC_AUTO_NATIVE_REPAIR=0
           unset PYTHONPATH || true
 
           python -m venv "$VERIFY_ROOT/venv"
           "$VERIFY_ROOT/venv/bin/pip" install --upgrade pip
-          "$VERIFY_ROOT/venv/bin/pip" install "$WHEEL"
+          INSTALL_LOG="$VERIFY_ROOT/pip-install.log"
+          if ! "$VERIFY_ROOT/venv/bin/pip" install "$WHEEL" >"$INSTALL_LOG" 2>&1; then
+            cat "$INSTALL_LOG"
+            if grep -q "not a supported wheel on this platform" "$INSTALL_LOG"; then
+              echo "::notice::Skipping runtime smoke test for cross-arch wheel $WHEEL on the current runner/interpreter."
+              exit 0
+            fi
+            echo "::error::Wheel install failed for $WHEEL"
+            exit 1
+          fi
+          cat "$INSTALL_LOG"
 
           pushd "$VERIFY_ROOT/work"
-          PYCODE="from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); assert 'site-packages' in opensynaptic.__file__; assert 'site-packages' in opensynaptic_rscore.__file__; assert os.path.exists(get_lib_path('OS_Symbols.json'))"
+          PYCODE="from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; from opensynaptic.utils.c.native_loader import has_native_library; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); print('HAS_OS_BASE62=' + str(has_native_library('os_base62'))); print('HAS_OS_SECURITY=' + str(has_native_library('os_security'))); assert 'site-packages' in opensynaptic.__file__; assert 'site-packages' in opensynaptic_rscore.__file__; assert os.path.exists(get_lib_path('OS_Symbols.json')); assert has_native_library('os_base62'); assert has_native_library('os_security')"
           "$VERIFY_ROOT/venv/bin/python" -c "$PYCODE"
           "$VERIFY_ROOT/venv/bin/os-node" repair-config --json
           "$VERIFY_ROOT/venv/bin/os-node" --no-wizard snapshot
@@ -233,6 +250,8 @@ jobs:
           $oldUserProfile = $env:USERPROFILE
           $oldHome = $env:HOME
           $oldUsersite = $env:PYTHONNOUSERSITE
+          $oldAutoBuild = $env:OPENSYNAPTIC_AUTO_BUILD_NATIVE
+          $oldAutoRepair = $env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR
           $hadPythonPath = Test-Path Env:PYTHONPATH
           if ($hadPythonPath) {
             $oldPythonPath = $env:PYTHONPATH
@@ -241,11 +260,13 @@ jobs:
           $env:USERPROFILE = $homeDir
           $env:HOME = $homeDir
           $env:PYTHONNOUSERSITE = '1'
+          $env:OPENSYNAPTIC_AUTO_BUILD_NATIVE = '0'
+          $env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR = '0'
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 
           Push-Location $workDir
           try {
-            $code = "from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); assert 'site-packages' in opensynaptic.__file__.lower(); assert 'site-packages' in opensynaptic_rscore.__file__.lower(); assert os.path.exists(get_lib_path('OS_Symbols.json'))"
+            $code = "from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; from opensynaptic.utils.c.native_loader import has_native_library; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); print('HAS_OS_BASE62=' + str(has_native_library('os_base62'))); print('HAS_OS_SECURITY=' + str(has_native_library('os_security'))); assert 'site-packages' in opensynaptic.__file__.lower(); assert 'site-packages' in opensynaptic_rscore.__file__.lower(); assert os.path.exists(get_lib_path('OS_Symbols.json')); assert has_native_library('os_base62'); assert has_native_library('os_security')"
             & "$venvDir\Scripts\python.exe" -c $code
             & "$venvDir\Scripts\os-node.exe" repair-config --json
             & "$venvDir\Scripts\os-node.exe" --no-wizard snapshot
@@ -259,6 +280,18 @@ jobs:
             }
             else {
               Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
+            }
+            if ($null -ne $oldAutoBuild) {
+              $env:OPENSYNAPTIC_AUTO_BUILD_NATIVE = $oldAutoBuild
+            }
+            else {
+              Remove-Item Env:OPENSYNAPTIC_AUTO_BUILD_NATIVE -ErrorAction SilentlyContinue
+            }
+            if ($null -ne $oldAutoRepair) {
+              $env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR = $oldAutoRepair
+            }
+            else {
+              Remove-Item Env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR -ErrorAction SilentlyContinue
             }
             if ($hadPythonPath) {
               $env:PYTHONPATH = $oldPythonPath
