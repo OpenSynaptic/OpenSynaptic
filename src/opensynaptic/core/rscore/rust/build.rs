@@ -57,6 +57,9 @@ fn main() {
     let out_path = std::path::PathBuf::from(&out_dir);
 
     // All C-ABI bridge symbols that must be visible via dlsym / ctypes.
+    // NOTE: symbols behind optional Cargo features (e.g. `worker`) are listed
+    // separately so their --undefined flag is only emitted when the feature is
+    // active (otherwise the linker would fail with an unresolved symbol error).
     let extra_globals: &[&str] = &[
         // os_base62
         "os_b62_encode_i64",
@@ -94,10 +97,6 @@ fn main() {
         "os_node_transmit_json_v1",
         "os_node_dispatch_json_v1",
         "os_pipeline_batch_v1",
-        // worker pool
-        "os_worker_create_v1",
-        "os_worker_submit_v1",
-        "os_worker_destroy_v1",
         // misc
         "os_standardize_json_v1",
         "os_handshake_negotiate_v1",
@@ -105,25 +104,52 @@ fn main() {
         "os_transporter_listen_v1",
     ];
 
+    // Worker pool symbols – only present when the `worker` Cargo feature is
+    // enabled.  Including them unconditionally in --undefined would cause a
+    // linker error when the feature is off.
+    #[cfg(feature = "worker")]
+    let worker_globals: &[&str] = &[
+        "os_worker_create_v1",
+        "os_worker_submit_v1",
+        "os_worker_destroy_v1",
+    ];
+    #[cfg(not(feature = "worker"))]
+    let worker_globals: &[&str] = &[];
+
     // Write an anonymous version-script that forces our symbols into
-    // the merged `global:` set.
+    // the merged `global:` set.  Include worker symbols in the
+    // version-script unconditionally (listing a nonexistent symbol in
+    // `global:` is harmless — the linker just ignores it).
     let vs_path = out_path.join("os_abi_exports.ver");
     let mut content = String::from("{\n    global:\n");
-    for sym in extra_globals {
+    for sym in extra_globals.iter().chain(worker_globals.iter()) {
         content.push_str(&format!("        {};\n", sym));
     }
     content.push_str("};\n");
+
+    let all_count = extra_globals.len() + worker_globals.len();
 
     std::fs::write(&vs_path, &content)
         .expect("failed to write version-script");
 
     eprintln!("[build.rs] wrote version-script to {}", vs_path.display());
-    eprintln!("[build.rs] version-script content ({} symbols):\n{}", extra_globals.len(), content);
+    eprintln!("[build.rs] version-script content ({} symbols):\n{}", all_count, content);
 
     println!(
         "cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",
         vs_path.display()
     );
+
+    // Force the linker to keep every C-ABI symbol via --undefined.
+    //
+    // The version-script marks them `global:` but thin LTO can eliminate
+    // unreachable function bodies *before* the linker processes the
+    // version-script.  --undefined creates a synthetic reference from
+    // the link root, preventing LTO from dropping the symbol.
+    for sym in extra_globals.iter().chain(worker_globals.iter()) {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,--undefined={}", sym);
+    }
+    eprintln!("[build.rs] emitted --undefined for {} symbols", all_count);
 
     eprintln!(
         "[build.rs] emitted: cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",
