@@ -1,46 +1,60 @@
 //! Build script for opensynaptic_rscore.
 //!
-//! On Linux (ELF targets), PyO3's `extension-module` feature emits a linker
-//! version script `{ global: PyInit_*; local: *; }` via its build-config
-//! crate.  That version script hides every symbol that does not start with
-//! `PyInit_` from the shared-object's dynamic symbol table (.dynsym).
+//! # Problem
 //!
-//! As a result, the `#[no_mangle] pub unsafe extern "C"` C-ABI bridge
-//! functions (`os_b62_encode_i64`, `os_b62_decode_i64`, `os_crc8`, …) are
-//! compiled into the `.so` but are **not** reachable via `ctypes.CDLL` /
-//! `dlsym`, breaking the Python `native_loader.py` fallback path that lets
-//! the interpreter use the Rust extension as a drop-in replacement for the
-//! standalone C shared libraries (`os_base62.so`, `os_security.so`).
+//! PyO3's `extension-module` Cargo feature causes `pyo3-build-config` to emit:
 //!
-//! This script writes a *companion* GNU ld version script that explicitly
-//! lists the ABI bridge symbols as `global`.  When the linker is invoked with
-//! two `--version-script` arguments, it merges the anonymous version node
-//! (`{…}`) from each file.  Explicit `global:` entries win over the wildcard
-//! `local: *`, so the named symbols end up in `.dynsym` and become accessible
-//! to `ctypes.CDLL` at runtime.
+//! ```text
+//! cargo:rustc-cdylib-link-arg=-Wl,--version-script=<path>/pyo3_init.ld
+//! ```
+//!
+//! where `pyo3_init.ld` contains:
+//!
+//! ```text
+//! { global: PyInit_opensynaptic_rscore; local: *; };
+//! ```
+//!
+//! The `local: *` wildcard hides **every** symbol that does not match
+//! `global:`, including all the `#[no_mangle] pub unsafe extern "C"` C-ABI
+//! bridge functions (`os_b62_encode_i64`, `os_b62_decode_i64`, `os_crc8`, …).
+//! Those symbols end up **absent** from `.dynsym`, making them invisible to
+//! `ctypes.CDLL` / `dlsym`.
+//!
+//! # Fix
+//!
+//! GNU ld's `--dynamic-list=FILE` option explicitly overrides the version
+//! script's `local:` assignment for the listed symbols and forces them into
+//! `.dynsym`.  From the binutils manual:
+//!
+//! > "Note that this option allows **overriding the binding** of symbols that
+//! > are **normally local** to the shared library or executable."
+//!
+//! A companion `--version-script` approach (merging two anonymous version
+//! nodes) is unreliable on binutils ≤ 2.27 (manylinux2014): the `local: *`
+//! wildcard from PyO3's script can win over explicit `global:` entries from a
+//! second anonymous node, depending on node-merging order.  `--dynamic-list`
+//! has no such ambiguity — it is a hard override.
 
 fn main() {
-    // Emit a rerun-if-changed guard first so incremental builds work.
+    // Incremental-build guard.
     println!("cargo:rerun-if-changed=build.rs");
 
-    // The version-script mechanism is only supported on ELF targets.
-    // macOS uses a different export list syntax; Windows uses .def files.
-    // Both already expose C-ABI symbols without extra configuration.
+    // `--dynamic-list` is an ELF / GNU ld concept.  macOS uses an export list
+    // (`-exported_symbols_list`) and Windows uses a `.def` file; both expose
+    // C-ABI symbols without extra configuration, so we only act on Linux /
+    // Android (ELF targets where PyO3 emits the problematic version script).
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "linux" && target_os != "android" {
         return;
     }
 
     let out_dir = std::env::var("OUT_DIR").expect("Cargo must set OUT_DIR");
-    let script_path = std::path::PathBuf::from(&out_dir).join("os_abi_exports.ld");
+    let list_path = std::path::PathBuf::from(&out_dir).join("os_abi_exports.list");
 
-    // The companion version script re-adds each C-ABI bridge symbol to the
-    // global export set.  The `local: *;` line here is redundant (PyO3's
-    // script already provides it) but makes the file self-contained and safe
-    // to use standalone.
+    // Dynamic-list format: symbol names inside `{ … };`.
+    // No `global:` / `local:` keywords — just bare names.
     let content = "\
 {\n\
-  global:\n\
     os_b62_encode_i64;\n\
     os_b62_decode_i64;\n\
     os_crc8;\n\
@@ -48,14 +62,16 @@ fn main() {
     os_crc16_ccitt_pub;\n\
     os_xor_payload;\n\
     os_derive_session_key;\n\
-  local: *;\n\
 };\n";
 
-    std::fs::write(&script_path, content)
-        .expect("failed to write os_abi_exports.ld linker version script");
+    std::fs::write(&list_path, content)
+        .expect("failed to write os_abi_exports.list dynamic-list file");
 
+    // Pass --dynamic-list to the linker through the compiler driver.
+    // Using -Wl,flag=value keeps the argument as a single shell token,
+    // avoiding any whitespace-splitting issues with the path.
     println!(
-        "cargo:rustc-link-arg=-Wl,--version-script={}",
-        script_path.display()
+        "cargo:rustc-link-arg=-Wl,--dynamic-list={}",
+        list_path.display()
     );
 }
