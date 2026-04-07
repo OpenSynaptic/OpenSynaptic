@@ -76,7 +76,7 @@ def main() -> int:
             "rules_file_exists": rules_path.exists(),
         }
 
-        print(json.dumps(report, ensure_ascii=False))
+        print(json.dumps(report, ensure_ascii=True))
         return 0 if ok else 1
 
 

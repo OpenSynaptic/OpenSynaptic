@@ -27,6 +27,16 @@ _RUNTIME_SKIP_NAMES = {
 }
 
 
+def _display_status_text(text: str) -> str:
+    value = str(text or '')
+    return (
+        value
+        .replace('✓', '[OK]')
+        .replace('⚠', '[WARN]')
+        .replace('✗', '[FAIL]')
+    )
+
+
 def _ensure_import_path() -> Path:
     repo_root = Path(__file__).resolve().parents[3]  # Go up to project root
     src_path = repo_root / "src"
@@ -302,12 +312,14 @@ def main() -> int:
 
         for r in results:
             if "error" in r:
-                print(f"  ✗ {r['module']:10} - ERROR: {r['error']}")
+                print(f"  [FAIL] {r['module']:10} - ERROR: {r['error']}")
             else:
                 send_mark = "✓" if r["send"] else "✗"
                 recv_mark = "✓" if (r["listen"] or r["receive"]) else "✗"
-                status = r["status"]
-                probe_mark = r.get('runtime_probe', 'SKIP')
+                status = _display_status_text(r["status"])
+                probe_mark = _display_status_text(r.get('runtime_probe', 'SKIP'))
+                send_mark = _display_status_text(send_mark)
+                recv_mark = _display_status_text(recv_mark)
                 print(f"  {status:15} {r['module']:10} Send:{send_mark}  Receive:{recv_mark}  Probe:{probe_mark}")
                 if r.get("missing"):
                     print(f"                     Missing: {', '.join(r['missing'])}")
@@ -344,7 +356,7 @@ def main() -> int:
                 incomplete_drivers.append((r["module"], layer, r.get("missing", [])))
 
     if incomplete_drivers:
-        print(f"\n⚠ DRIVERS WITH CONTRACT / RUNTIME GAPS:")
+        print(f"\n[WARN] DRIVERS WITH CONTRACT / RUNTIME GAPS:")
         for name, layer, missing in incomplete_drivers:
             print(f"  - {name} ({layer}): {', '.join(missing) if missing else 'check runtime probe details'}")
 

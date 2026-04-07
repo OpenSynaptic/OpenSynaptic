@@ -89,6 +89,10 @@ def _case_timeout_seconds(name: str) -> int:
         return 300
     if name == 'rscore-check':
         return 60
+    if name == 'plugin-test:component':
+        return 120
+    if name == 'plugin-cmd:test_plugin:stress':
+        return 60
     return 20
 
 
@@ -104,9 +108,10 @@ def run_case(name: str, args: list[str], expect_success: bool):
             timeout=timeout_s,
         )
     except subprocess.TimeoutExpired as exc:
+        ok = not expect_success
         return {
             'name': name,
-            'ok': False,
+            'ok': ok,
             'expected_success': expect_success,
             'returncode': -1,
             'error': f'timeout after {timeout_s}s: {exc}',

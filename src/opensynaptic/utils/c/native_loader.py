@@ -44,6 +44,38 @@ def _shared_module_suffixes():
     return {'.pyd', '.so', '.dylib', '.dll'}
 
 
+def _iter_shared_modules(root: Path):
+    try:
+        if not root.exists():
+            return
+    except Exception:
+        return
+    patterns = (
+        'opensynaptic_rscore*',
+        'opensynaptic_rscore/**/*.pyd',
+        'opensynaptic_rscore/**/*.so',
+        'opensynaptic_rscore/**/*.dylib',
+        'opensynaptic_rscore/**/*.dll',
+    )
+    seen = set()
+    for pattern in patterns:
+        try:
+            matches = root.glob(pattern)
+        except Exception:
+            continue
+        for candidate in matches:
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                resolved = candidate
+            key = str(resolved)
+            if key in seen or not candidate.is_file():
+                continue
+            seen.add(key)
+            if candidate.suffix.lower() in _shared_module_suffixes():
+                yield candidate
+
+
 def _native_dirs():
     env = os.getenv('OPENSYNAPTIC_NATIVE_DIR', '').strip()
     dirs = []
@@ -135,10 +167,8 @@ def _try_load_rs_from_python_extension(base_name):
         if root_key in seen_roots or not root.exists():
             continue
         seen_roots.add(root_key)
-        for pattern in ('opensynaptic_rscore/_native*', 'opensynaptic_rscore*'):
-            for candidate in root.glob(pattern):
-                if candidate.is_file():
-                    _add_candidate(candidate)
+        for candidate in _iter_shared_modules(root):
+            _add_candidate(candidate)
 
     try:
         pkg = importlib.import_module('opensynaptic_rscore')
@@ -147,6 +177,9 @@ def _try_load_rs_from_python_extension(base_name):
             p = Path(pkg_file)
             if p.suffix.lower() in {'.pyd', '.so', '.dylib', '.dll'}:
                 _add_candidate(p)
+        for pkg_root in list(getattr(pkg, '__path__', []) or []):
+            for candidate in _iter_shared_modules(Path(pkg_root).parent):
+                _add_candidate(candidate)
     except Exception:
         pass
 

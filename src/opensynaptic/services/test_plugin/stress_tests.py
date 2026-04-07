@@ -1174,12 +1174,9 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         if endpoint is None:
             endpoint = {}
             if tname in {'udp', 'tcp'}:
-                port = _pick_free_loopback_port()
                 endpoint = {
                     'host': '127.0.0.1',
                     'listen_host': '127.0.0.1',
-                    'port': port,
-                    'listen_port': port,
                 }
             loopback_transport_endpoints[tname] = endpoint
         return dict(endpoint)
@@ -1344,6 +1341,39 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     if chain_mode == 'e2e_loopback' and use_transport:
         # Start background listener for the transport driver
         def _start_receiver():
+            def _publish_bound_endpoint(transport_name: str, sock_obj: socket.socket, host_name: str):
+                actual_port = int(sock_obj.getsockname()[1])
+                loopback_transport_endpoints[str(transport_name)] = {
+                    'host': host_name,
+                    'listen_host': host_name,
+                    'port': actual_port,
+                    'listen_port': actual_port,
+                }
+                try:
+                    cfg_root = node.config.setdefault('RESOURCES', {})
+                    transport_cfg = cfg_root.setdefault('transport_config', {})
+                    cfg_entry = transport_cfg.setdefault(str(transport_name), {})
+                    cfg_entry.update(loopback_transport_endpoints[str(transport_name)])
+                except Exception:
+                    pass
+
+            def _handle_tcp_conn(conn):
+                try:
+                    conn.settimeout(1.0)
+                    data = conn.recv(65535)
+                    if data:
+                        try:
+                            node.receive(data)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
             try:
                 # Guard: use_transport must be set and valid
                 if not use_transport:
@@ -1358,7 +1388,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                 
                 # Determine listen port based on transport
                 if use_transport in ['udp', 'tcp']:
-                    listen_port = int(cfg.get('listen_port', 10000))  # Different from send port
+                    listen_port = int(cfg.get('listen_port', 0) or 0)
                     listen_host = cfg.get('listen_host', '127.0.0.1')
                     
                     if use_transport == 'udp':
@@ -1367,6 +1397,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                         sock.bind((listen_host, listen_port))
                         sock.settimeout(0.5)
+                        _publish_bound_endpoint(use_transport, sock, listen_host)
                         receiver_ready.set()  # signal: socket bound and ready
                         
                         while not receiver_stop_flag.is_set():
@@ -1383,8 +1414,9 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                         sock.bind((listen_host, listen_port))
-                        sock.listen(64)
+                        sock.listen(256)
                         sock.settimeout(0.5)
+                        _publish_bound_endpoint(use_transport, sock, listen_host)
                         receiver_ready.set()  # signal: socket bound and listening
 
                         while not receiver_stop_flag.is_set():
@@ -1394,21 +1426,12 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                                 continue
                             except Exception:
                                 break
-                            try:
-                                conn.settimeout(0.5)
-                                data = conn.recv(65535)
-                                if data:
-                                    try:
-                                        node.receive(data)
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
-                            finally:
-                                try:
-                                    conn.close()
-                                except Exception:
-                                    pass
+                            threading.Thread(
+                                target=_handle_tcp_conn,
+                                args=(conn,),
+                                daemon=True,
+                                name='stress-loopback-tcp-conn',
+                            ).start()
                         sock.close()
                 # For other transports (uart, mqtt, etc), no network listener needed
                 receiver_ready.set()
