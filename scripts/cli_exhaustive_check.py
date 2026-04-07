@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import shutil
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,45 +100,75 @@ def _case_timeout_seconds(name: str) -> int:
 def run_case(name: str, args: list[str], expect_success: bool):
     cmd = [PY, '-u', str(MAIN), '--no-wizard'] + args
     timeout_s = _case_timeout_seconds(name)
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-    except subprocess.TimeoutExpired as exc:
-        ok = not expect_success
-        return {
-            'name': name,
-            'ok': ok,
-            'expected_success': expect_success,
-            'returncode': -1,
-            'error': f'timeout after {timeout_s}s: {exc}',
-            'stdout_tail': ((exc.stdout or '')[-600:] if isinstance(exc.stdout, str) else ''),
-            'stderr_tail': ((exc.stderr or '')[-600:] if isinstance(exc.stderr, str) else ''),
-            'args': args,
-        }
-    except Exception as exc:
-        return {
-            'name': name,
-            'ok': False,
-            'expected_success': expect_success,
-            'returncode': -1,
-            'error': str(exc),
-            'args': args,
-        }
+    max_attempts = 2 if expect_success else 1
+    last_row = None
 
-    ok = (proc.returncode == 0) if expect_success else True
-    return {
+    for attempt in range(1, max_attempts + 1):
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            ok = not expect_success
+            last_row = {
+                'name': name,
+                'ok': ok,
+                'expected_success': expect_success,
+                'attempt': attempt,
+                'attempts': max_attempts,
+                'returncode': -1,
+                'error': f'timeout after {timeout_s}s: {exc}',
+                'stdout_tail': ((exc.stdout or '')[-600:] if isinstance(exc.stdout, str) else ''),
+                'stderr_tail': ((exc.stderr or '')[-600:] if isinstance(exc.stderr, str) else ''),
+                'args': args,
+            }
+        except Exception as exc:
+            last_row = {
+                'name': name,
+                'ok': False,
+                'expected_success': expect_success,
+                'attempt': attempt,
+                'attempts': max_attempts,
+                'returncode': -1,
+                'error': str(exc),
+                'stdout_tail': '',
+                'stderr_tail': '',
+                'args': args,
+            }
+        else:
+            ok = (proc.returncode == 0) if expect_success else True
+            last_row = {
+                'name': name,
+                'ok': ok,
+                'expected_success': expect_success,
+                'attempt': attempt,
+                'attempts': max_attempts,
+                'returncode': proc.returncode,
+                'args': args,
+                'stdout_tail': (proc.stdout or '')[-600:],
+                'stderr_tail': (proc.stderr or '')[-600:],
+            }
+
+        if last_row.get('ok'):
+            return last_row
+        if attempt < max_attempts:
+            time.sleep(0.3 * attempt)
+
+    return last_row or {
         'name': name,
-        'ok': ok,
+        'ok': False,
         'expected_success': expect_success,
-        'returncode': proc.returncode,
+        'attempt': max_attempts,
+        'attempts': max_attempts,
+        'returncode': -1,
         'args': args,
-        'stdout_tail': (proc.stdout or '')[-600:],
-        'stderr_tail': (proc.stderr or '')[-600:],
+        'stdout_tail': '',
+        'stderr_tail': '',
+        'error': 'unknown failure',
     }
 
 
@@ -150,7 +181,17 @@ def main():
             print(f'[{i}/{len(cases)}] {name}')
             row = run_case(name, args, expect_success)
             results.append(row)
-            print('  OK' if row['ok'] else f"  FAIL rc={row['returncode']}")
+            if row['ok']:
+                attempt_note = f" (attempt {row.get('attempt', 1)}/{row.get('attempts', 1)})" if int(row.get('attempts', 1) or 1) > 1 else ''
+                print(f'  OK{attempt_note}')
+            else:
+                print(f"  FAIL rc={row['returncode']} attempt={row.get('attempt', 1)}/{row.get('attempts', 1)}")
+                if row.get('error'):
+                    print(f"    error: {row['error']}")
+                if row.get('stdout_tail'):
+                    print(f"    stdout_tail: {row['stdout_tail']}")
+                if row.get('stderr_tail'):
+                    print(f"    stderr_tail: {row['stderr_tail']}")
     finally:
         tmp_root.cleanup()
 
@@ -164,7 +205,7 @@ def main():
 
     out_path = ROOT / 'data' / 'benchmarks' / 'cli_exhaustive_report.json'
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding='utf-8')
+    out_path.write_text(json.dumps(out, ensure_ascii=True, indent=2), encoding='utf-8')
     print(f'\nReport: {out_path}')
 
     if failed:

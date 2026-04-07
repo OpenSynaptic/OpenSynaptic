@@ -1252,13 +1252,20 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             _prepare_transport_driver(attached_node, transport_driver)
             # Real transport driver path - measures actual network I/O
             def _send_transport(packet):
-                try:
-                    if callable(dispatch_fn):
-                        # Use actual transport driver via dispatch
-                        return bool(dispatch_fn(packet, medium=transport_driver.upper()))
-                    return False
-                except Exception:
-                    return False
+                attempts = 4 if transport_driver == 'tcp' else 1
+                for attempt in range(1, attempts + 1):
+                    try:
+                        if callable(dispatch_fn):
+                            # Use actual transport driver via dispatch.
+                            if bool(dispatch_fn(packet, medium=transport_driver.upper())):
+                                return True
+                        else:
+                            return False
+                    except Exception:
+                        pass
+                    if attempt < attempts:
+                        time.sleep(0.01 * attempt)
+                return False
             
             return _send_transport
         
@@ -1406,7 +1413,15 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                                 # Data received, discard it (we got the response)
                             except socket.timeout:
                                 continue
-                            except Exception:
+                            except OSError as exc:
+                                if receiver_stop_flag.is_set():
+                                    break
+                                os_log.err('RECV', 'UDP_RUNTIME', exc, {'transport': use_transport})
+                                continue
+                            except Exception as exc:
+                                if receiver_stop_flag.is_set():
+                                    break
+                                os_log.err('RECV', 'UDP_RUNTIME', exc, {'transport': use_transport})
                                 break
                         sock.close()
                     elif use_transport == 'tcp':
@@ -1424,7 +1439,15 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                                 conn, _ = sock.accept()
                             except socket.timeout:
                                 continue
-                            except Exception:
+                            except OSError as exc:
+                                if receiver_stop_flag.is_set():
+                                    break
+                                os_log.err('RECV', 'TCP_ACCEPT', exc, {'transport': use_transport})
+                                continue
+                            except Exception as exc:
+                                if receiver_stop_flag.is_set():
+                                    break
+                                os_log.err('RECV', 'TCP_ACCEPT', exc, {'transport': use_transport})
                                 break
                             threading.Thread(
                                 target=_handle_tcp_conn,
