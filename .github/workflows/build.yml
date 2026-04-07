@@ -161,7 +161,7 @@ jobs:
           CIBW_BEFORE_ALL: "pip install maturin cffi"
           CIBW_BEFORE_ALL_WINDOWS: "pip install maturin cffi"
           CIBW_BEFORE_ALL_MACOS: "pip install maturin cffi && rustup target add x86_64-apple-darwin aarch64-apple-darwin"
-          CIBW_BEFORE_BUILD: "python -m pip install cffi"
+          CIBW_BEFORE_BUILD: "python -m pip install cffi && python {project}/src/opensynaptic/utils/c/build_native.py"
           CIBW_ENVIRONMENT: "OPENSYNAPTIC_REQUIRE_RSCORE=1 CARGO_TARGET_DIR=target/rscore MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
           CIBW_ENVIRONMENT_MACOS: "OPENSYNAPTIC_REQUIRE_RSCORE=1 CARGO_TARGET_DIR=target/rscore MACOSX_DEPLOYMENT_TARGET=10.12 MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
 

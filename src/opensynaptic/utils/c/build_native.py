@@ -48,7 +48,7 @@ def _cmd_for_compiler(compiler_exe, src_path, out_path):
             '/Fe:{}'.format(str(out_path)),
             str(src_path),
         ]
-    return [str(compiler_exe), '-shared', '-O3', '-std=c99', str(src_path), '-o', str(out_path)]
+    return [str(compiler_exe), '-shared', '-fPIC', '-O3', '-std=c99', str(src_path), '-o', str(out_path)]
 
 
 def _emit(progress_cb, event):
@@ -312,3 +312,5 @@ def _print_summary(result):
 if __name__ == '__main__':
     build_result = build_all(show_progress=True)
     _print_summary(build_result)
+    if not build_result.get('ok'):
+        sys.exit(1)
