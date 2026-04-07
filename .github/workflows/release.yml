@@ -3,38 +3,89 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to release (e.g., 1.1.0rc1)'
+      tag:
+        description: 'Existing release tag to publish (e.g. v1.3.0)'
         required: true
         type: string
   push:
     tags:
       - "v*"
 
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
 jobs:
-  get-version:
+  resolve-release:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.extract.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      source_ref: ${{ steps.meta.outputs.source_ref }}
+      release_notes: ${{ steps.meta.outputs.release_notes }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
-      - name: Checkout
+      - name: Checkout tagged source
         uses: actions/checkout@v4
-      - name: Extract version
-        id: extract
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            RAW_TAG="${{ github.ref_name }}"
-            VERSION="${RAW_TAG#v}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
-  build-wheel:
-    name: build-wheel (${{ matrix.os }})
+      - name: Validate tag, version, and release notes
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([A-Za-z0-9._-]+)?$ ]]; then
+            echo "::error::Release tag must look like v1.2.3 or v1.2.3rc1"
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          SOURCE_REF="refs/tags/${TAG}"
+          NOTES="RELEASE_NOTES_v${VERSION}.md"
+          PYPROJECT_VERSION="$(grep -Po '^version = "\K[^"]+' pyproject.toml | head -n1)"
+
+          if [[ -z "$PYPROJECT_VERSION" ]]; then
+            echo "::error::Unable to read project version from pyproject.toml"
+            exit 1
+          fi
+
+          if [[ "$PYPROJECT_VERSION" != "$VERSION" ]]; then
+            echo "::error::pyproject.toml version ($PYPROJECT_VERSION) does not match tag version ($VERSION)"
+            exit 1
+          fi
+
+          if [[ ! -f "$NOTES" ]]; then
+            echo "::error::Missing release notes file: $NOTES"
+            exit 1
+          fi
+
+          PRERELEASE=false
+          if [[ "$TAG" == *rc* || "$TAG" == *alpha* || "$TAG" == *beta* ]]; then
+            PRERELEASE=true
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+          echo "release_notes=$NOTES" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
+  build-user-wheel:
+    name: build-user-wheel (${{ matrix.artifact_suffix }})
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
-    needs: [get-version]
+    needs: [resolve-release]
     strategy:
       fail-fast: false
       matrix:
@@ -43,30 +94,37 @@ jobs:
             cibw_archs_linux: "x86_64"
             cibw_build: "cp311-* cp312-* cp313-*"
             artifact_suffix: "linux-x86_64"
-            experimental: false
+            smoke_python_version: "3.13"
+            smoke_wheel_tag: "cp313"
           - os: ubuntu-latest
             cibw_archs_linux: "aarch64"
             cibw_build: "cp311-*"
             artifact_suffix: "linux-aarch64"
-            experimental: true
+            smoke_python_version: "3.11"
+            smoke_wheel_tag: "cp311"
           - os: windows-latest
             cibw_archs_windows: "AMD64"
             cibw_build: "cp311-* cp312-* cp313-*"
             artifact_suffix: "windows-amd64"
-            experimental: false
+            smoke_python_version: "3.13"
+            smoke_wheel_tag: "cp313"
           - os: macos-latest
             cibw_archs_macos: "x86_64"
             cibw_build: "cp311-*"
             artifact_suffix: "macos-x86_64"
-            experimental: true
+            smoke_python_version: "3.11"
+            smoke_wheel_tag: "cp311"
           - os: macos-latest
             cibw_archs_macos: "arm64"
             cibw_build: "cp311-* cp312-* cp313-*"
             artifact_suffix: "macos-arm64"
-            experimental: false
+            smoke_python_version: "3.13"
+            smoke_wheel_tag: "cp313"
     steps:
-      - name: Checkout
+      - name: Checkout tagged source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.source_ref }}
 
       - name: Setup QEMU for Linux ARM emulation
         if: runner.os == 'Linux' && matrix.cibw_archs_linux == 'aarch64'
@@ -77,12 +135,12 @@ jobs:
       - name: Verify checkout and maturin config
         shell: bash
         run: |
+          set -euo pipefail
           git rev-parse HEAD
-          git --no-pager log -1 --oneline
-          echo "=== root pyproject (head) ==="
+          git describe --tags --exact-match
           sed -n '1,140p' pyproject.toml
           if ! grep -q "python-source = \"src\"" pyproject.toml; then
-            echo "Expected python-source=\"src\" for single-package mixed build"
+            echo "Expected python-source=\"src\" for release wheel build"
             exit 1
           fi
           if ! grep -q "python-packages = \[\"opensynaptic\", \"opensynaptic_rscore\"\]" pyproject.toml; then
@@ -93,7 +151,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.smoke_python_version }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -101,7 +159,7 @@ jobs:
       - name: Install cibuildwheel
         run: pip install cibuildwheel
 
-      - name: Build wheels
+      - name: Build user wheels
         run: cibuildwheel --output-dir dist
         env:
           CIBW_BUILD: ${{ matrix.cibw_build }}
@@ -111,96 +169,217 @@ jobs:
           CIBW_BEFORE_ALL: "pip install maturin cffi"
           CIBW_BEFORE_ALL_WINDOWS: "pip install maturin cffi"
           CIBW_BEFORE_ALL_MACOS: "pip install maturin cffi && rustup target add x86_64-apple-darwin aarch64-apple-darwin"
-          # build_native.py compiles platform-specific C shared libraries (os_base62, os_security)
-          # into utils/c/bin/ BEFORE maturin packages the wheel, so each wheel gets
-          # the correct .dll/.so/.dylib for its target platform.
           CIBW_BEFORE_BUILD: "python -m pip install cffi && python {project}/src/opensynaptic/utils/c/build_native.py"
           CIBW_ENVIRONMENT: "OPENSYNAPTIC_REQUIRE_RSCORE=1 CARGO_TARGET_DIR=target/rscore MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
           CIBW_ENVIRONMENT_MACOS: "OPENSYNAPTIC_REQUIRE_RSCORE=1 CARGO_TARGET_DIR=target/rscore MACOSX_DEPLOYMENT_TARGET=10.12 MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
 
-      - name: Upload artifacts
+      - name: Smoke-test built wheel (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFY_ROOT="${RUNNER_TEMP}/opensynaptic-wheel-smoke"
+          WHEEL="$(ls dist/opensynaptic-*-${{ matrix.smoke_wheel_tag }}-*.whl | head -n 1)"
+
+          rm -rf "$VERIFY_ROOT"
+          mkdir -p "$VERIFY_ROOT/home" "$VERIFY_ROOT/work"
+          export HOME="$VERIFY_ROOT/home"
+          export PYTHONNOUSERSITE=1
+          unset PYTHONPATH || true
+
+          python -m venv "$VERIFY_ROOT/venv"
+          "$VERIFY_ROOT/venv/bin/pip" install --upgrade pip
+          "$VERIFY_ROOT/venv/bin/pip" install "$WHEEL"
+
+          pushd "$VERIFY_ROOT/work"
+          PYCODE="from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); assert 'site-packages' in opensynaptic.__file__; assert 'site-packages' in opensynaptic_rscore.__file__; assert os.path.exists(get_lib_path('OS_Symbols.json'))"
+          "$VERIFY_ROOT/venv/bin/python" -c "$PYCODE"
+          "$VERIFY_ROOT/venv/bin/os-node" repair-config --json
+          "$VERIFY_ROOT/venv/bin/os-node" --no-wizard snapshot
+          popd
+
+      - name: Smoke-test built wheel (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $verifyRoot = Join-Path $env:RUNNER_TEMP 'opensynaptic-wheel-smoke'
+          $homeDir = Join-Path $verifyRoot 'home'
+          $workDir = Join-Path $verifyRoot 'work'
+          $venvDir = Join-Path $verifyRoot 'venv'
+          $wheel = Get-ChildItem "dist/opensynaptic-*-${{ matrix.smoke_wheel_tag }}-*.whl" | Select-Object -First 1
+          if (-not $wheel) {
+            throw 'No compatible wheel found for smoke test.'
+          }
+
+          Remove-Item $verifyRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $homeDir,$workDir -Force | Out-Null
+
+          python -m venv $venvDir
+          & "$venvDir\Scripts\python.exe" -m pip install --upgrade pip
+          & "$venvDir\Scripts\python.exe" -m pip install $wheel.FullName
+
+          $oldUserProfile = $env:USERPROFILE
+          $oldHome = $env:HOME
+          $oldUsersite = $env:PYTHONNOUSERSITE
+          $hadPythonPath = Test-Path Env:PYTHONPATH
+          if ($hadPythonPath) {
+            $oldPythonPath = $env:PYTHONPATH
+          }
+
+          $env:USERPROFILE = $homeDir
+          $env:HOME = $homeDir
+          $env:PYTHONNOUSERSITE = '1'
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+
+          Push-Location $workDir
+          try {
+            $code = "from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); assert 'site-packages' in opensynaptic.__file__.lower(); assert 'site-packages' in opensynaptic_rscore.__file__.lower(); assert os.path.exists(get_lib_path('OS_Symbols.json'))"
+            & "$venvDir\Scripts\python.exe" -c $code
+            & "$venvDir\Scripts\os-node.exe" repair-config --json
+            & "$venvDir\Scripts\os-node.exe" --no-wizard snapshot
+          }
+          finally {
+            Pop-Location
+            $env:USERPROFILE = $oldUserProfile
+            $env:HOME = $oldHome
+            if ($null -ne $oldUsersite) {
+              $env:PYTHONNOUSERSITE = $oldUsersite
+            }
+            else {
+              Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
+            }
+            if ($hadPythonPath) {
+              $env:PYTHONPATH = $oldPythonPath
+            }
+            else {
+              Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Upload user wheel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.artifact_suffix }}
+          name: release-user-wheel-${{ matrix.artifact_suffix }}
           path: dist/*.whl
+          if-no-files-found: error
 
-  build-sdist:
-    name: build-sdist
+  build-user-sdist:
+    name: build-user-sdist
     runs-on: ubuntu-latest
-    needs: [get-version]
+    needs: [resolve-release]
     steps:
-      - name: Checkout
+      - name: Checkout tagged source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.source_ref }}
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
       - name: Install build tools
         run: pip install maturin build
-      - name: Build sdist
+
+      - name: Build user sdist
         run: python -m build --sdist --outdir ${{ github.workspace }}/dist
+
       - name: Verify sdist exists
+        shell: bash
         run: |
-          ls -la ${{ github.workspace }}/dist/
-          if [ ! -f ${{ github.workspace }}/dist/*.tar.gz ]; then
-            echo "sdist not found in ${{ github.workspace }}/dist/"
+          set -euo pipefail
+          ls -la "${{ github.workspace }}/dist/"
+          EXPECTED="${{ github.workspace }}/dist/opensynaptic-${{ needs.resolve-release.outputs.version }}.tar.gz"
+          if [[ ! -f "$EXPECTED" ]]; then
+            echo "::error::Expected sdist not found: $EXPECTED"
             exit 1
           fi
-          echo "sdist found"
-      - name: Upload sdist artifact
+
+      - name: Upload user sdist artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sdist
+          name: release-user-sdist
           path: ${{ github.workspace }}/dist/*.tar.gz
           if-no-files-found: error
 
-  collect-dist:
+  verify-user-distributions:
+    name: verify-user-distributions
     runs-on: ubuntu-latest
-    needs: [build-wheel, build-sdist, get-version]
+    needs: [resolve-release, build-user-wheel, build-user-sdist]
     steps:
-      - name: Download wheel artifacts
+      - name: Download user wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
-          path: user-dist
+          pattern: release-user-wheel-*
+          path: release-user-wheels
           merge-multiple: true
-      - name: Download sdist artifact
+
+      - name: Download user sdist artifact
         uses: actions/download-artifact@v4
         with:
-          name: sdist
-          path: user-dist
+          name: release-user-sdist
+          path: release-user-sdist
 
-      - name: Assert package set is opensynaptic only
+      - name: Verify user distribution boundaries
         shell: bash
         run: |
-          ls -la user-dist
-          if ls user-dist/opensynaptic_rscore-* 1>/dev/null 2>&1; then
-            echo "Unexpected opensynaptic_rscore artifact found in release-dist"
-            exit 1
-          fi
-          if ! ls user-dist/opensynaptic-* 1>/dev/null 2>&1; then
-            echo "No opensynaptic artifacts found in release-dist"
+          set -euo pipefail
+          ls -la release-user-wheels
+          ls -la release-user-sdist
+
+          if ls release-user-wheels/opensynaptic_rscore-* 1>/dev/null 2>&1; then
+            echo "::error::Unexpected opensynaptic_rscore artifact found in wheel release set"
             exit 1
           fi
 
-      - name: Upload merged user artifacts
+          if ! ls release-user-wheels/opensynaptic-*.whl 1>/dev/null 2>&1; then
+            echo "::error::No opensynaptic wheel artifacts found"
+            exit 1
+          fi
+
+          if ! ls release-user-sdist/opensynaptic-${{ needs.resolve-release.outputs.version }}.tar.gz 1>/dev/null 2>&1; then
+            echo "::error::Expected user sdist missing"
+            exit 1
+          fi
+
+          mkdir -p release-pypi-dist
+          cp release-user-wheels/*.whl release-pypi-dist/
+          cp release-user-sdist/*.tar.gz release-pypi-dist/
+
+      - name: Check PyPI distributions with twine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade twine pkginfo packaging readme-renderer
+          twine check release-pypi-dist/*
+
+      - name: Upload combined PyPI distribution set
         uses: actions/upload-artifact@v4
         with:
-          name: release-user-dist
-          path: user-dist/*
+          name: release-pypi-dist
+          path: release-pypi-dist/*
+          if-no-files-found: error
 
-      - name: Checkout source for developer bundle
+  build-developer-bundle:
+    name: build-developer-bundle
+    runs-on: ubuntu-latest
+    needs: [resolve-release]
+    steps:
+      - name: Checkout tagged source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.source_ref }}
 
       - name: Build developer bundle
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ needs.get-version.outputs.version }}"
+          VERSION="${{ needs.resolve-release.outputs.version }}"
           ROOT="devkit/opensynaptic-dev-${VERSION}"
           mkdir -p "$ROOT"
 
@@ -224,8 +403,9 @@ jobs:
           3. Run scripts in scripts/ and tests in tests/
 
           Notes:
-          - User runtime package artifacts are published separately as wheels/sdist.
-          - This bundle is intended for source workflows and should not be uploaded to PyPI.
+          - User wheels are the direct-install runtime artifacts for supported platforms.
+          - The user sdist is for intentional source builds and downstream packagers.
+          - This developer bundle is for source workflows and must not be uploaded to PyPI.
           EOF
 
           mkdir -p dev-dist
@@ -235,74 +415,101 @@ jobs:
       - name: Upload developer bundle artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-dev-dist
+          name: release-developer-bundle
           path: dev-dist/*
+          if-no-files-found: error
 
   github-release:
-    needs: [collect-dist, get-version]
+    name: github-release
+    needs: [resolve-release, verify-user-distributions, build-developer-bundle]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Download user package artifacts
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.source_ref }}
+
+      - name: Download release PyPI artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-user-dist
-          path: user-dist
+          name: release-pypi-dist
+          path: release-assets/pypi-dist
+
       - name: Download developer bundle artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-dev-dist
-          path: dev-dist
+          name: release-developer-bundle
+          path: release-assets/developer-bundle
+
+      - name: Build GitHub Release body
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTES="${{ needs.resolve-release.outputs.release_notes }}"
+          cat > RELEASE_BODY.md <<EOF
+          ## Release Asset Boundaries
+
+          - User wheels: prebuilt runtime packages for direct pip install on the supported release platforms.
+          - User sdist: source distribution for downstream packagers or intentional source builds; requires local Rust/C build toolchains.
+          - Developer bundle: source/debug/CI reproduction archive; not a PyPI artifact and not intended for end-user installation.
+
+          ---
+
+          EOF
+          cat "$NOTES" >> RELEASE_BODY.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.get-version.outputs.version }}
+          tag_name: ${{ needs.resolve-release.outputs.tag }}
+          name: OpenSynaptic ${{ needs.resolve-release.outputs.tag }}
+          body_path: RELEASE_BODY.md
+          prerelease: ${{ needs.resolve-release.outputs.prerelease == 'true' }}
+          overwrite_files: true
           files: |
-            user-dist/*
-            dev-dist/*
+            release-assets/pypi-dist/*
+            release-assets/developer-bundle/*
 
   publish-testpypi:
-    needs: [collect-dist, get-version]
+    name: publish-testpypi
+    needs: [resolve-release, verify-user-distributions, github-release]
     runs-on: ubuntu-latest
     environment: testpypi
     continue-on-error: true
     steps:
-      - name: Download user package artifacts
+      - name: Download release PyPI artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-user-dist
-          path: user-dist
+          name: release-pypi-dist
+          path: release-pypi-dist
+
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           user: __token__
           password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          packages-dir: user-dist
+          packages-dir: release-pypi-dist
           skip-existing: true
           verbose: true
 
   publish-pypi:
-    needs: [collect-dist, get-version]
+    name: publish-pypi
+    needs: [resolve-release, verify-user-distributions, github-release]
     runs-on: ubuntu-latest
     environment: pypi
     steps:
-      - name: Download user package artifacts
+      - name: Download release PyPI artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-user-dist
-          path: user-dist
-      - name: Check distributions with twine
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade twine pkginfo packaging readme-renderer
-          twine check user-dist/*
+          name: release-pypi-dist
+          path: release-pypi-dist
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
-          packages-dir: user-dist
+          packages-dir: release-pypi-dist
           skip-existing: true
           verbose: true
