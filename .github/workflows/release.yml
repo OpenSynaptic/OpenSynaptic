@@ -394,13 +394,53 @@ jobs:
           ROOT="devkit/opensynaptic-dev-${VERSION}"
           mkdir -p "$ROOT"
 
-          cp -a src "$ROOT/"
-          cp -a scripts "$ROOT/"
-          cp -a tests "$ROOT/"
-          cp -a docs "$ROOT/"
-          cp -a libraries "$ROOT/"
+          required_dirs=(src scripts tests libraries)
+          required_files=(README.md README.zh.md LICENSE pyproject.toml Config.json run-main.cmd run-main.sh)
+
+          for path in "${required_dirs[@]}"; do
+            if [[ ! -d "$path" ]]; then
+              echo "::error::Missing required developer bundle directory: $path"
+              exit 1
+            fi
+            cp -a "$path" "$ROOT/"
+          done
+
+          if [[ ! -d .github/workflows ]]; then
+            echo "::error::Missing required workflow directory: .github/workflows"
+            exit 1
+          fi
           cp -a .github/workflows "$ROOT/.github_workflows"
-          cp -a README.md LICENSE pyproject.toml Config.json run-main.cmd run-main.sh "$ROOT/"
+
+          for path in "${required_files[@]}"; do
+            if [[ ! -f "$path" ]]; then
+              echo "::error::Missing required developer bundle file: $path"
+              exit 1
+            fi
+          done
+          cp -a "${required_files[@]}" "$ROOT/"
+
+          optional_paths=(
+            docs
+            OpenSynaptic_Wiki
+            CODE_OF_CONDUCT.md
+            CONTRIBUTING.md
+            SECURITY.md
+            RELEASE_NOTES_v${VERSION}.md
+            TEST_REPORT_v${VERSION}.md
+            TEST_COVERAGE.md
+            GITHUB_PAGES_GUIDE.md
+            MIGRATION_REPORT.md
+            TRANSLATION_QA_REPORT.md
+            WIKI_OPTIMIZATION_REPORT.md
+            index.html
+            _config.yml
+          )
+
+          for path in "${optional_paths[@]}"; do
+            if [[ -e "$path" ]]; then
+              cp -a "$path" "$ROOT/"
+            fi
+          done
 
           cat > "$ROOT/DEVKIT_README.txt" << 'EOF'
           OpenSynaptic Developer Bundle
@@ -417,6 +457,7 @@ jobs:
           - User wheels are the direct-install runtime artifacts for supported platforms.
           - The user sdist is for intentional source builds and downstream packagers.
           - This developer bundle is for source workflows and must not be uploaded to PyPI.
+          - Documentation-like paths are included when present in the tagged source; some releases keep long-form docs in the Wiki/site repository instead of a top-level docs/ directory.
           EOF
 
           mkdir -p dev-dist
