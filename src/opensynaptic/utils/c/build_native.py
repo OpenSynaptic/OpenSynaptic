@@ -60,20 +60,47 @@ def _cl_env_ready():
 
 
 def _cmd_for_compiler(compiler_exe, src_path, out_path):
+    """Return a list of command-lists that build *src_path* into *out_path*.
+
+    For GNU-style toolchains on Linux/macOS the build is split into two explicit
+    stages:
+
+    1. Compile-only  (-fPIC -c)  →  intermediate .o
+    2. Link-only     (-shared)   →  final shared library
+
+    Separating the stages guarantees that ``-fPIC`` is handed directly to the
+    compiler front-end (cc1).  A single-pass ``gcc -shared -fPIC file.c -o
+    file.so`` can fail in manylinux2014 (devtoolset-10 / GCC 10) because GCC
+    may still emit ``R_X86_64_32S`` relocations for ``static const`` tables
+    (e.g. the SHA-256 K[] round constants) when ``-shared`` precedes ``-fPIC``
+    on the command line, causing the linker to reject the output with::
+
+        relocation R_X86_64_32S against `.rodata' can not be used when
+        making a shared object; recompile with -fPIC
+    """
     if _is_cl_compiler(compiler_exe):
         # MSVC-style: /LD (DLL), /Fe sets output, /nologo suppresses banner
-        return [
+        return [[
             str(compiler_exe), '/nologo', '/LD', '/O2',
             '/Fe:{}'.format(str(out_path)),
             str(src_path),
-        ]
+        ]]
     if _is_clang_msvc_target(compiler_exe):
         # clang targeting x86_64-pc-windows-msvc: use MSVC-compatible flags
-        return [
+        return [[
             str(compiler_exe), '-shared', '-O3', '-std=c99',
             str(src_path), '-o', str(out_path),
-        ]
-    return [str(compiler_exe), '-shared', '-fPIC', '-O3', '-std=c99', str(src_path), '-o', str(out_path)]
+        ]]
+    # GNU-style (gcc / clang on Linux and macOS): two-stage compile + link.
+    obj_path = out_path.with_suffix('.o')
+    compile_cmd = [
+        str(compiler_exe), '-fPIC', '-O2', '-std=c99', '-c',
+        str(src_path), '-o', str(obj_path),
+    ]
+    link_cmd = [
+        str(compiler_exe), '-shared', '-o', str(out_path), str(obj_path),
+    ]
+    return [compile_cmd, link_cmd]
 
 
 def _emit(progress_cb, event):
@@ -253,7 +280,7 @@ def build_all(show_progress=True, idle_timeout=20.0, max_timeout=300.0, progress
     for name, src_path in _TARGETS.items():
         out_path = BIN / '{}{}'.format(name, _shared_ext())
         tmp_path = BIN / '{}.tmp{}'.format(name, _shared_ext())
-        cmd = _cmd_for_compiler(selected_executable, src_path, tmp_path)
+        cmds = _cmd_for_compiler(selected_executable, src_path, tmp_path)
         _emit(progress_cb, {
             'type': 'target-start',
             'target': name,
@@ -262,14 +289,29 @@ def build_all(show_progress=True, idle_timeout=20.0, max_timeout=300.0, progress
         })
         if show_progress:
             print('[native][{}] start compiler={}'.format(name, selected), flush=True)
-        ok, logs, status = _run_compile(
-            cmd,
-            name,
-            show_progress=show_progress,
-            idle_timeout=idle_timeout,
-            max_timeout=max_timeout,
-            progress_cb=progress_cb,
-        )
+        # Run each stage in sequence; stop early on any failure.
+        ok = True
+        logs = []
+        status = 'ok'
+        for stage_cmd in cmds:
+            stage_ok, stage_logs, status = _run_compile(
+                stage_cmd,
+                name,
+                show_progress=show_progress,
+                idle_timeout=idle_timeout,
+                max_timeout=max_timeout,
+                progress_cb=progress_cb,
+            )
+            logs.extend(stage_logs)
+            if not stage_ok:
+                ok = False
+                break
+        # Clean up any intermediate object file produced by the compile stage.
+        obj_tmp = tmp_path.with_suffix('.o')
+        try:
+            obj_tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
 
         final_path = out_path
         if ok:
@@ -307,7 +349,7 @@ def build_all(show_progress=True, idle_timeout=20.0, max_timeout=300.0, progress
             'status': status,
             'compiler': selected,
             'output': str(final_path) if ok else None,
-            'command': ' '.join(str(c) for c in cmd),
+            'command': ' ; '.join(' '.join(str(c) for c in cmd) for cmd in cmds),
             'logs': logs,
         }
         if show_progress:
