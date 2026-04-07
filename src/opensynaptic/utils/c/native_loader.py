@@ -62,6 +62,7 @@ def _iter_shared_modules(root: Path):
         return
     patterns = (
         'opensynaptic_rscore*',
+        'opensynaptic_rscore/**/*',
         'opensynaptic_rscore/**/*.pyd',
         'opensynaptic_rscore/**/*.so',
         'opensynaptic_rscore/**/*.dylib',

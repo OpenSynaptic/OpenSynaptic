@@ -13,16 +13,14 @@ language: zh
 🌍 **所有文档已移至我们的综合 Wiki。** 选择您的语言开始探索：
 
 ### 英文文档
-- **[📖 完整导航](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-EN.md)** — 完整的英文文档索引
-- **[🏠 Wiki 首页](OpenSynaptic_Wiki/OpenSynaptic.wiki/Home.md)** — 英文版首页
-- **[🔍 完整索引](OpenSynaptic_Wiki/OpenSynaptic.wiki/en-INDEX.md)** — 所有 110+ 英文文档
+- **[📖 完整导航](https://opensynaptic.github.io/docs/Navigation/)** — 完整的英文文档索引
+- **[🏠 Wiki 首页](https://opensynaptic.github.io/docs/Home)** — 英文版首页
 - **[📄 v1.3.0 发布说明](RELEASE_NOTES_v1.3.0.md)** — 包安装等效性、跨平台 wheel 修复与 UCUM 数据打包
 - **[🧪 v1.3.0 测试报告](TEST_REPORT_v1.3.0.md)** — 1275 项测试，1273 通过，0 失败，覆盖 6 个套件
 
 ### 中文文档
-- **[📖 完整导航](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-ZH.md)** — 完整的中文文档索引
-- **[🏠 Wiki 首页](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-Home.md)** — 中文版首页
-- **[🔍 完整索引](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-INDEX.md)** — 所有 91+ 中文文档
+- **[📖 完整导航](https://opensynaptic.github.io/zh-CN/docs/Navigation)** — 完整的中文文档索引
+- **[🏠 Wiki 首页](https://opensynaptic.github.io/zh-CN/docs/Home)** — 中文版首页
 - **[📄 v1.3.0 发布公告](RELEASE_NOTES_v1.3.0.md)** — pip 安装等效性、跨平台 wheel 修复与 UCUM 数据打包
 - **[🧪 v1.3.0 测试报告 (EN)](TEST_REPORT_v1.3.0.md)** — 1275 项测试，1273 通过，0 失败
 

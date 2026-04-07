@@ -10,7 +10,7 @@ bindings = "pyo3"
 features = ["python-module"]
 
 [lib]
-name = "opensynaptic_rscore"
+name = "_native"
 crate-type = ["cdylib"]
 
 [features]

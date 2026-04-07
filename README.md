@@ -7,16 +7,14 @@
 🌍 **All documentation has been moved to our comprehensive Wiki.** Choose your language and start exploring:
 
 ### English Documentation
-- **[📖 Full Wiki Navigation](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-EN.md)** — Complete English documentation index
-- **[🏠 Wiki Home](OpenSynaptic_Wiki/OpenSynaptic.wiki/Home.md)** — Start here for role-based navigation
-- **[🔍 Complete Index](OpenSynaptic_Wiki/OpenSynaptic.wiki/en-INDEX.md)** — All 110+ English documents
+- **[📖 Full Wiki Navigation](https://opensynaptic.github.io/docs/Navigation/)** — Complete English documentation index
+- **[🏠 Wiki Home](https://opensynaptic.github.io/docs/Home)** — Start here for role-based navigation
 - **[📄 v1.3.0 Release Notes](RELEASE_NOTES_v1.3.0.md)** — Package install equivalence, cross-platform wheel fixes & UCUM data bundling
 - **[🧪 v1.3.0 Test Report](TEST_REPORT_v1.3.0.md)** — 1275 tests, 1273 pass, 0 fail across 6 suites
 
-### 中文文档 (Chinese)
-- **[📖 完整导航](OpenSynaptic_Wiki/OpenSynaptic.wiki/Navigation-ZH.md)** — 完整的中文文档索引
-- **[🏠 Wiki 首页](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-Home.md)** — 中文首页
-- **[🔍 完整索引](OpenSynaptic_Wiki/OpenSynaptic.wiki/zh-INDEX.md)** — 所有 91+ 中文文档
+### 中文文档
+- **[📖 完整导航](https://opensynaptic.github.io/zh-CN/docs/Navigation)** — 完整的中文文档索引
+- **[🏠 Wiki 首页](https://opensynaptic.github.io/zh-CN/docs/Home)** — 中文版首页
 - **[📄 v1.3.0 发布公告](RELEASE_NOTES_v1.3.0.md)** — pip 安装等效性、跨平台 wheel 修复与 UCUM 数据打包
 - **[🧪 v1.3.0 测试报告 (EN)](TEST_REPORT_v1.3.0.md)** — 1275 项测试，1273 通过，0 失败
 

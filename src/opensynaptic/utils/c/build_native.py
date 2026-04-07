@@ -35,6 +35,25 @@ def _is_cl_compiler(compiler_exe):
     return base in ('cl', 'cl.exe')
 
 
+def _is_clang_msvc_target(compiler_exe):
+    """Return True when clang is targeting Windows MSVC (not MinGW/POSIX).
+
+    clang on Windows installed via LLVM or Visual Studio defaults to the
+    x86_64-pc-windows-msvc target, which does not support -fPIC.  Clang
+    shipped inside MSYS2/MinGW uses a GNU target and does accept -fPIC.
+    """
+    if os.name != 'nt':
+        return False
+    base = os.path.basename(str(compiler_exe or '')).lower()
+    if not (base.startswith('clang') and not base.startswith('clang-cl')):
+        return False
+    # If the executable lives under msys64 or mingw it is the GNU-target clang.
+    path_lower = str(compiler_exe or '').replace('\\', '/').lower()
+    if 'msys64' in path_lower or 'mingw' in path_lower:
+        return False
+    return True
+
+
 def _cl_env_ready():
     """Return True when MSVC include paths are available in the current environment."""
     return bool(os.environ.get('INCLUDE') or os.environ.get('VCINSTALLDIR') or os.environ.get('VSINSTALLDIR'))
@@ -47,6 +66,12 @@ def _cmd_for_compiler(compiler_exe, src_path, out_path):
             str(compiler_exe), '/nologo', '/LD', '/O2',
             '/Fe:{}'.format(str(out_path)),
             str(src_path),
+        ]
+    if _is_clang_msvc_target(compiler_exe):
+        # clang targeting x86_64-pc-windows-msvc: use MSVC-compatible flags
+        return [
+            str(compiler_exe), '-shared', '-O3', '-std=c99',
+            str(src_path), '-o', str(out_path),
         ]
     return [str(compiler_exe), '-shared', '-fPIC', '-O3', '-std=c99', str(src_path), '-o', str(out_path)]
 
