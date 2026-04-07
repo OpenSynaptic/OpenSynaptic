@@ -208,8 +208,8 @@ jobs:
             MISSING=1
           fi
           # Rust extension – must be inside opensynaptic_rscore/ as _native.*
-          if ! python -m zipfile -l "$WHEEL" | grep -q "opensynaptic_rscore/_native"; then
-            echo "::error::opensynaptic_rscore/_native extension missing from wheel $WHEEL"
+          if ! python -m zipfile -l "$WHEEL" | grep -q "opensynaptic_rscore/opensynaptic_rscore"; then
+            echo "::error::opensynaptic_rscore/opensynaptic_rscore extension missing from wheel $WHEEL"
             MISSING=1
           fi
           if [[ "$MISSING" -ne 0 ]]; then

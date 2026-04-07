@@ -33,7 +33,7 @@ fn abi_info_py() -> String {
 
 #[cfg(feature = "python-module")]
 #[pymodule]
-fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn opensynaptic_rscore(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(abi_info_py, m)?)?;
     Ok(())
 }

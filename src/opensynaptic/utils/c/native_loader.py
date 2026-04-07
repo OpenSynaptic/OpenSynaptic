@@ -199,7 +199,7 @@ def _try_load_rs_from_python_extension(base_name):
     except Exception:
         pass
 
-    for mod_name in ('opensynaptic_rscore._native', '_native'):
+    for mod_name in ('opensynaptic_rscore.opensynaptic_rscore', 'opensynaptic_rscore._native', '_native'):
         try:
             mod = importlib.import_module(mod_name)
             mod_file = getattr(mod, '__file__', None)
