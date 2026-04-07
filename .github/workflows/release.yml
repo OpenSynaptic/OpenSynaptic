@@ -198,19 +198,22 @@ jobs:
           python -m zipfile -l "$WHEEL"
           echo "=== Checking required native files ==="
           MISSING=0
-          # Standalone C libraries compiled by build_native.py
-          if ! python -m zipfile -l "$WHEEL" | grep -q "utils/c/bin/os_base62"; then
-            echo "::error::os_base62 native library missing from wheel $WHEEL"
-            MISSING=1
-          fi
-          if ! python -m zipfile -l "$WHEEL" | grep -q "utils/c/bin/os_security"; then
-            echo "::error::os_security native library missing from wheel $WHEEL"
-            MISSING=1
-          fi
-          # Rust extension – must be inside opensynaptic_rscore/ as _native.*
+          # Rust extension – the primary carrier of C ABI symbols (os_b62_encode_i64, os_crc8, …)
+          # REQUIRED: must be present for the package to function.
           if ! python -m zipfile -l "$WHEEL" | grep -q "opensynaptic_rscore/opensynaptic_rscore"; then
             echo "::error::opensynaptic_rscore/opensynaptic_rscore extension missing from wheel $WHEEL"
             MISSING=1
+          fi
+          # Standalone C libraries compiled by build_native.py are an optional optimisation.
+          # The Rust extension already exports the same ABI symbols (os_b62_encode_i64, os_crc8, …)
+          # so the smoke test will pass even when these files are absent.
+          # On Linux they are stripped by auditwheel repair (it only retains Python-extension .so files);
+          # on macOS (no repair step) they are present.  Treat absence as a warning, not a hard failure.
+          if ! python -m zipfile -l "$WHEEL" | grep -q "utils/c/bin/os_base62"; then
+            echo "::warning::os_base62 standalone library absent from wheel (Rust extension provides ABI fallback)"
+          fi
+          if ! python -m zipfile -l "$WHEEL" | grep -q "utils/c/bin/os_security"; then
+            echo "::warning::os_security standalone library absent from wheel (Rust extension provides ABI fallback)"
           fi
           if [[ "$MISSING" -ne 0 ]]; then
             exit 1
