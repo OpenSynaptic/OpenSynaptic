@@ -38,6 +38,65 @@ fn opensynaptic_rscore(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()>
     Ok(())
 }
 
+// ── Prevent thin-LTO from dropping C-ABI symbols ─────────────────────
+//
+// Rust runs thin-LTO inside the compiler (LLVM ThinLTOCodeGenerator)
+// *before* the external linker processes --export-dynamic-symbol or
+// --undefined flags.  If a `#[no_mangle] pub extern "C"` function has
+// no callers in Rust code (only called via ctypes/FFI), LLVM may
+// internalize and eliminate it.
+//
+// Storing function addresses in a `#[used]` static tells LLVM the
+// values are externally observable, which keeps the function bodies
+// alive through LTO.
+//
+// See: <https://github.com/rust-lang/rust/issues/78292>
+#[used]
+#[doc(hidden)]
+static _OS_ABI_KEEP: [usize; 32] = [
+    os_b62_encode_i64 as *const () as usize,
+    os_b62_decode_i64 as *const () as usize,
+    os_crc8 as *const () as usize,
+    os_crc16_ccitt as *const () as usize,
+    os_crc16_ccitt_pub as *const () as usize,
+    os_xor_payload as *const () as usize,
+    os_derive_session_key as *const () as usize,
+    os_cmd_is_data as *const () as usize,
+    os_cmd_normalize_data as *const () as usize,
+    os_cmd_secure_variant as *const () as usize,
+    os_parse_header_min as *const () as usize,
+    os_auto_decompose_input as *const () as usize,
+    os_compressor_create_v1 as *const () as usize,
+    os_compressor_free_v1 as *const () as usize,
+    os_compress_fact_v1 as *const () as usize,
+    os_fusion_state_create_v1 as *const () as usize,
+    os_fusion_state_free_v1 as *const () as usize,
+    os_fusion_state_seed_v1 as *const () as usize,
+    os_fusion_state_apply_v1 as *const () as usize,
+    os_fusion_state_receive_apply_v1 as *const () as usize,
+    os_rscore_version as *const () as usize,
+    os_fusion_run_json_v1 as *const () as usize,
+    os_fusion_decompress_json_v1 as *const () as usize,
+    os_fusion_relay_json_v1 as *const () as usize,
+    os_node_ensure_id_json_v1 as *const () as usize,
+    os_node_transmit_json_v1 as *const () as usize,
+    os_node_dispatch_json_v1 as *const () as usize,
+    os_pipeline_batch_v1 as *const () as usize,
+    os_standardize_json_v1 as *const () as usize,
+    os_handshake_negotiate_v1 as *const () as usize,
+    os_transporter_send_v1 as *const () as usize,
+    os_transporter_listen_v1 as *const () as usize,
+];
+
+#[cfg(feature = "worker")]
+#[used]
+#[doc(hidden)]
+static _OS_ABI_KEEP_WORKER: [usize; 3] = [
+    os_worker_create_v1 as *const () as usize,
+    os_worker_submit_v1 as *const () as usize,
+    os_worker_destroy_v1 as *const () as usize,
+];
+
 fn push_u32_be(dst: &mut Vec<u8>, n: usize) -> Option<()> {
     let v = u32::try_from(n).ok()?;
     dst.extend_from_slice(&v.to_be_bytes());

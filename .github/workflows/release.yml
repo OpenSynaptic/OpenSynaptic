@@ -361,15 +361,17 @@ jobs:
           INSTALLED_NL=$("$VERIFY_ROOT/venv/bin/python" -c "
           from opensynaptic.utils.c import native_loader
           print(native_loader.__file__)
-          " 2>&1 || true)
+          " 2>/dev/null || true)
           echo "Module file: $INSTALLED_NL"
-          if [[ -f "$INSTALLED_NL" ]]; then
+          if [[ -n "$INSTALLED_NL" && -f "$INSTALLED_NL" ]]; then
             head -30 "$INSTALLED_NL"
             echo "--- dir(native_loader) ---"
             "$VERIFY_ROOT/venv/bin/python" -c "
           from opensynaptic.utils.c import native_loader
           attrs = [a for a in dir(native_loader) if not a.startswith('__')]
           print(attrs)
+          print('_NATIVE_DEBUG =', getattr(native_loader, '_NATIVE_DEBUG', 'MISSING'))
+          print('_LIB_CACHE =', native_loader._LIB_CACHE)
           " 2>&1 || true
           fi
 
@@ -534,7 +536,14 @@ jobs:
           # ── Step D: call the REAL has_native_library ──
           print('\n--- Calling real has_native_library ---')
           try:
+              from opensynaptic.utils.c import native_loader as _nl
               from opensynaptic.utils.c.native_loader import has_native_library, load_native_library
+              print(f'  _NATIVE_DEBUG = {getattr(_nl, "_NATIVE_DEBUG", "MISSING")}')
+              print(f'  _LIB_CACHE (before) = {_nl._LIB_CACHE}')
+              if _nl._LIB_CACHE:
+                  print('  WARNING: _LIB_CACHE was pre-populated during import chain!')
+                  print('  Clearing cache to test fresh lookup...')
+                  _nl._LIB_CACHE.clear()
               for base in ('os_base62', 'os_security'):
                   try:
                       lib = load_native_library(base)
@@ -544,6 +553,7 @@ jobs:
                   except Exception as e:
                       print(f'  load_native_library({base!r}) raised: {e}')
                       traceback.print_exc()
+              print(f'  _LIB_CACHE (after) = {dict((k, type(v).__name__ if v else None) for k, v in _nl._LIB_CACHE.items())}')
           except Exception as e:
               print(f'  Failed to import has_native_library: {e}')
               traceback.print_exc()
