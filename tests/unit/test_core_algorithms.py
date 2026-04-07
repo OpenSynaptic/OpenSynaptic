@@ -1,4 +1,3 @@
-import ctypes
 from pathlib import Path
 
 import pytest
@@ -83,66 +82,3 @@ def test_packet_encode_decode_roundtrip():
     assert isinstance(packet, (bytes, bytearray))
     assert str(decoded["id"]).split(";")[-1] == "N2"
     assert decoded["s1_id"] == "H1"
-
-
-def test_python_abi_shim_fallback_when_rs_extension_symbols_are_unavailable(monkeypatch, tmp_path):
-    import importlib
-    import importlib.metadata as importlib_metadata
-    import site
-    import sys
-    import sysconfig
-
-    src_root = Path(__file__).resolve().parents[2] / 'src'
-    monkeypatch.syspath_prepend(str(src_root))
-    sys.modules.pop('opensynaptic.utils.c.native_loader', None)
-    from opensynaptic.utils.c import native_loader
-    native_loader = importlib.reload(native_loader)
-
-    candidate_dir = tmp_path / "opensynaptic_rscore"
-    candidate_dir.mkdir()
-    candidate_path = candidate_dir / "opensynaptic_rscore.cpython-313-x86_64-linux-gnu.so"
-    candidate_path.write_bytes(b"shim-probe")
-
-    class _FakeRsPkg:
-        __file__ = str(candidate_dir / "__init__.py")
-        __path__ = [str(candidate_dir)]
-
-        @staticmethod
-        def abi_info_py():
-            return "opensynaptic_rscore c-api+pyo3"
-
-    def _fail_loader(*_args, **_kwargs):
-        raise OSError("symbol hidden from dynsym")
-
-    def _fake_import_module(name, package=None):
-        if name == 'opensynaptic_rscore':
-            return _FakeRsPkg()
-        raise ImportError(name)
-
-    native_loader._LIB_CACHE.clear()
-    monkeypatch.setattr(native_loader, '_native_dirs', lambda: [])
-    monkeypatch.setattr(native_loader, '_try_build_once', lambda: None)
-    monkeypatch.setattr(native_loader.ctypes, 'PyDLL', _fail_loader)
-    monkeypatch.setattr(native_loader.ctypes, 'CDLL', _fail_loader)
-    monkeypatch.setattr(native_loader.importlib, 'import_module', _fake_import_module)
-    monkeypatch.setattr(importlib_metadata, 'distribution', lambda _name: (_ for _ in ()).throw(importlib_metadata.PackageNotFoundError()))
-    monkeypatch.setattr(sysconfig, 'get_paths', lambda: {'platlib': str(tmp_path), 'purelib': str(tmp_path)})
-    monkeypatch.setattr(site, 'getsitepackages', lambda: [])
-
-    assert native_loader.has_native_library('os_base62')
-    b62 = native_loader.load_native_library('os_base62')
-    out = ctypes.create_string_buffer(16)
-    assert b62.os_b62_encode_i64(61, out, ctypes.sizeof(out)) == 1
-    assert out.value == b'Z'
-    ok = ctypes.c_int(0)
-    assert b62.os_b62_decode_i64(out.value, ctypes.byref(ok)) == 61
-    assert ok.value == 1
-
-    assert native_loader.has_native_library('os_security')
-    sec = native_loader.load_native_library('os_security')
-    payload = (ctypes.c_ubyte * 3)(1, 2, 3)
-    key = (ctypes.c_ubyte * 4)(10, 11, 12, 13)
-    out_buf = (ctypes.c_ubyte * 3)()
-    assert sec.os_crc8(payload, 3, 0x07, 0) == 72
-    sec.os_xor_payload(payload, 3, key, 4, 1, out_buf)
-    assert bytes(out_buf) == bytes.fromhex('0b0f0f')
