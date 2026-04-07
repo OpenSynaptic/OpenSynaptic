@@ -28,11 +28,10 @@ jobs:
       release_notes: ${{ steps.meta.outputs.release_notes }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
-      - name: Checkout tagged source
+      - name: Checkout repository metadata
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
       - name: Validate tag, version, and release notes
         id: meta
@@ -51,8 +50,17 @@ jobs:
             exit 1
           fi
 
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if ! git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::error::Remote tag ${TAG} does not exist on origin. Create and push the tag before running the release workflow."
+              exit 1
+            fi
+            git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            git checkout --detach "refs/tags/${TAG}"
+          fi
+
           VERSION="${TAG#v}"
-          SOURCE_REF="refs/tags/${TAG}"
+          SOURCE_REF="${TAG}"
           NOTES="RELEASE_NOTES_v${VERSION}.md"
           PYPROJECT_VERSION="$(grep -Po '^version = "\K[^"]+' pyproject.toml | head -n1)"
 
@@ -124,6 +132,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           ref: ${{ needs.resolve-release.outputs.source_ref }}
 
       - name: Setup QEMU for Linux ARM emulation
@@ -274,6 +283,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           ref: ${{ needs.resolve-release.outputs.source_ref }}
 
       - name: Setup Python
@@ -373,6 +383,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           ref: ${{ needs.resolve-release.outputs.source_ref }}
 
       - name: Build developer bundle
@@ -427,6 +438,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           ref: ${{ needs.resolve-release.outputs.source_ref }}
 
       - name: Download release PyPI artifacts
