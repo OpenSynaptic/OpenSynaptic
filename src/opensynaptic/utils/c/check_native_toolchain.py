@@ -59,10 +59,24 @@ def _find_in_known_paths(name: str) -> Optional[str]:
 
 
 def _detect_executable(name: str, timeout_s: float) -> Optional[str]:
+    import shutil
+    result = shutil.which(name)
+    if result:
+        return result
+
+    # shutil.which uses the current process PATH; fall back to well-known
+    # install locations (Windows) before trying the slower login-shell probe.
+    known = _find_in_known_paths(name)
+    if known:
+        return known
+
+    # Last resort: spawn a non-login shell probe (avoids login-shell init
+    # timeouts in Docker/CI containers while still finding tools that are
+    # on PATH for the current user but not yet in shutil.which's view).
     if os.name == 'nt':
         cmd = ['where', name]
     else:
-        cmd = ['sh', '-lc', 'command -v {}'.format(name)]
+        cmd = ['sh', '-c', 'command -v {}'.format(name)]
     try:
         proc = subprocess.run(
             cmd,
@@ -72,17 +86,15 @@ def _detect_executable(name: str, timeout_s: float) -> Optional[str]:
             timeout=max(0.2, float(timeout_s)),
         )
     except Exception:
-        proc = None
+        return None
 
-    if proc is not None and proc.returncode == 0:
+    if proc.returncode == 0:
         text = (proc.stdout or '').strip()
         for line in text.splitlines():
             val = line.strip()
             if val:
                 return val
-
-    # PATH lookup failed — try well-known install locations
-    return _find_in_known_paths(name)
+    return None
 
 
 def _probe_version(name: str, executable: str, timeout_s: float) -> str:
