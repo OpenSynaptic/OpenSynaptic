@@ -1,4 +1,5 @@
 import ctypes
+import hashlib
 import importlib
 import os
 import sys
@@ -9,6 +10,8 @@ from opensynaptic.utils.errors import EnvironmentMissingError
 
 _LIB_CACHE = {}
 _BUILD_ATTEMPTED = False
+_B62_CHARS = b'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+_B62_DECODE = {ch: idx for idx, ch in enumerate(_B62_CHARS)}
 
 
 def _rs_extension_symbol_requirements(base_name):
@@ -52,6 +55,237 @@ def _shared_ext():
 
 def _shared_module_suffixes():
     return {'.pyd', '.so', '.dylib', '.dll'}
+
+
+class _ShimFunction:
+    def __init__(self, func):
+        self._func = func
+        self.argtypes = None
+        self.restype = None
+
+    def __call__(self, *args):
+        return self._func(*args)
+
+
+class _ShimLibrary:
+    def __init__(self, symbols):
+        for name, func in symbols.items():
+            setattr(self, name, _ShimFunction(func))
+
+
+def _coerce_int(value, default=0):
+    if hasattr(value, 'value'):
+        value = value.value
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _buffer_address(value):
+    if value is None:
+        return 0
+    try:
+        return ctypes.addressof(value)
+    except Exception:
+        pass
+    try:
+        return int(ctypes.cast(value, ctypes.c_void_p).value or 0)
+    except Exception:
+        return 0
+
+
+def _read_raw_bytes(value, length):
+    size = max(0, _coerce_int(length))
+    if size == 0:
+        return b''
+    if isinstance(value, str):
+        return value.encode('utf-8')[:size]
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)[:size]
+    try:
+        view = memoryview(value).cast('B')
+        return bytes(view[:size])
+    except Exception:
+        pass
+    addr = _buffer_address(value)
+    if not addr:
+        return b''
+    return ctypes.string_at(addr, size)
+
+
+def _read_c_string(value):
+    if isinstance(value, str):
+        return value.encode('ascii', 'strict')
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).split(b'\0', 1)[0]
+    try:
+        view = memoryview(value).cast('B')
+        raw = bytes(view)
+        return raw.split(b'\0', 1)[0]
+    except Exception:
+        pass
+    try:
+        raw = ctypes.cast(value, ctypes.c_char_p).value
+    except Exception:
+        raw = None
+    return raw or b''
+
+
+def _write_bytes(target, data):
+    addr = _buffer_address(target)
+    if not addr:
+        return False
+    payload = bytes(data)
+    if payload:
+        ctypes.memmove(addr, payload, len(payload))
+    return True
+
+
+def _write_c_int(target, value):
+    addr = _buffer_address(target)
+    if not addr:
+        return False
+    ctypes.cast(addr, ctypes.POINTER(ctypes.c_int))[0] = _coerce_int(value)
+    return True
+
+
+def _crc8_bytes(data, poly, init):
+    crc = init & 0xFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x80:
+                crc = ((crc << 1) ^ poly) & 0xFF
+            else:
+                crc = (crc << 1) & 0xFF
+    return crc
+
+
+def _crc16_ccitt_bytes(data, poly, init):
+    crc = init & 0xFFFF
+    for byte in data:
+        crc ^= (byte << 8) & 0xFFFF
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ poly) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return crc
+
+
+def _shim_b62_encode_i64(value, out, out_len):
+    value = _coerce_int(value)
+    out_len = max(0, _coerce_int(out_len))
+    if not _buffer_address(out) or out_len < 2:
+        return 0
+    if value == 0:
+        encoded = b'0\0'
+        return 1 if len(encoded) <= out_len and _write_bytes(out, encoded) else 0
+
+    negative = value < 0
+    n = abs(value)
+    encoded_bytes = bytearray()
+    while n > 0:
+        encoded_bytes.append(_B62_CHARS[n % 62])
+        n //= 62
+    encoded = (b'-' if negative else b'') + bytes(reversed(encoded_bytes)) + b'\0'
+    if len(encoded) > out_len:
+        return 0
+    return 1 if _write_bytes(out, encoded) else 0
+
+
+def _shim_b62_decode_i64(s, ok):
+    _write_c_int(ok, 0)
+    raw = _read_c_string(s)
+    if not raw:
+        return 0
+    negative = False
+    if raw.startswith(b'-'):
+        negative = True
+        raw = raw[1:]
+        if not raw:
+            return 0
+    value = 0
+    for byte in raw:
+        digit = _B62_DECODE.get(byte)
+        if digit is None:
+            return 0
+        value = (value * 62) + digit
+    _write_c_int(ok, 1)
+    return -value if negative else value
+
+
+def _shim_crc8(data, length, poly, init):
+    raw = _read_raw_bytes(data, length)
+    return _crc8_bytes(raw, _coerce_int(poly) & 0xFFFF, _coerce_int(init) & 0xFF)
+
+
+def _shim_crc16_ccitt(data, length, poly, init):
+    raw = _read_raw_bytes(data, length)
+    return _crc16_ccitt_bytes(raw, _coerce_int(poly) & 0xFFFF, _coerce_int(init) & 0xFFFF)
+
+
+def _shim_xor_payload(payload, payload_len, key, key_len, offset, out):
+    out_addr = _buffer_address(out)
+    if not out_addr:
+        return None
+    raw_payload = _read_raw_bytes(payload, payload_len)
+    if not raw_payload:
+        return None
+    raw_key = _read_raw_bytes(key, key_len)
+    off = _coerce_int(offset) & 31
+    if not raw_key:
+        result = raw_payload
+    else:
+        key_len = len(raw_key)
+        result = bytes(
+            (byte ^ raw_key[(idx + off) % key_len] ^ off) & 0xFF
+            for idx, byte in enumerate(raw_payload)
+        )
+    _write_bytes(out, result)
+    return None
+
+
+def _shim_derive_session_key(assigned_id, timestamp_raw, out32):
+    if not _buffer_address(out32):
+        return None
+    mask = (1 << 64) - 1
+    seed = (_coerce_int(assigned_id) & mask) * (_coerce_int(timestamp_raw) & mask)
+    seed &= mask
+    digest = hashlib.sha256(str(seed).encode('ascii')).digest()
+    _write_bytes(out32, digest)
+    return None
+
+
+def _try_python_abi_shim(base_name, candidate_paths):
+    if not candidate_paths:
+        return None
+    try:
+        pkg = importlib.import_module('opensynaptic_rscore')
+        abi_info = getattr(pkg, 'abi_info_py', None)
+        if not callable(abi_info):
+            return None
+        abi_info()
+    except Exception:
+        return None
+
+    key = str(base_name or '').strip().lower()
+    if key == 'os_base62':
+        return _ShimLibrary({
+            'os_b62_encode_i64': _shim_b62_encode_i64,
+            'os_b62_decode_i64': _shim_b62_decode_i64,
+        })
+    if key == 'os_security':
+        return _ShimLibrary({
+            'os_crc8': _shim_crc8,
+            'os_crc16_ccitt': _shim_crc16_ccitt,
+            'os_xor_payload': _shim_xor_payload,
+            'os_derive_session_key': _shim_derive_session_key,
+        })
+    return None
 
 
 def _iter_shared_modules(root: Path):
@@ -223,6 +457,9 @@ def _try_load_rs_from_python_extension(base_name):
                     return lib
             except Exception:
                 continue
+    shim = _try_python_abi_shim(base_name, candidate_paths)
+    if shim is not None:
+        return shim
     return None
 
 
