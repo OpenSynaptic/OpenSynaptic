@@ -359,309 +359,309 @@ jobs:
           echo ""
           echo "======== Installed native_loader.py (first 30 lines) ========"
           INSTALLED_NL=$("$VERIFY_ROOT/venv/bin/python" -c "
-import sys, io
-_o = sys.stdout; sys.stdout = io.StringIO()
-from opensynaptic.utils.c import native_loader
-sys.stdout = _o
-print(native_loader.__file__)
-" 2>/dev/null || true)
-          echo "Module file: $INSTALLED_NL"
-          if [[ -n "$INSTALLED_NL" && -f "$INSTALLED_NL" ]]; then
-            head -30 "$INSTALLED_NL"
-            echo "--- dir(native_loader) ---"
-            "$VERIFY_ROOT/venv/bin/python" -c "
-import sys, io
-_o = sys.stdout; sys.stdout = io.StringIO()
-from opensynaptic.utils.c import native_loader
-sys.stdout = _o
-attrs = [a for a in dir(native_loader) if not a.startswith('__')]
-print(attrs)
-print('_NATIVE_DEBUG =', getattr(native_loader, '_NATIVE_DEBUG', 'MISSING'))
-print('_LIB_CACHE =', native_loader._LIB_CACHE)
-" 2>&1 || true
-          fi
+            import sys, io
+            _o = sys.stdout; sys.stdout = io.StringIO()
+            from opensynaptic.utils.c import native_loader
+            sys.stdout = _o
+            print(native_loader.__file__)
+            " 2>/dev/null || true)
+                    echo "Module file: $INSTALLED_NL"
+                    if [[ -n "$INSTALLED_NL" && -f "$INSTALLED_NL" ]]; then
+                        head -30 "$INSTALLED_NL"
+                        echo "--- dir(native_loader) ---"
+                        "$VERIFY_ROOT/venv/bin/python" -c "
+            import sys, io
+            _o = sys.stdout; sys.stdout = io.StringIO()
+            from opensynaptic.utils.c import native_loader
+            sys.stdout = _o
+            attrs = [a for a in dir(native_loader) if not a.startswith('__')]
+            print(attrs)
+            print('_NATIVE_DEBUG =', getattr(native_loader, '_NATIVE_DEBUG', 'MISSING'))
+            print('_LIB_CACHE =', native_loader._LIB_CACHE)
+            " 2>&1 || true
+                    fi
 
           # 5. Self-contained Python loading trace (no native_loader imports)
           echo ""
           echo "======== Python loading trace (self-contained) ========"
           "$VERIFY_ROOT/venv/bin/python" <<'PYEOF'
-import sys, os, ctypes, importlib, sysconfig, struct, traceback
-from pathlib import Path
+          import sys, os, ctypes, importlib, sysconfig, struct, traceback
+          from pathlib import Path
 
-print(f'Python: {sys.version}')
-print(f'Pointer size: {struct.calcsize("P")*8} bits')
-print(f'sys.platform: {sys.platform}')
+          print(f'Python: {sys.version}')
+          print(f'Pointer size: {struct.calcsize("P")*8} bits')
+          print(f'sys.platform: {sys.platform}')
 
-# ── Step A: import rscore and find the .so ──
-try:
-    import opensynaptic_rscore
-    print(f'opensynaptic_rscore.__file__ = {opensynaptic_rscore.__file__}')
-except Exception as e:
-    print(f'FAILED to import opensynaptic_rscore: {e}')
-    sys.exit(1)
+          # ── Step A: import rscore and find the .so ──
+          try:
+              import opensynaptic_rscore
+              print(f'opensynaptic_rscore.__file__ = {opensynaptic_rscore.__file__}')
+          except Exception as e:
+              print(f'FAILED to import opensynaptic_rscore: {e}')
+              sys.exit(1)
 
-pkg_dir = Path(opensynaptic_rscore.__file__).parent
-so_files = sorted(pkg_dir.glob('*.so'))
-print(f'Package dir: {pkg_dir}')
-print(f'.so files found: {[f.name for f in so_files]}')
+          pkg_dir = Path(opensynaptic_rscore.__file__).parent
+          so_files = sorted(pkg_dir.glob('*.so'))
+          print(f'Package dir: {pkg_dir}')
+          print(f'.so files found: {[f.name for f in so_files]}')
 
-# ── Step B: direct ctypes load test ──
-SYMBOLS_BASE62 = ('os_b62_encode_i64', 'os_b62_decode_i64')
-SYMBOLS_SECURITY = ('os_crc8', 'os_crc16_ccitt', 'os_xor_payload', 'os_derive_session_key')
-ALL_SYMBOLS = SYMBOLS_BASE62 + SYMBOLS_SECURITY + (
-    'os_crc16_ccitt_pub', 'os_cmd_is_data', 'os_rscore_version',
-    'os_worker_create_v1', 'os_worker_submit_v1', 'os_worker_destroy_v1',
-    'PyInit_opensynaptic_rscore',
-)
+          # ── Step B: direct ctypes load test ──
+          SYMBOLS_BASE62 = ('os_b62_encode_i64', 'os_b62_decode_i64')
+          SYMBOLS_SECURITY = ('os_crc8', 'os_crc16_ccitt', 'os_xor_payload', 'os_derive_session_key')
+          ALL_SYMBOLS = SYMBOLS_BASE62 + SYMBOLS_SECURITY + (
+              'os_crc16_ccitt_pub', 'os_cmd_is_data', 'os_rscore_version',
+              'os_worker_create_v1', 'os_worker_submit_v1', 'os_worker_destroy_v1',
+              'PyInit_opensynaptic_rscore',
+          )
 
-for so_path in so_files:
-    print(f'\n--- Direct ctypes test: {so_path.name} ---')
-    for loader_name, loader_cls in [('PyDLL', ctypes.PyDLL), ('CDLL', ctypes.CDLL)]:
-        print(f'  {loader_name}("{so_path}"):')
-        try:
-            lib = loader_cls(str(so_path))
-            print(f'    LOADED OK (handle={lib._handle:#x})')
-            for sym in ALL_SYMBOLS:
-                try:
-                    found = hasattr(lib, sym)
-                    if found:
-                        addr = ctypes.cast(getattr(lib, sym), ctypes.c_void_p).value
-                        print(f'    {sym}: FOUND @ 0x{addr:x}')
-                    else:
-                        print(f'    {sym}: NOT FOUND (hasattr=False)')
-                except Exception as e2:
-                    print(f'    {sym}: ERROR: {e2}')
-        except Exception as e:
-            print(f'    LOAD FAILED: {e}')
-            traceback.print_exc()
+          for so_path in so_files:
+              print(f'\n--- Direct ctypes test: {so_path.name} ---')
+              for loader_name, loader_cls in [('PyDLL', ctypes.PyDLL), ('CDLL', ctypes.CDLL)]:
+                  print(f'  {loader_name}("{so_path}"):')
+                  try:
+                      lib = loader_cls(str(so_path))
+                      print(f'    LOADED OK (handle={lib._handle:#x})')
+                      for sym in ALL_SYMBOLS:
+                          try:
+                              found = hasattr(lib, sym)
+                              if found:
+                                  addr = ctypes.cast(getattr(lib, sym), ctypes.c_void_p).value
+                                  print(f'    {sym}: FOUND @ 0x{addr:x}')
+                              else:
+                                  print(f'    {sym}: NOT FOUND (hasattr=False)')
+                          except Exception as e2:
+                              print(f'    {sym}: ERROR: {e2}')
+                  except Exception as e:
+                      print(f'    LOAD FAILED: {e}')
+                      traceback.print_exc()
 
-# ── Step C: reproduce _try_load_rs_from_python_extension logic ──
-print('\n--- Reproducing _try_load_rs_from_python_extension logic ---')
-candidate_paths = []
-seen_paths = set()
-suffixes = {'.pyd', '.so', '.dylib', '.dll'}
+          # ── Step C: reproduce _try_load_rs_from_python_extension logic ──
+          print('\n--- Reproducing _try_load_rs_from_python_extension logic ---')
+          candidate_paths = []
+          seen_paths = set()
+          suffixes = {'.pyd', '.so', '.dylib', '.dll'}
 
-def add_candidate(path_value, source_label):
-    if not path_value:
-        return
-    try:
-        c = Path(path_value)
-    except Exception:
-        return
-    if c.suffix.lower() not in suffixes:
-        return
-    key = str(c.resolve()) if c.exists() else str(c)
-    if key in seen_paths:
-        return
-    seen_paths.add(key)
-    candidate_paths.append((c, source_label))
+          def add_candidate(path_value, source_label):
+              if not path_value:
+                  return
+              try:
+                  c = Path(path_value)
+              except Exception:
+                  return
+              if c.suffix.lower() not in suffixes:
+                  return
+              key = str(c.resolve()) if c.exists() else str(c)
+              if key in seen_paths:
+                  return
+              seen_paths.add(key)
+              candidate_paths.append((c, source_label))
 
-# Source 1: importlib.metadata RECORD
-try:
-    from importlib import metadata as md
-    for dist_name in ('opensynaptic-rscore', 'opensynaptic_rscore', 'opensynaptic'):
-        try:
-            dist = md.distribution(dist_name)
-            files = list(getattr(dist, 'files', None) or [])
-            print(f'  dist({dist_name!r}): {len(files)} RECORD files')
-            for rel in files:
-                name = Path(str(rel)).name.lower()
-                if name.startswith('_native') or name.startswith('opensynaptic_rscore'):
-                    if Path(name).suffix.lower() in suffixes:
-                        loc = dist.locate_file(rel)
-                        print(f'    candidate from RECORD: {rel} -> {loc} (exists={Path(str(loc)).exists()})')
-                        add_candidate(loc, f'RECORD:{dist_name}')
-        except md.PackageNotFoundError:
-            print(f'  dist({dist_name!r}): not found')
-        except Exception as e:
-            print(f'  dist({dist_name!r}): ERROR {e}')
-except Exception as e:
-    print(f'  importlib.metadata error: {e}')
+          # Source 1: importlib.metadata RECORD
+          try:
+              from importlib import metadata as md
+              for dist_name in ('opensynaptic-rscore', 'opensynaptic_rscore', 'opensynaptic'):
+                  try:
+                      dist = md.distribution(dist_name)
+                      files = list(getattr(dist, 'files', None) or [])
+                      print(f'  dist({dist_name!r}): {len(files)} RECORD files')
+                      for rel in files:
+                          name = Path(str(rel)).name.lower()
+                          if name.startswith('_native') or name.startswith('opensynaptic_rscore'):
+                              if Path(name).suffix.lower() in suffixes:
+                                  loc = dist.locate_file(rel)
+                                  print(f'    candidate from RECORD: {rel} -> {loc} (exists={Path(str(loc)).exists()})')
+                                  add_candidate(loc, f'RECORD:{dist_name}')
+                  except md.PackageNotFoundError:
+                      print(f'  dist({dist_name!r}): not found')
+                  except Exception as e:
+                      print(f'  dist({dist_name!r}): ERROR {e}')
+          except Exception as e:
+              print(f'  importlib.metadata error: {e}')
 
-# Source 2: site-packages glob
-print(f'  Site-packages search:')
-site_roots = []
-for key in ('platlib', 'purelib'):
-    try:
-        root = sysconfig.get_paths().get(key)
-    except Exception:
-        root = None
-    if root:
-        site_roots.append(Path(root))
-try:
-    import site
-    site_roots.extend(Path(p) for p in site.getsitepackages())
-except Exception:
-    pass
-seen_roots = set()
-for root in site_roots:
-    rk = str(root)
-    if rk in seen_roots or not root.exists():
-        continue
-    seen_roots.add(rk)
-    patterns = ('opensynaptic_rscore*', 'opensynaptic_rscore/**/*',
-                'opensynaptic_rscore/**/*.so', 'opensynaptic_rscore/**/*.pyd')
-    for pat in patterns:
-        for c in root.glob(pat):
-            if c.is_file() and c.suffix.lower() in suffixes:
-                print(f'    glob {pat} in {root}: found {c.name}')
-                add_candidate(c, f'glob:{root}')
+          # Source 2: site-packages glob
+          print(f'  Site-packages search:')
+          site_roots = []
+          for key in ('platlib', 'purelib'):
+              try:
+                  root = sysconfig.get_paths().get(key)
+              except Exception:
+                  root = None
+              if root:
+                  site_roots.append(Path(root))
+          try:
+              import site
+              site_roots.extend(Path(p) for p in site.getsitepackages())
+          except Exception:
+              pass
+          seen_roots = set()
+          for root in site_roots:
+              rk = str(root)
+              if rk in seen_roots or not root.exists():
+                  continue
+              seen_roots.add(rk)
+              patterns = ('opensynaptic_rscore*', 'opensynaptic_rscore/**/*',
+                          'opensynaptic_rscore/**/*.so', 'opensynaptic_rscore/**/*.pyd')
+              for pat in patterns:
+                  for c in root.glob(pat):
+                      if c.is_file() and c.suffix.lower() in suffixes:
+                          print(f'    glob {pat} in {root}: found {c.name}')
+                          add_candidate(c, f'glob:{root}')
 
-# Source 3: direct import
-try:
-    mod = importlib.import_module('opensynaptic_rscore.opensynaptic_rscore')
-    mf = getattr(mod, '__file__', None)
-    print(f'  opensynaptic_rscore.opensynaptic_rscore.__file__ = {mf}')
-    if mf:
-        add_candidate(mf, 'submodule-import')
-except Exception as e:
-    print(f'  submodule import failed: {e}')
+          # Source 3: direct import
+          try:
+              mod = importlib.import_module('opensynaptic_rscore.opensynaptic_rscore')
+              mf = getattr(mod, '__file__', None)
+              print(f'  opensynaptic_rscore.opensynaptic_rscore.__file__ = {mf}')
+              if mf:
+                  add_candidate(mf, 'submodule-import')
+          except Exception as e:
+              print(f'  submodule import failed: {e}')
 
-print(f'\nTotal candidates: {len(candidate_paths)}')
-for c, src in candidate_paths:
-    print(f'  [{src}] {c} (exists={c.exists()})')
+          print(f'\nTotal candidates: {len(candidate_paths)}')
+          for c, src in candidate_paths:
+              print(f'  [{src}] {c} (exists={c.exists()})')
 
-# Test each candidate with required symbols
-for base, syms in [('os_base62', SYMBOLS_BASE62), ('os_security', SYMBOLS_SECURITY)]:
-    print(f'\n--- Testing {base} (needs {syms}) ---')
-    for c, src in candidate_paths:
-        if not c.exists():
-            print(f'  {c.name} [{src}]: does not exist, skip')
-            continue
-        for lname, lcls in [('PyDLL', ctypes.PyDLL), ('CDLL', ctypes.CDLL)]:
-            try:
-                lib = lcls(str(c))
-                results = {s: hasattr(lib, s) for s in syms}
-                all_ok = all(results.values())
-                print(f'  {c.name} [{src}] {lname}: results={results} => {"PASS" if all_ok else "FAIL"}')
-                if all_ok:
-                    print(f'    Would return this lib for {base}!')
-            except Exception as e:
-                print(f'  {c.name} [{src}] {lname}: LOAD FAILED: {e}')
+          # Test each candidate with required symbols
+          for base, syms in [('os_base62', SYMBOLS_BASE62), ('os_security', SYMBOLS_SECURITY)]:
+              print(f'\n--- Testing {base} (needs {syms}) ---')
+              for c, src in candidate_paths:
+                  if not c.exists():
+                      print(f'  {c.name} [{src}]: does not exist, skip')
+                      continue
+                  for lname, lcls in [('PyDLL', ctypes.PyDLL), ('CDLL', ctypes.CDLL)]:
+                      try:
+                          lib = lcls(str(c))
+                          results = {s: hasattr(lib, s) for s in syms}
+                          all_ok = all(results.values())
+                          print(f'  {c.name} [{src}] {lname}: results={results} => {"PASS" if all_ok else "FAIL"}')
+                          if all_ok:
+                              print(f'    Would return this lib for {base}!')
+                      except Exception as e:
+                          print(f'  {c.name} [{src}] {lname}: LOAD FAILED: {e}')
 
-# ── Step D: call the REAL has_native_library ──
-print('\n--- Calling real has_native_library ---')
-try:
-    from opensynaptic.utils.c import native_loader as _nl
-    from opensynaptic.utils.c.native_loader import has_native_library, load_native_library
-    print(f'  _NATIVE_DEBUG = {getattr(_nl, "_NATIVE_DEBUG", "MISSING")}')
-    print(f'  _LIB_CACHE (before) = {_nl._LIB_CACHE}')
-    if _nl._LIB_CACHE:
-        print('  WARNING: _LIB_CACHE was pre-populated during import chain!')
-        print('  Clearing cache to test fresh lookup...')
-        _nl._LIB_CACHE.clear()
+          # ── Step D: call the REAL has_native_library ──
+          print('\n--- Calling real has_native_library ---')
+          try:
+              from opensynaptic.utils.c import native_loader as _nl
+              from opensynaptic.utils.c.native_loader import has_native_library, load_native_library
+              print(f'  _NATIVE_DEBUG = {getattr(_nl, "_NATIVE_DEBUG", "MISSING")}')
+              print(f'  _LIB_CACHE (before) = {_nl._LIB_CACHE}')
+              if _nl._LIB_CACHE:
+                  print('  WARNING: _LIB_CACHE was pre-populated during import chain!')
+                  print('  Clearing cache to test fresh lookup...')
+                  _nl._LIB_CACHE.clear()
 
-    # D.1 — Call _try_load_rs_from_python_extension directly
-    print('\n  --- D.1: Direct _try_load_rs_from_python_extension call ---')
-    for base in ('os_base62', 'os_security'):
-        try:
-            direct = _nl._try_load_rs_from_python_extension(base)
-            print(f'  _try_load_rs({base!r}) => {direct}')
-            if direct is not None:
-                print(f'    handle={direct._handle:#x}')
-                for sym in ('os_b62_encode_i64', 'os_b62_decode_i64', 'os_crc8', 'os_crc16_ccitt', 'os_crc16_ccitt_pub'):
-                    print(f'    hasattr({sym}) = {hasattr(direct, sym)}')
-        except Exception as e:
-            print(f'  _try_load_rs({base!r}) raised: {e}')
-            traceback.print_exc()
+              # D.1 — Call _try_load_rs_from_python_extension directly
+              print('\n  --- D.1: Direct _try_load_rs_from_python_extension call ---')
+              for base in ('os_base62', 'os_security'):
+                  try:
+                      direct = _nl._try_load_rs_from_python_extension(base)
+                      print(f'  _try_load_rs({base!r}) => {direct}')
+                      if direct is not None:
+                          print(f'    handle={direct._handle:#x}')
+                          for sym in ('os_b62_encode_i64', 'os_b62_decode_i64', 'os_crc8', 'os_crc16_ccitt', 'os_crc16_ccitt_pub'):
+                              print(f'    hasattr({sym}) = {hasattr(direct, sym)}')
+                  except Exception as e:
+                      print(f'  _try_load_rs({base!r}) raised: {e}')
+                      traceback.print_exc()
 
-    # D.2 — Call load_native_library
-    print('\n  --- D.2: load_native_library ---')
-    _nl._LIB_CACHE.clear()  # ensure fresh
-    for base in ('os_base62', 'os_security'):
-        try:
-            lib = load_native_library(base)
-            print(f'  load_native_library({base!r}) => {lib}')
-            if lib is not None:
-                print(f'    lib._handle = {lib._handle:#x}')
-        except Exception as e:
-            print(f'  load_native_library({base!r}) raised: {e}')
-            traceback.print_exc()
-    print(f'  _LIB_CACHE (after) = {dict((k, type(v).__name__ if v else None) for k, v in _nl._LIB_CACHE.items())}')
+              # D.2 — Call load_native_library
+              print('\n  --- D.2: load_native_library ---')
+              _nl._LIB_CACHE.clear()  # ensure fresh
+              for base in ('os_base62', 'os_security'):
+                  try:
+                      lib = load_native_library(base)
+                      print(f'  load_native_library({base!r}) => {lib}')
+                      if lib is not None:
+                          print(f'    lib._handle = {lib._handle:#x}')
+                  except Exception as e:
+                      print(f'  load_native_library({base!r}) raised: {e}')
+                      traceback.print_exc()
+              print(f'  _LIB_CACHE (after) = {dict((k, type(v).__name__ if v else None) for k, v in _nl._LIB_CACHE.items())}')
 
-    # D.3 — Monkey-patch and retry with inline tracing
-    print('\n  --- D.3: Monkey-patched _try_load_rs with tracing ---')
-    _nl._LIB_CACHE.clear()
-    _orig_try = _nl._try_load_rs_from_python_extension
-    def _traced_try(base_name):
-        import ctypes as _ct
-        req = _nl._rs_extension_symbol_requirements(base_name)
-        print(f'    [trace] base_name={base_name!r} required_symbols={req}')
-        if req is None:
-            print('    [trace] => None (no requirements)')
-            return None
-        # Manually enumerate candidates
-        candidates = []
-        try:
-            from importlib import metadata as _md
-            for dn in ('opensynaptic-rscore', 'opensynaptic_rscore', 'opensynaptic'):
-                try:
-                    d = _md.distribution(dn)
-                    for rp in list(getattr(d, 'files', None) or []):
-                        nm = Path(str(rp)).name.lower()
-                        if (nm.startswith('_native') or nm.startswith('opensynaptic_rscore')) and Path(nm).suffix.lower() in {'.so', '.pyd', '.dylib', '.dll'}:
-                            loc = d.locate_file(rp)
-                            candidates.append((str(loc), f'RECORD:{dn}'))
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        # Try import
-        try:
-            import importlib as _il
-            m = _il.import_module('opensynaptic_rscore.opensynaptic_rscore')
-            mf = getattr(m, '__file__', None)
-            if mf:
-                candidates.append((mf, 'import'))
-        except Exception:
-            pass
-        print(f'    [trace] candidates={candidates}')
-        for cpath, src in candidates:
-            p = Path(cpath)
-            if not p.exists():
-                print(f'    [trace] {src}: {cpath} does not exist')
-                continue
-            for ln, lc in [('PyDLL', _ct.PyDLL), ('CDLL', _ct.CDLL)]:
-                try:
-                    lib = lc(str(p))
-                    res = {s: hasattr(lib, s) for s in req}
-                    ok = all(res.values())
-                    print(f'    [trace] {src} {ln}: {res} => {"OK" if ok else "FAIL"}')
-                    if ok:
-                        return lib
-                except Exception as ex:
-                    print(f'    [trace] {src} {ln}: EXCEPTION {ex}')
-        # Also call original to compare
-        orig_result = _orig_try(base_name)
-        print(f'    [trace] original _try_load_rs({base_name!r}) => {orig_result}')
-        return orig_result
-    _nl._try_load_rs_from_python_extension = _traced_try
-    for base in ('os_base62', 'os_security'):
-        _nl._LIB_CACHE.pop(base, None)
-        lib = load_native_library(base)
-        print(f'  load_native_library({base!r}) [patched] => {lib}')
-    _nl._try_load_rs_from_python_extension = _orig_try
-except Exception as e:
-    print(f'  Failed to import has_native_library: {e}')
-    traceback.print_exc()
+              # D.3 — Monkey-patch and retry with inline tracing
+              print('\n  --- D.3: Monkey-patched _try_load_rs with tracing ---')
+              _nl._LIB_CACHE.clear()
+              _orig_try = _nl._try_load_rs_from_python_extension
+              def _traced_try(base_name):
+                  import ctypes as _ct
+                  req = _nl._rs_extension_symbol_requirements(base_name)
+                  print(f'    [trace] base_name={base_name!r} required_symbols={req}')
+                  if req is None:
+                      print('    [trace] => None (no requirements)')
+                      return None
+                  # Manually enumerate candidates
+                  candidates = []
+                  try:
+                      from importlib import metadata as _md
+                      for dn in ('opensynaptic-rscore', 'opensynaptic_rscore', 'opensynaptic'):
+                          try:
+                              d = _md.distribution(dn)
+                              for rp in list(getattr(d, 'files', None) or []):
+                                  nm = Path(str(rp)).name.lower()
+                                  if (nm.startswith('_native') or nm.startswith('opensynaptic_rscore')) and Path(nm).suffix.lower() in {'.so', '.pyd', '.dylib', '.dll'}:
+                                      loc = d.locate_file(rp)
+                                      candidates.append((str(loc), f'RECORD:{dn}'))
+                          except Exception:
+                              pass
+                  except Exception:
+                      pass
+                  # Try import
+                  try:
+                      import importlib as _il
+                      m = _il.import_module('opensynaptic_rscore.opensynaptic_rscore')
+                      mf = getattr(m, '__file__', None)
+                      if mf:
+                          candidates.append((mf, 'import'))
+                  except Exception:
+                      pass
+                  print(f'    [trace] candidates={candidates}')
+                  for cpath, src in candidates:
+                      p = Path(cpath)
+                      if not p.exists():
+                          print(f'    [trace] {src}: {cpath} does not exist')
+                          continue
+                      for ln, lc in [('PyDLL', _ct.PyDLL), ('CDLL', _ct.CDLL)]:
+                          try:
+                              lib = lc(str(p))
+                              res = {s: hasattr(lib, s) for s in req}
+                              ok = all(res.values())
+                              print(f'    [trace] {src} {ln}: {res} => {"OK" if ok else "FAIL"}')
+                              if ok:
+                                  return lib
+                          except Exception as ex:
+                              print(f'    [trace] {src} {ln}: EXCEPTION {ex}')
+                  # Also call original to compare
+                  orig_result = _orig_try(base_name)
+                  print(f'    [trace] original _try_load_rs({base_name!r}) => {orig_result}')
+                  return orig_result
+              _nl._try_load_rs_from_python_extension = _traced_try
+              for base in ('os_base62', 'os_security'):
+                  _nl._LIB_CACHE.pop(base, None)
+                  lib = load_native_library(base)
+                  print(f'  load_native_library({base!r}) [patched] => {lib}')
+              _nl._try_load_rs_from_python_extension = _orig_try
+          except Exception as e:
+              print(f'  Failed to import has_native_library: {e}')
+              traceback.print_exc()
 
-# ── Step E: check native_dirs ──
-print('\n--- native_dirs ---')
-try:
-    from opensynaptic.utils.c.native_loader import _native_dirs
-    for d in _native_dirs():
-        exists = d.exists()
-        contents = list(d.iterdir()) if exists else []
-        print(f'  {d}: exists={exists} files={[f.name for f in contents[:10]]}')
-except Exception as e:
-    # Fallback: compute manually
-    nl_file = Path(__import__('opensynaptic.utils.c.native_loader', fromlist=['_native_dirs']).__file__)
-    root = nl_file.parent
-    for d in [root / 'bin', root]:
-        exists = d.exists()
-        contents = list(d.iterdir()) if exists else []
-        print(f'  {d}: exists={exists} files={[f.name for f in contents[:10]]}')
-PYEOF
+          # ── Step E: check native_dirs ──
+          print('\n--- native_dirs ---')
+          try:
+              from opensynaptic.utils.c.native_loader import _native_dirs
+              for d in _native_dirs():
+                  exists = d.exists()
+                  contents = list(d.iterdir()) if exists else []
+                  print(f'  {d}: exists={exists} files={[f.name for f in contents[:10]]}')
+          except Exception as e:
+              # Fallback: compute manually
+              nl_file = Path(__import__('opensynaptic.utils.c.native_loader', fromlist=['_native_dirs']).__file__)
+              root = nl_file.parent
+              for d in [root / 'bin', root]:
+                  exists = d.exists()
+                  contents = list(d.iterdir()) if exists else []
+                  print(f'  {d}: exists={exists} files={[f.name for f in contents[:10]]}')
+          PYEOF
                     echo "Python loading trace exit code: $?"
 
                     echo "================================================================"
