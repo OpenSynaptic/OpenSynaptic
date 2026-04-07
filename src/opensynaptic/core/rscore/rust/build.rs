@@ -2,82 +2,117 @@
 //!
 //! # Problem
 //!
-//! PyO3's `extension-module` Cargo feature causes `pyo3-build-config` to emit:
+//! On ELF / Linux targets the Rust compiler (`rustc`) generates its own
+//! linker version-script for `cdylib` crates.  That script contains an
+//! anonymous node of the form:
 //!
 //! ```text
-//! cargo:rustc-cdylib-link-arg=-Wl,--version-script=<path>/pyo3_init.ld
+//! {
+//!     global:
+//!         PyInit_opensynaptic_rscore;
+//!         /* …other exported Rust symbols… */
+//!     local:
+//!         *;
+//! };
 //! ```
 //!
-//! where `pyo3_init.ld` contains:
-//!
-//! ```text
-//! { global: PyInit_opensynaptic_rscore; local: *; };
-//! ```
-//!
-//! The `local: *` wildcard hides **every** symbol that does not match
-//! `global:`, including all the `#[no_mangle] pub unsafe extern "C"` C-ABI
-//! bridge functions (`os_b62_encode_i64`, `os_b62_decode_i64`, `os_crc8`, …).
-//! Those symbols end up **absent** from `.dynsym`, making them invisible to
-//! `ctypes.CDLL` / `dlsym`.
+//! `local: *` hides every symbol not explicitly listed in `global:`.
+//! Whether the `#[no_mangle] pub extern "C"` C-ABI bridge functions
+//! (like `os_b62_encode_i64`) end up in `global:` depends on how `rustc`
+//! resolves "exported symbols" for the cdylib – and in practice, under
+//! `lto = "thin"` on manylinux2014 (binutils ≤ 2.35), several of these
+//! symbols are **not** present in `.dynsym` after linking.
 //!
 //! # Fix
 //!
-//! We emit a **second** `--version-script` containing a **named** version
-//! node (`OSCORE_ABI`).  Unlike an anonymous node, a named version node is
-//! never merged with PyO3's anonymous node — the linker keeps them separate.
-//! Symbols listed in `global:` of the named node are unconditionally placed
-//! into `.dynsym` and survive thin-LTO + `strip = true`, regardless of the
-//! `local: *` wildcard in the anonymous node.
+//! We emit an additional **anonymous** GNU ld version-script that
+//! explicitly lists every C-ABI symbol in its `global:` section.
 //!
-//! Previous approach (`--dynamic-list`) failed on manylinux2014 (binutils
-//! 2.27) when combined with `lto = "thin"` + `strip = true` in the Cargo
-//! release profile: the linker / LTO pass treated `local: *`-hidden symbols
-//! as dead before `--dynamic-list` could re-export them.
+//! When GNU ld encounters multiple anonymous version-script nodes it
+//! **merges** them: a symbol is global if it appears in `global:` in
+//! *any* of the anonymous nodes, regardless of `local: *` in other
+//! nodes.  This guarantees our symbols end up in `.dynsym`.
 //!
-//! The named-version-node approach is reliable on all binutils ≥ 2.14 and
-//! does not interfere with PyO3's anonymous-node symbol visibility.
+//! Previous approaches that failed:
+//!   - `--dynamic-list`: ignored by older binutils when a version-script
+//!     with `local: *` is also present.
+//!   - Named version-script node (`OSCORE_ABI { … }`): named and
+//!     anonymous nodes do not merge the same way; `local: *` still wins.
 
 fn main() {
-    // Incremental-build guard.
     println!("cargo:rerun-if-changed=build.rs");
 
-    // Version-script symbol export is an ELF / GNU ld concept.  macOS uses
-    // an export list (`-exported_symbols_list`) and Windows uses a `.def`
-    // file; both expose C-ABI symbols without extra configuration, so we
-    // only act on Linux / Android (ELF targets where PyO3 emits the
-    // problematic version script).
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "linux" && target_os != "android" {
         return;
     }
 
     let out_dir = std::env::var("OUT_DIR").expect("Cargo must set OUT_DIR");
-    let vs_path = std::path::PathBuf::from(&out_dir).join("os_abi_exports.ver");
+    let out_path = std::path::PathBuf::from(&out_dir);
 
-    // Named version node — symbols listed here are exported to .dynsym
-    // even when PyO3's anonymous node contains `local: *`.
-    // dlsym(handle, "os_b62_encode_i64") resolves the default (@@) version.
-    let content = "\
-OSCORE_ABI {\n\
-    global:\n\
-        os_b62_encode_i64;\n\
-        os_b62_decode_i64;\n\
-        os_crc8;\n\
-        os_crc16_ccitt;\n\
-        os_crc16_ccitt_pub;\n\
-        os_xor_payload;\n\
-        os_derive_session_key;\n\
-};\n";
+    // All C-ABI bridge symbols that must be visible via dlsym / ctypes.
+    let extra_globals: &[&str] = &[
+        // os_base62
+        "os_b62_encode_i64",
+        "os_b62_decode_i64",
+        // os_security
+        "os_crc8",
+        "os_crc16_ccitt",
+        "os_crc16_ccitt_pub",
+        "os_xor_payload",
+        "os_derive_session_key",
+        // command helpers
+        "os_cmd_is_data",
+        "os_cmd_normalize_data",
+        "os_cmd_secure_variant",
+        // protocol / parsing
+        "os_parse_header_min",
+        "os_auto_decompose_input",
+        // compressor
+        "os_compressor_create_v1",
+        "os_compressor_free_v1",
+        "os_compress_fact_v1",
+        // fusion state
+        "os_fusion_state_create_v1",
+        "os_fusion_state_free_v1",
+        "os_fusion_state_seed_v1",
+        "os_fusion_state_apply_v1",
+        "os_fusion_state_receive_apply_v1",
+        // version
+        "os_rscore_version",
+        // JSON APIs
+        "os_fusion_run_json_v1",
+        "os_fusion_decompress_json_v1",
+        "os_fusion_relay_json_v1",
+        "os_node_ensure_id_json_v1",
+        "os_node_transmit_json_v1",
+        "os_node_dispatch_json_v1",
+        "os_pipeline_batch_v1",
+        // worker pool
+        "os_worker_create_v1",
+        "os_worker_submit_v1",
+        "os_worker_destroy_v1",
+        // misc
+        "os_standardize_json_v1",
+        "os_handshake_negotiate_v1",
+        "os_transporter_send_v1",
+        "os_transporter_listen_v1",
+    ];
 
-    std::fs::write(&vs_path, content)
-        .expect("failed to write os_abi_exports.ver version-script file");
+    // Write an anonymous version-script that forces our symbols into
+    // the merged `global:` set.
+    let vs_path = out_path.join("os_abi_exports.ver");
+    let mut content = String::from("{\n    global:\n");
+    for sym in extra_globals {
+        content.push_str(&format!("        {};\n", sym));
+    }
+    content.push_str("};\n");
 
-    // Pass --version-script to the linker through the compiler driver.
-    // This is added AFTER PyO3's --version-script (dependency link args
-    // precede the crate's own); the named node supplements rather than
-    // conflicts with PyO3's anonymous node.
+    std::fs::write(&vs_path, &content)
+        .expect("failed to write version-script");
+
     println!(
-        "cargo:rustc-link-arg=-Wl,--version-script={}",
+        "cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",
         vs_path.display()
     );
 }

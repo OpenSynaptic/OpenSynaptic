@@ -256,6 +256,15 @@ jobs:
           cat "$INSTALL_LOG"
 
           pushd "$VERIFY_ROOT/work"
+          echo "=== Diagnostic: rscore .so dynamic symbols ==="
+          RSCORE_SO=$("$VERIFY_ROOT/venv/bin/python" -c "import opensynaptic_rscore, pathlib; print(pathlib.Path(opensynaptic_rscore.__file__).parent)" 2>/dev/null || true)
+          if [[ -n "$RSCORE_SO" ]]; then
+            for so in "$RSCORE_SO"/*.so; do
+              echo "--- $so ---"
+              nm -D "$so" 2>/dev/null | grep -i 'os_b62\|os_crc\|os_xor\|os_derive\|PyInit' || echo "(no matching symbols)"
+            done
+          fi
+          echo "=== End diagnostic ==="
           PYCODE="from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; from opensynaptic.utils.c.native_loader import has_native_library; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); print('HAS_OS_BASE62=' + str(has_native_library('os_base62'))); print('HAS_OS_SECURITY=' + str(has_native_library('os_security'))); assert 'site-packages' in opensynaptic.__file__; assert 'site-packages' in opensynaptic_rscore.__file__; assert os.path.exists(get_lib_path('OS_Symbols.json')); assert has_native_library('os_base62'); assert has_native_library('os_security')"
           "$VERIFY_ROOT/venv/bin/python" -c "$PYCODE"
           "$VERIFY_ROOT/venv/bin/os-node" repair-config --json
