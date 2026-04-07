@@ -48,6 +48,12 @@ from opensynaptic.services.test_plugin.metrics import (
 import os as _os
 
 
+def _pick_free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(('127.0.0.1', 0))
+        return int(probe.getsockname()[1])
+
+
 def _init_worker_ignore_sigint():
     """Worker-process initializer: suppress SIGINT so the parent handles Ctrl+C.
 
@@ -1158,6 +1164,26 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
             )
         )
 
+    loopback_transport_endpoints: dict[str, dict[str, Any]] = {}
+
+    def _shared_loopback_endpoint(transport_name: str) -> dict[str, Any]:
+        tname = str(transport_name or '').strip().lower()
+        if not tname:
+            return {}
+        endpoint = loopback_transport_endpoints.get(tname)
+        if endpoint is None:
+            endpoint = {}
+            if tname in {'udp', 'tcp'}:
+                port = _pick_free_loopback_port()
+                endpoint = {
+                    'host': '127.0.0.1',
+                    'listen_host': '127.0.0.1',
+                    'port': port,
+                    'listen_port': port,
+                }
+            loopback_transport_endpoints[tname] = endpoint
+        return dict(endpoint)
+
     def _build_e2e_sender(attached_node, mode, use_udp=False, use_transport=None):
         def _prepare_transport_driver(node_obj, transport_name):
             tname = str(transport_name or '').strip().lower()
@@ -1182,9 +1208,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
 
                 if tname in {'udp', 'tcp'}:
                     l4_cfg = cfg_root.setdefault('transport_config', {})
-                    defaults = {'host': '127.0.0.1', 'listen_host': '127.0.0.1'}
-                    defaults['port'] = 10000 if tname == 'udp' else 10001
-                    defaults['listen_port'] = defaults['port']
+                    defaults = _shared_loopback_endpoint(tname)
                     t_cfg = l4_cfg.setdefault(tname, {})
                     for k, v in defaults.items():
                         t_cfg.setdefault(k, v)
@@ -1315,6 +1339,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
     receiver_thread = None
     receiver_stop_flag = threading.Event()
     receiver_ready = threading.Event()
+    receiver_init_error: list[str] = []
     
     if chain_mode == 'e2e_loopback' and use_transport:
         # Start background listener for the transport driver
@@ -1388,6 +1413,7 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
                 # For other transports (uart, mqtt, etc), no network listener needed
                 receiver_ready.set()
             except Exception as e:
+                receiver_init_error.append(str(e))
                 receiver_ready.set()  # unblock main thread even on error
                 os_log.err('RECV', 'INIT', e, {'transport': use_transport})
         
@@ -1396,7 +1422,10 @@ def run_stress(total=200, workers=8, sources=6, config_path=None, progress=True,
         receiver_thread.start()
         # Wait for receiver socket to be ready before starting senders (prevents
         # "connection refused" race on slow CI environments).
-        receiver_ready.wait(timeout=5.0)
+        if not receiver_ready.wait(timeout=5.0):
+            raise RuntimeError('receiver readiness timeout transport={}'.format(use_transport))
+        if receiver_init_error:
+            raise RuntimeError('receiver initialization failed transport={} error={}'.format(use_transport, receiver_init_error[-1]))
     
     _thread_node_tls = threading.local()
     # Pre-build sensor sets

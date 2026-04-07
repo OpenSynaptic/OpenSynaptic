@@ -2,6 +2,7 @@ import ctypes
 import importlib
 import os
 import sys
+import sysconfig
 from pathlib import Path
 from opensynaptic.utils.errors import EnvironmentMissingError
 
@@ -39,6 +40,10 @@ def _shared_ext():
     return '.so'
 
 
+def _shared_module_suffixes():
+    return {'.pyd', '.so', '.dylib', '.dll'}
+
+
 def _native_dirs():
     env = os.getenv('OPENSYNAPTIC_NATIVE_DIR', '').strip()
     dirs = []
@@ -74,13 +79,74 @@ def _try_load_rs_from_python_extension(base_name):
         return None
 
     candidate_paths = []
+    seen_paths = set()
+
+    def _add_candidate(path_value):
+        if not path_value:
+            return
+        try:
+            candidate = Path(path_value)
+        except Exception:
+            return
+        if candidate.suffix.lower() not in _shared_module_suffixes():
+            return
+        key = str(candidate.resolve()) if candidate.exists() else str(candidate)
+        if key in seen_paths:
+            return
+        seen_paths.add(key)
+        candidate_paths.append(candidate)
+
+    try:
+        from importlib import metadata as importlib_metadata
+    except Exception:  # pragma: no cover - stdlib import should exist on supported Pythons
+        importlib_metadata = None
+
+    if importlib_metadata is not None:
+        for dist_name in ('opensynaptic-rscore', 'opensynaptic_rscore'):
+            try:
+                dist = importlib_metadata.distribution(dist_name)
+            except Exception:
+                continue
+            for rel_path in list(getattr(dist, 'files', None) or []):
+                name = Path(str(rel_path)).name.lower()
+                if not (name.startswith('_native') or name.startswith('opensynaptic_rscore')):
+                    continue
+                if Path(name).suffix.lower() not in _shared_module_suffixes():
+                    continue
+                _add_candidate(dist.locate_file(rel_path))
+
+    site_roots = []
+    for key in ('platlib', 'purelib'):
+        try:
+            root = sysconfig.get_paths().get(key)
+        except Exception:
+            root = None
+        if root:
+            site_roots.append(Path(root))
+    try:
+        import site as _site
+        site_roots.extend(Path(p) for p in _site.getsitepackages())
+    except Exception:
+        pass
+
+    seen_roots = set()
+    for root in site_roots:
+        root_key = str(root)
+        if root_key in seen_roots or not root.exists():
+            continue
+        seen_roots.add(root_key)
+        for pattern in ('opensynaptic_rscore/_native*', 'opensynaptic_rscore*'):
+            for candidate in root.glob(pattern):
+                if candidate.is_file():
+                    _add_candidate(candidate)
+
     try:
         pkg = importlib.import_module('opensynaptic_rscore')
         pkg_file = getattr(pkg, '__file__', None)
         if pkg_file:
             p = Path(pkg_file)
             if p.suffix.lower() in {'.pyd', '.so', '.dylib', '.dll'}:
-                candidate_paths.append(p)
+                _add_candidate(p)
     except Exception:
         pass
 
@@ -89,16 +155,11 @@ def _try_load_rs_from_python_extension(base_name):
             mod = importlib.import_module(mod_name)
             mod_file = getattr(mod, '__file__', None)
             if mod_file:
-                candidate_paths.append(Path(mod_file))
+                _add_candidate(mod_file)
         except Exception:
             continue
 
-    seen = set()
     for candidate in candidate_paths:
-        key = str(candidate.resolve()) if candidate.exists() else str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
         if not candidate.exists():
             continue
         try:

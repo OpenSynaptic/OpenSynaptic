@@ -122,7 +122,9 @@ def build_rscore(
         }
 
     profile = 'release' if release else 'dev'
-    cmd = [cargo, 'build', '--manifest-path', str(_CRATE_DIR / 'Cargo.toml')]
+    # Build the ctypes-facing C ABI library without the PyO3 module glue.
+    # This keeps the cargo path portable across macOS while maturin still owns wheel builds.
+    cmd = [cargo, 'build', '--manifest-path', str(_CRATE_DIR / 'Cargo.toml'), '--no-default-features']
     if release:
         cmd.append('--release')
 

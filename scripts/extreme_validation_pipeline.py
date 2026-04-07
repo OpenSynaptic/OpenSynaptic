@@ -77,7 +77,7 @@ def _scale_profile(scale: str) -> dict[str, int]:
 def build_steps(py: str, scale: str) -> list[Step]:
     p = _scale_profile(scale)
 
-    return [
+    steps = [
         Step(
             step_id="core-status",
             description="Core backend visibility",
@@ -459,6 +459,12 @@ def build_steps(py: str, scale: str) -> list[Step]:
         ),
     ]
 
+    return steps
+
+
+def _profile_steps(steps: list[Step], profile: str) -> list[Step]:
+    return steps
+
 
 def run_step(step: Step, cwd: Path) -> dict[str, Any]:
     started_at = time.time()
@@ -537,6 +543,12 @@ def parse_args() -> argparse.Namespace:
         help="Stop immediately when a step fails",
     )
     parser.add_argument(
+        "--profile",
+        choices=["primary", "global"],
+        default="primary",
+        help="Pipeline profile label for report/CI routing; both primary and global run the full suite",
+    )
+    parser.add_argument(
         "--output",
         default="data/benchmarks/extreme_validation_report_latest.json",
         help="Output JSON report path",
@@ -551,7 +563,7 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     py = sys.executable
-    steps = build_steps(py=py, scale=args.scale)
+    steps = _profile_steps(build_steps(py=py, scale=args.scale), profile=args.profile)
 
     started = time.time()
     results: list[dict[str, Any]] = []
@@ -559,6 +571,7 @@ def main() -> int:
     print("=" * 88)
     print("OpenSynaptic Extreme Validation Pipeline")
     print("=" * 88)
+    print(f"Profile: {args.profile}")
     print(f"Scale: {args.scale}")
     print(f"Python: {py}")
     print(f"Steps: {len(steps)}")
@@ -586,6 +599,7 @@ def main() -> int:
 
     report = {
         "runner": "extreme_validation_pipeline",
+        "profile": args.profile,
         "scale": args.scale,
         "python": py,
         "started_epoch": started,

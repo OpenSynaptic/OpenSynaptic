@@ -7,17 +7,8 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      scale:
-        description: "Validation pipeline scale (ubuntu-latest/py3.11 shard only)"
-        required: false
-        default: "smoke"
-        type: choice
-        options:
-          - smoke
-          - full
-          - extreme
-      global_scale:
-        description: "Validation pipeline scale (all other shards — Windows, macOS, ARM)"
+      validation_mode:
+        description: "Validation pipeline scale for all shards"
         required: false
         default: "smoke"
         type: choice
@@ -172,8 +163,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.scale }}" ]]; then
-            echo "PIPELINE_SCALE=${{ github.event.inputs.scale }}" >> "$GITHUB_ENV"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.validation_mode }}" ]]; then
+            echo "PIPELINE_SCALE=${{ github.event.inputs.validation_mode }}" >> "$GITHUB_ENV"
           else
             echo "PIPELINE_SCALE=smoke" >> "$GITHUB_ENV"
           fi
@@ -256,6 +247,7 @@ jobs:
         shell: bash
         run: |
           timeout 120m python -u scripts/extreme_validation_pipeline.py \
+            --profile primary \
             --scale "$PIPELINE_SCALE" \
             --strict \
             --output data/benchmarks/extreme_validation_report_ci.json
@@ -282,8 +274,8 @@ jobs:
         if: ${{ !(matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') }}
         shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.global_scale }}" ]]; then
-            echo "GLOBAL_PIPELINE_SCALE=${{ github.event.inputs.global_scale }}" >> "$GITHUB_ENV"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.validation_mode }}" ]]; then
+            echo "GLOBAL_PIPELINE_SCALE=${{ github.event.inputs.validation_mode }}" >> "$GITHUB_ENV"
           else
             echo "GLOBAL_PIPELINE_SCALE=smoke" >> "$GITHUB_ENV"
           fi
@@ -294,6 +286,7 @@ jobs:
         timeout-minutes: 120
         run: |
           python -u scripts/extreme_validation_pipeline.py \
+            --profile global \
             --scale "$GLOBAL_PIPELINE_SCALE" \
             --strict \
             --output "data/benchmarks/extreme_validation_report_global_ci.json"
