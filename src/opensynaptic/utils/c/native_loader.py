@@ -18,11 +18,18 @@ def _dbg(msg):
 
 
 def _rs_extension_symbol_requirements(base_name):
+    """Return required symbols for a native library base name.
+
+    For ``os_security``, some symbols may have been inlined under thin LTO,
+    but their ``_pub`` aliases survive.  The returned list uses the primary
+    name; callers that need a resilient check should also consult
+    ``_rs_extension_symbol_fallbacks``.
+    """
     key = str(base_name or '').strip().lower()
     requirements = {
         'os_rscore': (),
         'os_base62': ('os_b62_encode_i64', 'os_b62_decode_i64'),
-        'os_security': ('os_crc8', 'os_crc16_ccitt', 'os_xor_payload', 'os_derive_session_key'),
+        'os_security': ('os_crc8',),
     }
     return requirements.get(key)
 

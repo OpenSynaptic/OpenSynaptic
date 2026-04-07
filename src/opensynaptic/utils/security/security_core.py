@@ -11,16 +11,40 @@ _LIB = None
 _CONFIGURED = False
 
 
+def _resolve_symbol(lib, primary, fallback=None):
+    """Return the ctypes attribute for *primary*, falling back to *fallback*.
+
+    Under Rust thin LTO some C-ABI symbols (e.g. ``os_crc16_ccitt``) can be
+    inlined away while their ``_pub`` wrappers survive in ``.dynsym``.  This
+    helper transparently selects whichever is available.
+    """
+    if hasattr(lib, primary):
+        return getattr(lib, primary)
+    if fallback and hasattr(lib, fallback):
+        return getattr(lib, fallback)
+    return getattr(lib, primary)  # will raise AttributeError
+
+
+# Resolved function attributes (set during first _lib() call)
+_fn_crc16_ccitt = None
+_fn_xor_payload = None
+_fn_derive_session_key = None
+
+
 def _lib():
-    global _LIB, _CONFIGURED
+    global _LIB, _CONFIGURED, _fn_crc16_ccitt, _fn_xor_payload, _fn_derive_session_key
     if _LIB is None:
         _LIB = require_native_library('os_security')
     if not _CONFIGURED:
         _LIB.os_crc8.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t, ctypes.c_ushort, ctypes.c_ubyte]
         _LIB.os_crc8.restype = ctypes.c_ubyte
-        _LIB.os_crc16_ccitt.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t, ctypes.c_ushort, ctypes.c_ushort]
-        _LIB.os_crc16_ccitt.restype = ctypes.c_ushort
-        _LIB.os_xor_payload.argtypes = [
+
+        _fn_crc16_ccitt = _resolve_symbol(_LIB, 'os_crc16_ccitt', 'os_crc16_ccitt_pub')
+        _fn_crc16_ccitt.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t, ctypes.c_ushort, ctypes.c_ushort]
+        _fn_crc16_ccitt.restype = ctypes.c_ushort
+
+        _fn_xor_payload = _resolve_symbol(_LIB, 'os_xor_payload')
+        _fn_xor_payload.argtypes = [
             ctypes.POINTER(ctypes.c_ubyte),
             ctypes.c_size_t,
             ctypes.POINTER(ctypes.c_ubyte),
@@ -28,9 +52,11 @@ def _lib():
             ctypes.c_uint,
             ctypes.POINTER(ctypes.c_ubyte),
         ]
-        _LIB.os_xor_payload.restype = None
-        _LIB.os_derive_session_key.argtypes = [ctypes.c_ulonglong, ctypes.c_ulonglong, ctypes.POINTER(ctypes.c_ubyte)]
-        _LIB.os_derive_session_key.restype = None
+        _fn_xor_payload.restype = None
+
+        _fn_derive_session_key = _resolve_symbol(_LIB, 'os_derive_session_key')
+        _fn_derive_session_key.argtypes = [ctypes.c_ulonglong, ctypes.c_ulonglong, ctypes.POINTER(ctypes.c_ubyte)]
+        _fn_derive_session_key.restype = None
         _CONFIGURED = True
     return _LIB
 
@@ -64,18 +90,18 @@ def crc8(data, poly=CRC8_POLY, init=0):
 
 
 def crc16_ccitt(data, poly=CRC16_POLY, init=CRC16_INIT):
-    lib = _lib()
+    _lib()
     raw, arr = _as_u8_array(data)
     ptr = ctypes.cast(arr, ctypes.POINTER(ctypes.c_ubyte)) if raw else ctypes.POINTER(ctypes.c_ubyte)()
-    return int(lib.os_crc16_ccitt(ptr, len(raw), int(poly) & 0xFFFF, int(init) & 0xFFFF)) & 0xFFFF
+    return int(_fn_crc16_ccitt(ptr, len(raw), int(poly) & 0xFFFF, int(init) & 0xFFFF)) & 0xFFFF
 
 
 def derive_session_key(assigned_id, timestamp_raw):
-    lib = _lib()
+    _lib()
     aid = max(0, int(assigned_id or 0))
     ts = max(0, int(timestamp_raw or 0))
     out = (ctypes.c_ubyte * 32)()
-    lib.os_derive_session_key(ctypes.c_ulonglong(aid), ctypes.c_ulonglong(ts), out)
+    _fn_derive_session_key(ctypes.c_ulonglong(aid), ctypes.c_ulonglong(ts), out)
     return bytes(out)
 
 
@@ -84,11 +110,11 @@ def xor_payload(payload, key, offset):
         return b''
     if not key:
         return bytes(payload)
-    lib = _lib()
+    _lib()
     raw_payload, p_arr = _as_u8_array(payload)
     raw_key, k_arr = _as_u8_array(key)
     out = (ctypes.c_ubyte * len(raw_payload))()
-    lib.os_xor_payload(
+    _fn_xor_payload(
         ctypes.cast(p_arr, ctypes.POINTER(ctypes.c_ubyte)),
         len(raw_payload),
         ctypes.cast(k_arr, ctypes.POINTER(ctypes.c_ubyte)),
@@ -110,7 +136,7 @@ def xor_payload_into(payload, key, offset, out_buffer):
             raise ValueError('output buffer is too small')
         out_view[:len(src)] = src
         return len(src)
-    lib = _lib()
+    _lib()
     raw_payload, p_arr = _as_u8_array(payload)
     raw_key, k_arr = _as_u8_array(key)
     out_view = memoryview(out_buffer).cast('B')
@@ -119,7 +145,7 @@ def xor_payload_into(payload, key, offset, out_buffer):
         raise ValueError('output buffer is too small')
     out_t = ctypes.c_ubyte * p_len
     out_arr = out_t.from_buffer(out_view)
-    lib.os_xor_payload(
+    _fn_xor_payload(
         ctypes.cast(p_arr, ctypes.POINTER(ctypes.c_ubyte)),
         p_len,
         ctypes.cast(k_arr, ctypes.POINTER(ctypes.c_ubyte)),
