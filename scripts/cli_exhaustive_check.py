@@ -110,6 +110,7 @@ def run_case(name: str, args: list[str], expect_success: bool):
                 cwd=str(ROOT),
                 capture_output=True,
                 text=True,
+                errors='replace',
                 timeout=timeout_s,
             )
         except subprocess.TimeoutExpired as exc:

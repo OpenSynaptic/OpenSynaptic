@@ -474,6 +474,7 @@ def run_step(step: Step, cwd: Path) -> dict[str, Any]:
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=step.timeout_s,
         )
         elapsed = round(time.time() - started_at, 3)
@@ -587,6 +588,19 @@ def main() -> int:
             f"  -> {status} rc={result['returncode']} elapsed={result['elapsed_s']:.3f}s"
             + (" timeout" if result.get("timed_out") else "")
         )
+        if not result["ok"]:
+            stdout_tail = str(result.get("stdout_tail") or "").strip()
+            stderr_tail = str(result.get("stderr_tail") or "").strip()
+            if stdout_tail:
+                print("  stdout tail:")
+                for line in stdout_tail.splitlines()[-20:]:
+                    print(f"    {line}")
+            if stderr_tail:
+                print("  stderr tail:")
+                for line in stderr_tail.splitlines()[-20:]:
+                    print(f"    {line}")
+            if result.get("error"):
+                print(f"  error: {result['error']}")
 
         if args.stop_on_fail and not result["ok"]:
             print("  stop-on-fail enabled: aborting further steps")
