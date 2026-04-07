@@ -12,6 +12,14 @@ CFG = ROOT / 'Config.json'
 PY = sys.executable
 
 
+def _print_safe(text: str) -> None:
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+        print(text.encode(encoding, errors='backslashreplace').decode(encoding))
+
+
 def _prepare_isolated_config() -> tuple[tempfile.TemporaryDirectory[str], Path]:
     tmp_root = tempfile.TemporaryDirectory(prefix='opensynaptic-cli-')
     tmp_dir = Path(tmp_root.name)
@@ -207,12 +215,22 @@ def main():
     out_path = ROOT / 'data' / 'benchmarks' / 'cli_exhaustive_report.json'
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, ensure_ascii=True, indent=2), encoding='utf-8')
-    print(f'\nReport: {out_path}')
+    _print_safe(f'\nReport: {out_path}')
 
     if failed:
         print('\nFailed cases:')
         for r in failed:
             print(f"- {r['name']} (rc={r['returncode']})")
+            if r.get('error'):
+                print(f"  error: {r['error']}")
+            if r.get('stdout_tail'):
+                print('  stdout_tail:')
+                for line in str(r['stdout_tail']).splitlines()[-12:]:
+                    print(f'    {line}')
+            if r.get('stderr_tail'):
+                print('  stderr_tail:')
+                for line in str(r['stderr_tail']).splitlines()[-12:]:
+                    print(f'    {line}')
         sys.exit(1)
 
     print('\nAll CLI cases passed.')

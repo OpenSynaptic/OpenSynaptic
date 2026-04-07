@@ -71,14 +71,23 @@ def _log_cli_result_payload(payload):
 
 
 def _print_cli_payload(payload):
-    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+    try:
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+    except UnicodeEncodeError:
+        print(json.dumps(payload, indent=2, ensure_ascii=True, default=str))
 
 
 def _render_help_text(parser, full: bool = False) -> None:
     if full:
-        parser.print_help()
+        help_text = parser.format_help()
+        try:
+            print(help_text)
+        except UnicodeEncodeError:
+            encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+            print(help_text.encode(encoding, errors='backslashreplace').decode(encoding))
         return
-    print("""
+    try:
+        print("""
 \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510
 \u2502                    OpenSynaptic CLI Help                      \u2502
 \u2502              2-N-2 IoT Protocol Stack Control Plane           \u2502
@@ -171,6 +180,13 @@ def _render_help_text(parser, full: bool = False) -> None:
     os-node config-set --key engine_settings.precision --value 6 --type int
     os-node watch --module pipeline --interval 1
 """)
+    except UnicodeEncodeError:
+        help_text = parser.format_help()
+        try:
+            print(help_text)
+        except UnicodeEncodeError:
+            encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+            print(help_text.encode(encoding, errors='backslashreplace').decode(encoding))
 
 
 def _make_node(config_path):
@@ -2039,12 +2055,12 @@ def _main_impl(argv=None):
             try:
                 data = node.config[section]
             except KeyError:
-                print(json.dumps({'error': f'Section "{section}" not found. Available: {sorted(node.config.keys())}'}))
+                _print_cli_payload({'error': f'Section "{section}" not found. Available: {sorted(node.config.keys())}'})
                 return 1
         else:
             data = node.config
         os_log.log_with_const('info', LogMsg.CONFIG_SHOW, section=section or 'ALL')
-        print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        _print_cli_payload(data)
         return 0
 
     if cmd in ('config-get', 'os-config-get'):
@@ -2333,7 +2349,7 @@ def main(argv=None):
         raise
     except Exception as exc:
         payload = _friendly_cli_error(exc)
-        print(json.dumps(payload, ensure_ascii=False))
+        _print_cli_payload(payload)
         os_log.err('CLI', 'GLOBAL_EXCEPTION', exc, payload)
         return 1
 
