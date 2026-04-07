@@ -295,14 +295,14 @@ jobs:
           # 2. Locate the rscore .so
           echo "--- Locating rscore .so ---"
           RSCORE_PKG_DIR=$("$VERIFY_ROOT/venv/bin/python" -c "
-import opensynaptic_rscore, pathlib, os
-pkg_dir = pathlib.Path(opensynaptic_rscore.__file__).parent
-print(pkg_dir)
-print('__file__:', opensynaptic_rscore.__file__)
-for f in sorted(pkg_dir.iterdir()):
-    sz = f.stat().st_size if f.is_file() else 0
-    print(f'  {f.name:50s}  {sz:>10d}')
-" 2>&1 || true)
+          import opensynaptic_rscore, pathlib, os
+          pkg_dir = pathlib.Path(opensynaptic_rscore.__file__).parent
+          print(pkg_dir)
+          print('__file__:', opensynaptic_rscore.__file__)
+          for f in sorted(pkg_dir.iterdir()):
+              sz = f.stat().st_size if f.is_file() else 0
+              print(f'  {f.name:50s}  {sz:>10d}')
+          " 2>&1 || true)
           echo "$RSCORE_PKG_DIR"
 
           RSCORE_SO_DIR=$(echo "$RSCORE_PKG_DIR" | head -1)
@@ -358,70 +358,70 @@ for f in sorted(pkg_dir.iterdir()):
           echo ""
           echo "======== Python loading trace ========"
           "$VERIFY_ROOT/venv/bin/python" -c "
-import sys, os, ctypes, importlib, sysconfig, struct
-from pathlib import Path
+          import sys, os, ctypes, importlib, sysconfig, struct
+          from pathlib import Path
 
-print(f'Python: {sys.version}')
-print(f'Pointer size: {struct.calcsize(\"P\")*8} bits')
-print(f'sys.platform: {sys.platform}')
+          print(f'Python: {sys.version}')
+          print(f'Pointer size: {struct.calcsize(\"P\")*8} bits')
+          print(f'sys.platform: {sys.platform}')
 
-# Import rscore
-import opensynaptic_rscore
-print(f'opensynaptic_rscore.__file__ = {opensynaptic_rscore.__file__}')
+          # Import rscore
+          import opensynaptic_rscore
+          print(f'opensynaptic_rscore.__file__ = {opensynaptic_rscore.__file__}')
 
-# Find the .so
-from opensynaptic.utils.c.native_loader import (
-    _rs_extension_symbol_requirements, _shared_module_suffixes, _native_dirs,
-    _iter_shared_modules, _try_load_rs_from_python_extension
-)
+          # Find the .so
+          from opensynaptic.utils.c.native_loader import (
+              _rs_extension_symbol_requirements, _shared_module_suffixes, _native_dirs,
+              _iter_shared_modules, _try_load_rs_from_python_extension
+          )
 
-for base in ('os_base62', 'os_security'):
-    print(f'\\n--- Loading trace for {base!r} ---')
-    reqs = _rs_extension_symbol_requirements(base)
-    print(f'  Required symbols: {reqs}')
+          for base in ('os_base62', 'os_security'):
+              print(f'\\n--- Loading trace for {base!r} ---')
+              reqs = _rs_extension_symbol_requirements(base)
+              print(f'  Required symbols: {reqs}')
 
-    # Find candidate .so files
-    pkg_dir = Path(opensynaptic_rscore.__file__).parent
-    candidates = list(pkg_dir.glob('*.so'))
-    print(f'  .so candidates in package dir: {[c.name for c in candidates]}')
+              # Find candidate .so files
+              pkg_dir = Path(opensynaptic_rscore.__file__).parent
+              candidates = list(pkg_dir.glob('*.so'))
+              print(f'  .so candidates in package dir: {[c.name for c in candidates]}')
 
-    for cand in candidates:
-        print(f'  Trying: {cand.name}')
-        for loader_cls in (ctypes.PyDLL, ctypes.CDLL):
-            try:
-                lib = loader_cls(str(cand))
-                print(f'    Loaded with {loader_cls.__name__}: OK')
-                for sym in reqs:
-                    found = hasattr(lib, sym)
-                    print(f'      hasattr({sym!r}) = {found}')
-                    if found:
-                        addr = ctypes.cast(getattr(lib, sym), ctypes.c_void_p).value
-                        print(f'        address = 0x{addr:x}')
-            except Exception as e:
-                print(f'    {loader_cls.__name__} FAILED: {e}')
+              for cand in candidates:
+                  print(f'  Trying: {cand.name}')
+                  for loader_cls in (ctypes.PyDLL, ctypes.CDLL):
+                      try:
+                          lib = loader_cls(str(cand))
+                          print(f'    Loaded with {loader_cls.__name__}: OK')
+                          for sym in reqs:
+                              found = hasattr(lib, sym)
+                              print(f'      hasattr({sym!r}) = {found}')
+                              if found:
+                                  addr = ctypes.cast(getattr(lib, sym), ctypes.c_void_p).value
+                                  print(f'        address = 0x{addr:x}')
+                      except Exception as e:
+                          print(f'    {loader_cls.__name__} FAILED: {e}')
 
-    # Also try the high-level loader
-    result = _try_load_rs_from_python_extension(base)
-    print(f'  _try_load_rs_from_python_extension({base!r}) => {result}')
+              # Also try the high-level loader
+              result = _try_load_rs_from_python_extension(base)
+              print(f'  _try_load_rs_from_python_extension({base!r}) => {result}')
 
-# native_dirs
-print(f'\\n--- native_dirs ---')
-for d in _native_dirs():
-    exists = d.exists()
-    contents = list(d.iterdir()) if exists else []
-    print(f'  {d}: exists={exists} files={[f.name for f in contents[:10]]}')
-" 2>&1 || echo "::warning::Python loading trace failed"
+          # native_dirs
+          print(f'\\n--- native_dirs ---')
+          for d in _native_dirs():
+              exists = d.exists()
+              contents = list(d.iterdir()) if exists else []
+              print(f'  {d}: exists={exists} files={[f.name for f in contents[:10]]}')
+          " 2>&1 || echo "::warning::Python loading trace failed"
 
-          echo "================================================================"
-          echo "=== DIAGNOSTIC END ==="
-          echo "================================================================"
-          # ── End diagnostic block ────────────────────────────────────────
+                    echo "================================================================"
+                    echo "=== DIAGNOSTIC END ==="
+                    echo "================================================================"
+                    # ── End diagnostic block ────────────────────────────────────────
 
-          PYCODE="from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; from opensynaptic.utils.c.native_loader import has_native_library; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); print('HAS_OS_BASE62=' + str(has_native_library('os_base62'))); print('HAS_OS_SECURITY=' + str(has_native_library('os_security'))); assert 'site-packages' in opensynaptic.__file__; assert 'site-packages' in opensynaptic_rscore.__file__; assert os.path.exists(get_lib_path('OS_Symbols.json')); assert has_native_library('os_base62'); assert has_native_library('os_security')"
-          "$VERIFY_ROOT/venv/bin/python" -c "$PYCODE"
-          "$VERIFY_ROOT/venv/bin/os-node" repair-config --json
-          "$VERIFY_ROOT/venv/bin/os-node" --no-wizard snapshot
-          popd
+                    PYCODE="from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; from opensynaptic.utils.c.native_loader import has_native_library; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); print('HAS_OS_BASE62=' + str(has_native_library('os_base62'))); print('HAS_OS_SECURITY=' + str(has_native_library('os_security'))); assert 'site-packages' in opensynaptic.__file__; assert 'site-packages' in opensynaptic_rscore.__file__; assert os.path.exists(get_lib_path('OS_Symbols.json')); assert has_native_library('os_base62'); assert has_native_library('os_security')"
+                    "$VERIFY_ROOT/venv/bin/python" -c "$PYCODE"
+                    "$VERIFY_ROOT/venv/bin/os-node" repair-config --json
+                    "$VERIFY_ROOT/venv/bin/os-node" --no-wizard snapshot
+                    popd
 
       - name: Smoke-test built wheel (Windows)
         if: runner.os == 'Windows'
