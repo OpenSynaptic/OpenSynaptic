@@ -9,6 +9,12 @@ from opensynaptic.utils.errors import EnvironmentMissingError
 
 _LIB_CACHE = {}
 _BUILD_ATTEMPTED = False
+_NATIVE_DEBUG = os.getenv('OPENSYNAPTIC_NATIVE_DEBUG', '').strip().lower() in {'1', 'true', 'yes'}
+
+
+def _dbg(msg):
+    if _NATIVE_DEBUG:
+        print(f'[native_loader] {msg}', file=sys.stderr, flush=True)
 
 
 def _rs_extension_symbol_requirements(base_name):
@@ -121,7 +127,10 @@ def _try_load_rs_from_python_extension(base_name):
     """
     required_symbols = _rs_extension_symbol_requirements(base_name)
     if required_symbols is None:
+        _dbg(f'_try_load_rs({base_name}): no symbol requirements, returning None')
         return None
+
+    _dbg(f'_try_load_rs({base_name}): required_symbols={required_symbols}')
 
     candidate_paths = []
     seen_paths = set()
@@ -140,6 +149,7 @@ def _try_load_rs_from_python_extension(base_name):
             return
         seen_paths.add(key)
         candidate_paths.append(candidate)
+        _dbg(f'  candidate added: {candidate} (exists={candidate.exists()})')
 
     try:
         from importlib import metadata as importlib_metadata
@@ -147,13 +157,11 @@ def _try_load_rs_from_python_extension(base_name):
         importlib_metadata = None
 
     if importlib_metadata is not None:
-        # Search both the standalone rscore distribution (if packaged separately)
-        # and the parent 'opensynaptic' distribution (when rscore is bundled in
-        # the same wheel, as is the case for binary wheels built with maturin).
         for dist_name in ('opensynaptic-rscore', 'opensynaptic_rscore', 'opensynaptic'):
             try:
                 dist = importlib_metadata.distribution(dist_name)
             except Exception:
+                _dbg(f'  dist({dist_name!r}): not found')
                 continue
             for rel_path in list(getattr(dist, 'files', None) or []):
                 name = Path(str(rel_path)).name.lower()
@@ -161,7 +169,9 @@ def _try_load_rs_from_python_extension(base_name):
                     continue
                 if Path(name).suffix.lower() not in _shared_module_suffixes():
                     continue
-                _add_candidate(dist.locate_file(rel_path))
+                located = dist.locate_file(rel_path)
+                _dbg(f'  dist({dist_name!r}) RECORD match: {rel_path} -> {located}')
+                _add_candidate(located)
 
     site_roots = []
     for key in ('platlib', 'purelib'):
@@ -210,19 +220,25 @@ def _try_load_rs_from_python_extension(base_name):
 
     for candidate in candidate_paths:
         if not candidate.exists():
+            _dbg(f'  skip non-existent candidate: {candidate}')
             continue
         # Try ctypes.PyDLL first (designed for Python C extensions), then fall
         # back to plain ctypes.CDLL.  On Linux the C-ABI bridge symbols
         # (os_b62_encode_i64, os_crc8, …) are present in .dynsym thanks to the
-        # companion linker version script emitted by build.rs; either loader
+        # --export-dynamic-symbol flags emitted by build.rs; either loader
         # should find them via dlsym once the .so is opened.
         for _loader in (ctypes.PyDLL, ctypes.CDLL):
             try:
                 lib = _loader(str(candidate))
-                if all(hasattr(lib, symbol) for symbol in required_symbols):
+                results = {s: hasattr(lib, s) for s in required_symbols}
+                _dbg(f'  {_loader.__name__}({candidate.name}): {results}')
+                if all(results.values()):
+                    _dbg(f'  -> returning lib for {base_name}')
                     return lib
-            except Exception:
+            except Exception as exc:
+                _dbg(f'  {_loader.__name__}({candidate.name}): EXCEPTION {exc!r}')
                 continue
+    _dbg(f'_try_load_rs({base_name}): no candidate matched, returning None')
     return None
 
 
@@ -231,21 +247,27 @@ def load_native_library(base_name):
     if not key:
         return None
     if key in _LIB_CACHE:
+        _dbg(f'load({key}): cache hit -> {_LIB_CACHE[key]}')
         return _LIB_CACHE[key]
 
+    _dbg(f'load({key}): cache miss, searching...')
     ext = _shared_ext()
     filename = key + ext
 
     for candidate_dir in _native_dirs():
         candidate = candidate_dir / filename
+        _dbg(f'load({key}): standalone check {candidate} exists={candidate.exists()}')
         if candidate.exists():
             try:
                 lib = ctypes.CDLL(str(candidate))
                 _LIB_CACHE[key] = lib
+                _dbg(f'load({key}): standalone loaded OK')
                 return lib
-            except Exception:
+            except Exception as exc:
+                _dbg(f'load({key}): standalone CDLL failed: {exc!r}')
                 continue
 
+    _dbg(f'load({key}): trying rscore extension (attempt 1)')
     ext_lib = _try_load_rs_from_python_extension(base_name)
     if ext_lib is not None:
         _LIB_CACHE[key] = ext_lib
@@ -263,11 +285,13 @@ def load_native_library(base_name):
             except Exception:
                 continue
 
+    _dbg(f'load({key}): trying rscore extension (attempt 2)')
     ext_lib = _try_load_rs_from_python_extension(base_name)
     if ext_lib is not None:
         _LIB_CACHE[key] = ext_lib
         return ext_lib
 
+    _dbg(f'load({key}): all attempts failed, caching None')
     _LIB_CACHE[key] = None
     return None
 

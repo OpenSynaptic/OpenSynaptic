@@ -259,6 +259,7 @@ jobs:
           export PYTHONNOUSERSITE=1
           export OPENSYNAPTIC_AUTO_BUILD_NATIVE=0
           export OPENSYNAPTIC_AUTO_NATIVE_REPAIR=0
+          export OPENSYNAPTIC_NATIVE_DEBUG=1
           unset PYTHONPATH || true
 
           python -m venv "$VERIFY_ROOT/venv"

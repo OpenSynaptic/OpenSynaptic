@@ -20,24 +20,30 @@
 //! Whether the `#[no_mangle] pub extern "C"` C-ABI bridge functions
 //! (like `os_b62_encode_i64`) end up in `global:` depends on how `rustc`
 //! resolves "exported symbols" for the cdylib – and in practice, under
-//! `lto = "thin"` on manylinux2014 (binutils ≤ 2.35), several of these
-//! symbols are **not** present in `.dynsym` after linking.
+//! `lto = "thin"`, several of these symbols are **not** present in
+//! `.dynsym` after linking.
 //!
 //! # Fix
 //!
-//! We emit an additional **anonymous** GNU ld version-script that
-//! explicitly lists every C-ABI symbol in its `global:` section.
+//! We use two per-symbol linker flags:
 //!
-//! When GNU ld encounters multiple anonymous version-script nodes it
-//! **merges** them: a symbol is global if it appears in `global:` in
-//! *any* of the anonymous nodes, regardless of `local: *` in other
-//! nodes.  This guarantees our symbols end up in `.dynsym`.
+//!   1. `-Wl,--export-dynamic-symbol=SYM`
+//!      Overrides `local: *` in rustc's version-script and ensures the
+//!      symbol appears in `.dynsym`.  Both GNU ld (≥ 2.39) and lld
+//!      support this flag.
+//!
+//!   2. `-Wl,--undefined=SYM`
+//!      Creates a synthetic linker-level reference, which prevents
+//!      thin LTO from eliminating the function body before the linker
+//!      can process it.
 //!
 //! Previous approaches that failed:
-//!   - `--dynamic-list`: ignored by older binutils when a version-script
-//!     with `local: *` is also present.
+//!   - Second anonymous version-script: GNU ld rejects "anonymous
+//!     version tag cannot be combined with other version tags".
+//!   - `--dynamic-list`: ignored when a version-script with `local: *`
+//!     is also present (older binutils).
 //!   - Named version-script node (`OSCORE_ABI { … }`): named and
-//!     anonymous nodes do not merge the same way; `local: *` still wins.
+//!     anonymous nodes do not merge; `local: *` still wins.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -49,17 +55,14 @@ fn main() {
     eprintln!("[build.rs] target_os={target_os} target_arch={target_arch} target_env={target_env}");
 
     if target_os != "linux" && target_os != "android" {
-        eprintln!("[build.rs] non-ELF target – skipping version-script emission");
+        eprintln!("[build.rs] non-ELF target – skipping symbol export flags");
         return;
     }
 
-    let out_dir = std::env::var("OUT_DIR").expect("Cargo must set OUT_DIR");
-    let out_path = std::path::PathBuf::from(&out_dir);
-
     // All C-ABI bridge symbols that must be visible via dlsym / ctypes.
-    // NOTE: symbols behind optional Cargo features (e.g. `worker`) are listed
-    // separately so their --undefined flag is only emitted when the feature is
-    // active (otherwise the linker would fail with an unresolved symbol error).
+    // Symbols behind optional Cargo features (e.g. `worker`) are listed
+    // separately so their --undefined flag is only emitted when the
+    // feature is active.
     let extra_globals: &[&str] = &[
         // os_base62
         "os_b62_encode_i64",
@@ -104,9 +107,6 @@ fn main() {
         "os_transporter_listen_v1",
     ];
 
-    // Worker pool symbols – only present when the `worker` Cargo feature is
-    // enabled.  Including them unconditionally in --undefined would cause a
-    // linker error when the feature is off.
     #[cfg(feature = "worker")]
     let worker_globals: &[&str] = &[
         "os_worker_create_v1",
@@ -116,43 +116,19 @@ fn main() {
     #[cfg(not(feature = "worker"))]
     let worker_globals: &[&str] = &[];
 
-    // Write an anonymous version-script that forces our symbols into
-    // the merged `global:` set.  Include worker symbols in the
-    // version-script unconditionally (listing a nonexistent symbol in
-    // `global:` is harmless — the linker just ignores it).
-    let vs_path = out_path.join("os_abi_exports.ver");
-    let mut content = String::from("{\n    global:\n");
-    for sym in extra_globals.iter().chain(worker_globals.iter()) {
-        content.push_str(&format!("        {};\n", sym));
-    }
-    content.push_str("};\n");
+    let all_symbols: Vec<&&str> = extra_globals.iter().chain(worker_globals.iter()).collect();
 
-    let all_count = extra_globals.len() + worker_globals.len();
-
-    std::fs::write(&vs_path, &content)
-        .expect("failed to write version-script");
-
-    eprintln!("[build.rs] wrote version-script to {}", vs_path.display());
-    eprintln!("[build.rs] version-script content ({} symbols):\n{}", all_count, content);
-
-    println!(
-        "cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",
-        vs_path.display()
-    );
-
-    // Force the linker to keep every C-ABI symbol via --undefined.
-    //
-    // The version-script marks them `global:` but thin LTO can eliminate
-    // unreachable function bodies *before* the linker processes the
-    // version-script.  --undefined creates a synthetic reference from
-    // the link root, preventing LTO from dropping the symbol.
-    for sym in extra_globals.iter().chain(worker_globals.iter()) {
+    for sym in &all_symbols {
+        // --export-dynamic-symbol overrides rustc's version-script `local: *`
+        println!("cargo:rustc-cdylib-link-arg=-Wl,--export-dynamic-symbol={}", sym);
+        // --undefined prevents thin LTO from dropping the function body
         println!("cargo:rustc-cdylib-link-arg=-Wl,--undefined={}", sym);
     }
-    eprintln!("[build.rs] emitted --undefined for {} symbols", all_count);
 
     eprintln!(
-        "[build.rs] emitted: cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",
-        vs_path.display()
+        "[build.rs] emitted --export-dynamic-symbol + --undefined for {} symbols ({} base + {} worker)",
+        all_symbols.len(),
+        extra_globals.len(),
+        worker_globals.len(),
     );
 }
