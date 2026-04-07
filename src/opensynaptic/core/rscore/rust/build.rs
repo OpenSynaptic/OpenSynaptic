@@ -43,7 +43,13 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+
+    eprintln!("[build.rs] target_os={target_os} target_arch={target_arch} target_env={target_env}");
+
     if target_os != "linux" && target_os != "android" {
+        eprintln!("[build.rs] non-ELF target – skipping version-script emission");
         return;
     }
 
@@ -111,8 +117,16 @@ fn main() {
     std::fs::write(&vs_path, &content)
         .expect("failed to write version-script");
 
+    eprintln!("[build.rs] wrote version-script to {}", vs_path.display());
+    eprintln!("[build.rs] version-script content ({} symbols):\n{}", extra_globals.len(), content);
+
     println!(
         "cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",
+        vs_path.display()
+    );
+
+    eprintln!(
+        "[build.rs] emitted: cargo:rustc-cdylib-link-arg=-Wl,--version-script={}",
         vs_path.display()
     );
 }
