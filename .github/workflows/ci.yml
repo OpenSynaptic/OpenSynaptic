@@ -131,7 +131,7 @@ jobs:
       - name: Verify installation
         run: |
           echo "=== Installed packages ==="
-          python -c "from importlib.metadata import version; print('opensynaptic', version('opensynaptic')); print('opensynaptic-rscore', version('opensynaptic-rscore'))"
+          python -c "from importlib.metadata import version; print('opensynaptic', version('opensynaptic'))"
           
           echo "=== Import test ==="
           python -c "import opensynaptic, opensynaptic.core, opensynaptic_rscore; print('opensynaptic:', opensynaptic.__file__); print('opensynaptic_rscore:', opensynaptic_rscore.__file__)"

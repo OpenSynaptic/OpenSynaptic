@@ -184,6 +184,39 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
 
+      - name: Verify wheel contents
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL="$(ls dist/opensynaptic-*-${{ matrix.smoke_wheel_tag }}-*.whl | head -n 1 || true)"
+          if [[ -z "$WHEEL" ]]; then
+            echo "::error::No wheel found for wheel content check (tag: ${{ matrix.smoke_wheel_tag }})"
+            exit 1
+          fi
+          echo "=== Wheel contents: $WHEEL ==="
+          python -m zipfile -l "$WHEEL"
+          echo "=== Checking required native files ==="
+          MISSING=0
+          # Standalone C libraries compiled by build_native.py
+          if ! python -m zipfile -l "$WHEEL" | grep -q "utils/c/bin/os_base62"; then
+            echo "::error::os_base62 native library missing from wheel $WHEEL"
+            MISSING=1
+          fi
+          if ! python -m zipfile -l "$WHEEL" | grep -q "utils/c/bin/os_security"; then
+            echo "::error::os_security native library missing from wheel $WHEEL"
+            MISSING=1
+          fi
+          # Rust extension – must be inside opensynaptic_rscore/ as _native.*
+          if ! python -m zipfile -l "$WHEEL" | grep -q "opensynaptic_rscore/_native"; then
+            echo "::error::opensynaptic_rscore/_native extension missing from wheel $WHEEL"
+            MISSING=1
+          fi
+          if [[ "$MISSING" -ne 0 ]]; then
+            exit 1
+          fi
+          echo "All required native files present."
+
       - name: Smoke-test built wheel (Unix)
         if: runner.os != 'Windows'
         shell: bash

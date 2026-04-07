@@ -84,6 +84,7 @@ manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
 features = ["python-module"]
 python-source = "src"
 python-packages = ["opensynaptic", "opensynaptic_rscore"]
+module-name = "opensynaptic_rscore._native"
 include = [
     { path = "src/opensynaptic/utils/c/bin/*.dll", format = "wheel" },
     { path = "src/opensynaptic/utils/c/bin/*.so", format = "wheel" },

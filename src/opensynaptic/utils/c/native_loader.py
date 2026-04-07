@@ -146,7 +146,10 @@ def _try_load_rs_from_python_extension(base_name):
         importlib_metadata = None
 
     if importlib_metadata is not None:
-        for dist_name in ('opensynaptic-rscore', 'opensynaptic_rscore'):
+        # Search both the standalone rscore distribution (if packaged separately)
+        # and the parent 'opensynaptic' distribution (when rscore is bundled in
+        # the same wheel, as is the case for binary wheels built with maturin).
+        for dist_name in ('opensynaptic-rscore', 'opensynaptic_rscore', 'opensynaptic'):
             try:
                 dist = importlib_metadata.distribution(dist_name)
             except Exception:
