@@ -1,279 +1,1050 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. v1.0.0)"
+        description: 'Existing release tag to publish (e.g. v1.3.0)'
         required: true
+        type: string
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write   # required for creating GitHub Releases and uploading assets
+  contents: write
 
 jobs:
-  # -------------------------------------------------------------------------
-  # 1. Verify: version tag must match library.properties and CMakeLists.txt
-  # -------------------------------------------------------------------------
-  verify-version:
-    name: Verify version consistency
-    runs-on: ubuntu-22.04
+  resolve-release:
+    runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.extract.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      source_ref: ${{ steps.meta.outputs.source_ref }}
+      release_notes: ${{ steps.meta.outputs.release_notes }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository metadata
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
 
-      - name: Extract tag version
-        id: extract
+      - name: Validate tag, version, and release notes
+        id: meta
+        shell: bash
         run: |
-          # workflow_dispatch supplies the tag via inputs; tag-push uses GITHUB_REF_NAME
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             TAG="${{ github.event.inputs.tag }}"
           else
             TAG="${GITHUB_REF_NAME}"
           fi
-          VER="${TAG#v}"                     # e.g. 1.0.0
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "Tag version: $VER"
 
-      - name: Check library.properties
-        run: |
-          VER="${{ steps.extract.outputs.version }}"
-          PROP_VER=$(grep -E "^version=" library.properties | cut -d= -f2 | tr -d '[:space:]')
-          echo "library.properties version: $PROP_VER"
-          if [ "$PROP_VER" != "$VER" ]; then
-            echo "::error::library.properties version ($PROP_VER) does not match tag ($VER)"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([A-Za-z0-9._-]+)?$ ]]; then
+            echo "::error::Release tag must look like v1.2.3 or v1.2.3rc1"
             exit 1
           fi
 
-      - name: Check CMakeLists.txt
-        run: |
-          VER="${{ steps.extract.outputs.version }}"
-          CMAKE_VER=$(grep -oP 'project\(osrx\s+VERSION\s+\K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)
-          echo "CMakeLists.txt version: $CMAKE_VER"
-          if [ "$CMAKE_VER" != "$VER" ]; then
-            echo "::error::CMakeLists.txt version ($CMAKE_VER) does not match tag ($VER)"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if ! git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::error::Remote tag ${TAG} does not exist on origin. Create and push the tag before running the release workflow."
+              exit 1
+            fi
+            git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            git checkout --detach "refs/tags/${TAG}"
+          fi
+
+          VERSION="${TAG#v}"
+          SOURCE_REF="${TAG}"
+          NOTES="RELEASE_NOTES_v${VERSION}.md"
+          PYPROJECT_VERSION="$(grep -Po '^version = "\K[^"]+' pyproject.toml | head -n1)"
+
+          if [[ -z "$PYPROJECT_VERSION" ]]; then
+            echo "::error::Unable to read project version from pyproject.toml"
             exit 1
           fi
 
-  # -------------------------------------------------------------------------
-  # 2. Full CI sanity check before packaging
-  # -------------------------------------------------------------------------
-  ci-check:
-    name: CI sanity check
-    needs: verify-version
-    runs-on: ubuntu-22.04
+          if [[ "$PYPROJECT_VERSION" != "$VERSION" ]]; then
+            echo "::error::pyproject.toml version ($PYPROJECT_VERSION) does not match tag version ($VERSION)"
+            exit 1
+          fi
+
+          if [[ ! -f "$NOTES" ]]; then
+            echo "::error::Missing release notes file: $NOTES"
+            exit 1
+          fi
+
+          PRERELEASE=false
+          if [[ "$TAG" == *rc* || "$TAG" == *alpha* || "$TAG" == *beta* ]]; then
+            PRERELEASE=true
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+          echo "release_notes=$NOTES" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
+  build-user-wheel:
+    name: build-user-wheel (${{ matrix.artifact_suffix }})
+    runs-on: ${{ matrix.os }}
+    needs: [resolve-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cibw_archs_linux: "x86_64"
+            cibw_build: "cp311-* cp312-* cp313-*"
+            artifact_suffix: "linux-x86_64"
+            smoke_python_version: "3.13"
+            smoke_wheel_tag: "cp313"
+          - os: ubuntu-latest
+            cibw_archs_linux: "aarch64"
+            cibw_build: "cp311-*"
+            artifact_suffix: "linux-aarch64"
+            smoke_python_version: "3.11"
+            smoke_wheel_tag: "cp311"
+          - os: windows-latest
+            cibw_archs_windows: "AMD64"
+            cibw_build: "cp311-* cp312-* cp313-*"
+            artifact_suffix: "windows-amd64"
+            smoke_python_version: "3.13"
+            smoke_wheel_tag: "cp313"
+          - os: macos-latest
+            cibw_archs_macos: "x86_64"
+            cibw_build: "cp311-*"
+            artifact_suffix: "macos-x86_64"
+            smoke_python_version: "3.11"
+            smoke_wheel_tag: "cp311"
+          - os: macos-latest
+            cibw_archs_macos: "arm64"
+            cibw_build: "cp311-* cp312-* cp313-*"
+            artifact_suffix: "macos-arm64"
+            smoke_python_version: "3.13"
+            smoke_wheel_tag: "cp313"
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - name: CMake build + tests (GCC, strict C89)
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-std=c89 -pedantic -Wall -Wextra -Werror" \
-            -DOSRX_BUILD_TESTS=ON \
-            -DOSRX_BUILD_EXAMPLES=ON
-          cmake --build build --parallel
-          ctest --test-dir build --output-on-failure
-
-      - name: Install arduino-cli
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
-            | BINDIR=/usr/local/bin sh
-
-      - name: Arduino compile check
-        run: |
-          arduino-cli core update-index
-          arduino-cli core install arduino:avr
-          mkdir -p ~/Arduino/libraries
-          ln -s "$GITHUB_WORKSPACE" ~/Arduino/libraries/OSynaptic-RX
-          arduino-cli compile --fqbn arduino:avr:uno examples/BasicRX
-
-  # -------------------------------------------------------------------------
-  # 3. Package — produce Arduino-compatible zip and source tarball
-  # -------------------------------------------------------------------------
-  package:
-    name: Package release artifacts
-    needs: [verify-version, ci-check]
-    runs-on: ubuntu-22.04
-    outputs:
-      zip_name: ${{ steps.pack.outputs.zip_name }}
-      tar_name: ${{ steps.pack.outputs.tar_name }}
-      cmake_x64_name: ${{ steps.cmake_x64.outputs.cmake_x64_name }}
-      cmake_arm64_name: ${{ steps.cmake_arm64.outputs.cmake_arm64_name }}
-    steps:
-      - uses: actions/checkout@v4
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.resolve-release.outputs.source_ref }}
 
-      - name: Build Arduino zip
-        id: pack
+      - name: Setup QEMU for Linux ARM emulation
+        if: runner.os == 'Linux' && matrix.cibw_archs_linux == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Verify checkout and maturin config
+        shell: bash
         run: |
-          VER="${{ needs.verify-version.outputs.version }}"
-          LIB_NAME="OSynaptic-RX"
-          ZIP_NAME="${LIB_NAME}-${VER}.zip"
-          TAR_NAME="${LIB_NAME}-${VER}.tar.gz"
+          set -euo pipefail
+          git rev-parse HEAD
+          git describe --tags --exact-match
+          sed -n '1,140p' pyproject.toml
+          if ! grep -q "python-source = \"src\"" pyproject.toml; then
+            echo "Expected python-source=\"src\" for release wheel build"
+            exit 1
+          fi
+          if ! grep -q "python-packages = \[\"opensynaptic\", \"opensynaptic_rscore\"\]" pyproject.toml; then
+            echo "Expected python-packages to include opensynaptic and opensynaptic_rscore"
+            exit 1
+          fi
 
-          mkdir -p /tmp/pkg/${LIB_NAME}
-          rsync -a \
-            --exclude='.git' \
-            --exclude='build/' \
-            --exclude='.github/' \
-            . /tmp/pkg/${LIB_NAME}/
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.smoke_python_version }}
 
-          cd /tmp/pkg
-          zip -r "${ZIP_NAME}" "${LIB_NAME}/"
-          tar -czf "${TAR_NAME}" "${LIB_NAME}/"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
-          echo "tar_name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
-          echo "Packaged: ${ZIP_NAME} ($(du -sh /tmp/pkg/${ZIP_NAME} | cut -f1))"
-          echo "Packaged: ${TAR_NAME} ($(du -sh /tmp/pkg/${TAR_NAME} | cut -f1))"
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel
 
-      - name: Build CMake install package (Linux x86_64)
-        id: cmake_x64
+      - name: Build user wheels
+        run: cibuildwheel --output-dir dist
+        env:
+          CIBW_BUILD: ${{ matrix.cibw_build }}
+          CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs_linux }}
+          CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs_windows }}
+          CIBW_ARCHS_MACOS: ${{ matrix.cibw_archs_macos }}
+          CIBW_BEFORE_ALL: "pip install maturin cffi"
+          CIBW_BEFORE_ALL_WINDOWS: "pip install maturin cffi"
+          CIBW_BEFORE_ALL_MACOS: "pip install maturin cffi && rustup target add x86_64-apple-darwin aarch64-apple-darwin"
+          CIBW_BEFORE_BUILD: "python -m pip install cffi && python -c \"import shutil, pathlib; d=pathlib.Path('{project}/src/opensynaptic/utils/c/bin'); [f.unlink() for f in d.glob('*') if f.is_file()]\" && python {project}/src/opensynaptic/utils/c/build_native.py"
+          CIBW_ENVIRONMENT: "OPENSYNAPTIC_REQUIRE_RSCORE=1 CARGO_TARGET_DIR=target/rscore MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
+          CIBW_ENVIRONMENT_MACOS: "OPENSYNAPTIC_REQUIRE_RSCORE=1 CARGO_TARGET_DIR=target/rscore MACOSX_DEPLOYMENT_TARGET=10.12 MATURIN_PEP517_ARGS='--bindings pyo3 --features python-module'"
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+
+      - name: Verify wheel contents
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
-          VER="${{ needs.verify-version.outputs.version }}"
-          LIB_NAME="OSynaptic-RX"
-          CMAKE_NAME="${LIB_NAME}-${VER}-cmake-linux-x86_64.tar.gz"
+          set -euo pipefail
+          WHEEL="$(ls dist/opensynaptic-*-${{ matrix.smoke_wheel_tag }}-*.whl | head -n 1 || true)"
+          if [[ -z "$WHEEL" ]]; then
+            echo "::error::No wheel found for wheel content check (tag: ${{ matrix.smoke_wheel_tag }})"
+            exit 1
+          fi
+          echo "=== Wheel contents: $WHEEL ==="
+          python -m zipfile -l "$WHEEL"
 
-          cmake -S . -B /tmp/cmake_build_x64 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/tmp/cmake_install_x64 \
-            -DOSRX_BUILD_EXAMPLES=OFF \
-            -DOSRX_BUILD_TESTS=OFF
-          cmake --build /tmp/cmake_build_x64 --parallel
-          cmake --install /tmp/cmake_build_x64 --prefix /tmp/cmake_install_x64
+          # ── Pre-install .so symbol check (inside wheel, before runtime) ──
+          echo "=== Pre-install: extract and inspect .so from wheel ==="
+          DIAG_DIR="${RUNNER_TEMP}/wheel-diag"
+          rm -rf "$DIAG_DIR"
+          mkdir -p "$DIAG_DIR"
+          python -m zipfile -e "$WHEEL" "$DIAG_DIR"
+          find "$DIAG_DIR" -name '*.so' -type f | while read -r so_file; do
+            REL_PATH="${so_file#$DIAG_DIR/}"
+            echo "--- $REL_PATH ---"
+            file "$so_file" 2>/dev/null || true
+            echo "  nm -D os_*/PyInit:"
+            nm -D "$so_file" 2>/dev/null | grep -E 'os_b62|os_crc|os_xor|os_derive|os_cmd|PyInit' || echo "  (none)"
+            echo "  readelf -Ws os_*/PyInit:"
+            readelf -Ws "$so_file" 2>/dev/null | grep -E 'os_b62|os_crc|os_xor|os_derive|os_cmd|PyInit' || echo "  (none)"
+            echo "  Total .dynsym count: $(readelf -Ws "$so_file" 2>/dev/null | wc -l)"
+          done
+          rm -rf "$DIAG_DIR"
+          echo "=== End pre-install .so check ==="
 
-          cd /tmp && tar -czf "${CMAKE_NAME}" cmake_install_x64/
-          echo "cmake_x64_name=${CMAKE_NAME}" >> "$GITHUB_OUTPUT"
-          echo "Packaged: ${CMAKE_NAME}"
+          echo "=== Checking required native files ==="
+          MISSING=0
+          # Rust extension – the primary carrier of C ABI symbols (os_b62_encode_i64, os_crc8, …)
+          # REQUIRED: must be present for the package to function.
+          if ! python -m zipfile -l "$WHEEL" | grep -q "opensynaptic_rscore/opensynaptic_rscore"; then
+            echo "::error::opensynaptic_rscore/opensynaptic_rscore extension missing from wheel $WHEEL"
+            MISSING=1
+          fi
+          # Standalone C libraries compiled by build_native.py are an optional optimisation.
+          # The Rust extension already exports the same ABI symbols (os_b62_encode_i64, os_crc8, …)
+          # so the smoke test will pass even when these files are absent.
+          # On Linux they are stripped by auditwheel repair (it only retains Python-extension .so files);
+          # on macOS (no repair step) they are present.  Treat absence as a warning, not a hard failure.
+          if ! python -m zipfile -l "$WHEEL" | grep -q "utils/c/bin/os_base62"; then
+            echo "::warning::os_base62 standalone library absent from wheel (Rust extension provides ABI fallback)"
+          fi
+          if ! python -m zipfile -l "$WHEEL" | grep -q "utils/c/bin/os_security"; then
+            echo "::warning::os_security standalone library absent from wheel (Rust extension provides ABI fallback)"
+          fi
+          if [[ "$MISSING" -ne 0 ]]; then
+            exit 1
+          fi
+          echo "All required native files present."
 
-      - name: Build CMake install package (Linux aarch64 cross)
-        id: cmake_arm64
+      - name: Smoke-test built wheel (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-          VER="${{ needs.verify-version.outputs.version }}"
-          LIB_NAME="OSynaptic-RX"
-          CMAKE_NAME="${LIB_NAME}-${VER}-cmake-linux-aarch64.tar.gz"
+          set -euo pipefail
+          VERIFY_ROOT="${RUNNER_TEMP}/opensynaptic-wheel-smoke"
+          WHEEL="$(ls dist/opensynaptic-*-${{ matrix.smoke_wheel_tag }}-*.whl | head -n 1 || true)"
 
-          cat > /tmp/aarch64-toolchain.cmake << 'EOF'
-          set(CMAKE_SYSTEM_NAME Linux)
-          set(CMAKE_SYSTEM_PROCESSOR aarch64)
-          set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
-          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          if [[ -z "$WHEEL" ]]; then
+            echo "::error::No wheel found for smoke tag ${{ matrix.smoke_wheel_tag }}"
+            exit 1
+          fi
+
+          rm -rf "$VERIFY_ROOT"
+          mkdir -p "$VERIFY_ROOT/home" "$VERIFY_ROOT/work"
+          export HOME="$VERIFY_ROOT/home"
+          export PYTHONNOUSERSITE=1
+          export OPENSYNAPTIC_AUTO_BUILD_NATIVE=0
+          export OPENSYNAPTIC_AUTO_NATIVE_REPAIR=0
+          export OPENSYNAPTIC_NATIVE_DEBUG=1
+          unset PYTHONPATH || true
+
+          python -m venv "$VERIFY_ROOT/venv"
+          "$VERIFY_ROOT/venv/bin/pip" install --upgrade pip
+          INSTALL_LOG="$VERIFY_ROOT/pip-install.log"
+          if ! "$VERIFY_ROOT/venv/bin/pip" install "$WHEEL" >"$INSTALL_LOG" 2>&1; then
+            cat "$INSTALL_LOG"
+            if grep -q "not a supported wheel on this platform" "$INSTALL_LOG"; then
+              echo "::notice::Skipping runtime smoke test for cross-arch wheel $WHEEL on the current runner/interpreter."
+              exit 0
+            fi
+            echo "::error::Wheel install failed for $WHEEL"
+            exit 1
+          fi
+          cat "$INSTALL_LOG"
+
+          pushd "$VERIFY_ROOT/work"
+
+          # ── Extensive diagnostic block ──────────────────────────────────
+          echo "================================================================"
+          echo "=== DIAGNOSTIC START ($(uname -m) / $(uname -s)) ==="
+          echo "================================================================"
+
+          # 1. Platform info
+          echo "--- uname -a ---"
+          uname -a
+          echo "--- ldd --version ---"
+          ldd --version 2>&1 | head -3 || true
+          echo "--- ld --version ---"
+          ld --version 2>&1 | head -3 || true
+          echo "--- python arch ---"
+          "$VERIFY_ROOT/venv/bin/python" -c "import struct, sys, platform; print(f'bits={struct.calcsize(\"P\")*8} platform={platform.machine()} sys.platform={sys.platform}')"
+
+          # 2. Locate the rscore .so
+          echo "--- Locating rscore .so ---"
+          RSCORE_PKG_DIR=$("$VERIFY_ROOT/venv/bin/python" -c "
+          import opensynaptic_rscore, pathlib, os
+          pkg_dir = pathlib.Path(opensynaptic_rscore.__file__).parent
+          print(pkg_dir)
+          print('__file__:', opensynaptic_rscore.__file__)
+          for f in sorted(pkg_dir.iterdir()):
+              sz = f.stat().st_size if f.is_file() else 0
+              print(f'  {f.name:50s}  {sz:>10d}')
+          " 2>&1 || true)
+          echo "$RSCORE_PKG_DIR"
+
+          RSCORE_SO_DIR=$(echo "$RSCORE_PKG_DIR" | head -1)
+
+          # 3. For every .so in the package, run detailed analysis
+          if [[ -n "$RSCORE_SO_DIR" && -d "$RSCORE_SO_DIR" ]]; then
+            for so in "$RSCORE_SO_DIR"/*.so; do
+              [ -f "$so" ] || continue
+              echo ""
+              echo "======== Analyzing: $(basename "$so") ========"
+
+              echo "--- file ---"
+              file "$so" || true
+
+              echo "--- size ---"
+              ls -lh "$so" || true
+
+              echo "--- readelf -h (ELF header) ---"
+              readelf -h "$so" 2>/dev/null | grep -E 'Class|Machine|Type' || true
+
+              echo "--- readelf -d (dynamic section) ---"
+              readelf -d "$so" 2>/dev/null | head -40 || true
+
+              echo "--- nm -D (all dynamic symbols, first 80) ---"
+              nm -D "$so" 2>/dev/null | head -80 || echo "(nm -D failed)"
+
+              echo "--- nm -D: os_* symbols ---"
+              nm -D "$so" 2>/dev/null | grep -i '^[0-9a-f].*\bos_' || echo "(no os_* symbols in .dynsym)"
+
+              echo "--- nm -D: PyInit symbols ---"
+              nm -D "$so" 2>/dev/null | grep -i 'PyInit' || echo "(no PyInit symbols in .dynsym)"
+
+              echo "--- readelf -Ws (full .dynsym, os_/PyInit lines) ---"
+              readelf -Ws "$so" 2>/dev/null | grep -E 'os_b62|os_crc|os_xor|os_derive|os_cmd|os_parse|os_auto|os_compress|os_fusion|os_rscore|os_node|os_pipeline|os_worker|os_standardize|os_handshake|os_transporter|PyInit' || echo "(no matching .dynsym entries)"
+
+              echo "--- readelf -s (full .symtab, os_/PyInit lines) ---"
+              readelf -s "$so" 2>/dev/null | grep -E 'os_b62|os_crc|os_xor|os_derive|PyInit' || echo "(no matching .symtab entries — normal if strip=true)"
+
+              echo "--- objdump -p (NEEDED/SONAME) ---"
+              objdump -p "$so" 2>/dev/null | grep -E 'NEEDED|SONAME|Version' | head -20 || true
+
+              echo "--- strings: version-script markers ---"
+              strings "$so" 2>/dev/null | grep -i 'os_abi_exports\|version.script\|pyo3_init' | head -5 || echo "(none)"
+
+              echo "--- ldd ---"
+              ldd "$so" 2>/dev/null | head -20 || true
+            done
+          else
+            echo "::warning::Could not locate rscore package directory"
+          fi
+
+          # 4. Verify installed native_loader.py content
+          echo ""
+          echo "======== Installed native_loader.py (first 30 lines) ========"
+          INSTALLED_NL=$("$VERIFY_ROOT/venv/bin/python" -c "
+import sys, io
+_o = sys.stdout; sys.stdout = io.StringIO()
+from opensynaptic.utils.c import native_loader
+sys.stdout = _o
+print(native_loader.__file__)
+" 2>/dev/null || true)
+          echo "Module file: $INSTALLED_NL"
+          if [[ -n "$INSTALLED_NL" && -f "$INSTALLED_NL" ]]; then
+            head -30 "$INSTALLED_NL"
+            echo "--- dir(native_loader) ---"
+            "$VERIFY_ROOT/venv/bin/python" -c "
+import sys, io
+_o = sys.stdout; sys.stdout = io.StringIO()
+from opensynaptic.utils.c import native_loader
+sys.stdout = _o
+attrs = [a for a in dir(native_loader) if not a.startswith('__')]
+print(attrs)
+print('_NATIVE_DEBUG =', getattr(native_loader, '_NATIVE_DEBUG', 'MISSING'))
+print('_LIB_CACHE =', native_loader._LIB_CACHE)
+" 2>&1 || true
+          fi
+
+          # 5. Self-contained Python loading trace (no native_loader imports)
+          echo ""
+          echo "======== Python loading trace (self-contained) ========"
+          "$VERIFY_ROOT/venv/bin/python" <<'PYEOF'
+          import sys, os, ctypes, importlib, sysconfig, struct, traceback
+          from pathlib import Path
+
+          print(f'Python: {sys.version}')
+          print(f'Pointer size: {struct.calcsize("P")*8} bits')
+          print(f'sys.platform: {sys.platform}')
+
+          # ── Step A: import rscore and find the .so ──
+          try:
+              import opensynaptic_rscore
+              print(f'opensynaptic_rscore.__file__ = {opensynaptic_rscore.__file__}')
+          except Exception as e:
+              print(f'FAILED to import opensynaptic_rscore: {e}')
+              sys.exit(1)
+
+          pkg_dir = Path(opensynaptic_rscore.__file__).parent
+          so_files = sorted(pkg_dir.glob('*.so'))
+          print(f'Package dir: {pkg_dir}')
+          print(f'.so files found: {[f.name for f in so_files]}')
+
+          # ── Step B: direct ctypes load test ──
+          SYMBOLS_BASE62 = ('os_b62_encode_i64', 'os_b62_decode_i64')
+          SYMBOLS_SECURITY = ('os_crc8', 'os_crc16_ccitt', 'os_xor_payload', 'os_derive_session_key')
+          ALL_SYMBOLS = SYMBOLS_BASE62 + SYMBOLS_SECURITY + (
+              'os_crc16_ccitt_pub', 'os_cmd_is_data', 'os_rscore_version',
+              'os_worker_create_v1', 'os_worker_submit_v1', 'os_worker_destroy_v1',
+              'PyInit_opensynaptic_rscore',
+          )
+
+          for so_path in so_files:
+              print(f'\n--- Direct ctypes test: {so_path.name} ---')
+              for loader_name, loader_cls in [('PyDLL', ctypes.PyDLL), ('CDLL', ctypes.CDLL)]:
+                  print(f'  {loader_name}("{so_path}"):')
+                  try:
+                      lib = loader_cls(str(so_path))
+                      print(f'    LOADED OK (handle={lib._handle:#x})')
+                      for sym in ALL_SYMBOLS:
+                          try:
+                              found = hasattr(lib, sym)
+                              if found:
+                                  addr = ctypes.cast(getattr(lib, sym), ctypes.c_void_p).value
+                                  print(f'    {sym}: FOUND @ 0x{addr:x}')
+                              else:
+                                  print(f'    {sym}: NOT FOUND (hasattr=False)')
+                          except Exception as e2:
+                              print(f'    {sym}: ERROR: {e2}')
+                  except Exception as e:
+                      print(f'    LOAD FAILED: {e}')
+                      traceback.print_exc()
+
+          # ── Step C: reproduce _try_load_rs_from_python_extension logic ──
+          print('\n--- Reproducing _try_load_rs_from_python_extension logic ---')
+          candidate_paths = []
+          seen_paths = set()
+          suffixes = {'.pyd', '.so', '.dylib', '.dll'}
+
+          def add_candidate(path_value, source_label):
+              if not path_value:
+                  return
+              try:
+                  c = Path(path_value)
+              except Exception:
+                  return
+              if c.suffix.lower() not in suffixes:
+                  return
+              key = str(c.resolve()) if c.exists() else str(c)
+              if key in seen_paths:
+                  return
+              seen_paths.add(key)
+              candidate_paths.append((c, source_label))
+
+          # Source 1: importlib.metadata RECORD
+          try:
+              from importlib import metadata as md
+              for dist_name in ('opensynaptic-rscore', 'opensynaptic_rscore', 'opensynaptic'):
+                  try:
+                      dist = md.distribution(dist_name)
+                      files = list(getattr(dist, 'files', None) or [])
+                      print(f'  dist({dist_name!r}): {len(files)} RECORD files')
+                      for rel in files:
+                          name = Path(str(rel)).name.lower()
+                          if name.startswith('_native') or name.startswith('opensynaptic_rscore'):
+                              if Path(name).suffix.lower() in suffixes:
+                                  loc = dist.locate_file(rel)
+                                  print(f'    candidate from RECORD: {rel} -> {loc} (exists={Path(str(loc)).exists()})')
+                                  add_candidate(loc, f'RECORD:{dist_name}')
+                  except md.PackageNotFoundError:
+                      print(f'  dist({dist_name!r}): not found')
+                  except Exception as e:
+                      print(f'  dist({dist_name!r}): ERROR {e}')
+          except Exception as e:
+              print(f'  importlib.metadata error: {e}')
+
+          # Source 2: site-packages glob
+          print(f'  Site-packages search:')
+          site_roots = []
+          for key in ('platlib', 'purelib'):
+              try:
+                  root = sysconfig.get_paths().get(key)
+              except Exception:
+                  root = None
+              if root:
+                  site_roots.append(Path(root))
+          try:
+              import site
+              site_roots.extend(Path(p) for p in site.getsitepackages())
+          except Exception:
+              pass
+          seen_roots = set()
+          for root in site_roots:
+              rk = str(root)
+              if rk in seen_roots or not root.exists():
+                  continue
+              seen_roots.add(rk)
+              patterns = ('opensynaptic_rscore*', 'opensynaptic_rscore/**/*',
+                          'opensynaptic_rscore/**/*.so', 'opensynaptic_rscore/**/*.pyd')
+              for pat in patterns:
+                  for c in root.glob(pat):
+                      if c.is_file() and c.suffix.lower() in suffixes:
+                          print(f'    glob {pat} in {root}: found {c.name}')
+                          add_candidate(c, f'glob:{root}')
+
+          # Source 3: direct import
+          try:
+              mod = importlib.import_module('opensynaptic_rscore.opensynaptic_rscore')
+              mf = getattr(mod, '__file__', None)
+              print(f'  opensynaptic_rscore.opensynaptic_rscore.__file__ = {mf}')
+              if mf:
+                  add_candidate(mf, 'submodule-import')
+          except Exception as e:
+              print(f'  submodule import failed: {e}')
+
+          print(f'\nTotal candidates: {len(candidate_paths)}')
+          for c, src in candidate_paths:
+              print(f'  [{src}] {c} (exists={c.exists()})')
+
+          # Test each candidate with required symbols
+          for base, syms in [('os_base62', SYMBOLS_BASE62), ('os_security', SYMBOLS_SECURITY)]:
+              print(f'\n--- Testing {base} (needs {syms}) ---')
+              for c, src in candidate_paths:
+                  if not c.exists():
+                      print(f'  {c.name} [{src}]: does not exist, skip')
+                      continue
+                  for lname, lcls in [('PyDLL', ctypes.PyDLL), ('CDLL', ctypes.CDLL)]:
+                      try:
+                          lib = lcls(str(c))
+                          results = {s: hasattr(lib, s) for s in syms}
+                          all_ok = all(results.values())
+                          print(f'  {c.name} [{src}] {lname}: results={results} => {"PASS" if all_ok else "FAIL"}')
+                          if all_ok:
+                              print(f'    Would return this lib for {base}!')
+                      except Exception as e:
+                          print(f'  {c.name} [{src}] {lname}: LOAD FAILED: {e}')
+
+          # ── Step D: call the REAL has_native_library ──
+          print('\n--- Calling real has_native_library ---')
+          try:
+              from opensynaptic.utils.c import native_loader as _nl
+              from opensynaptic.utils.c.native_loader import has_native_library, load_native_library
+              print(f'  _NATIVE_DEBUG = {getattr(_nl, "_NATIVE_DEBUG", "MISSING")}')
+              print(f'  _LIB_CACHE (before) = {_nl._LIB_CACHE}')
+              if _nl._LIB_CACHE:
+                  print('  WARNING: _LIB_CACHE was pre-populated during import chain!')
+                  print('  Clearing cache to test fresh lookup...')
+                  _nl._LIB_CACHE.clear()
+
+              # D.1 — Call _try_load_rs_from_python_extension directly
+              print('\n  --- D.1: Direct _try_load_rs_from_python_extension call ---')
+              for base in ('os_base62', 'os_security'):
+                  try:
+                      direct = _nl._try_load_rs_from_python_extension(base)
+                      print(f'  _try_load_rs({base!r}) => {direct}')
+                      if direct is not None:
+                          print(f'    handle={direct._handle:#x}')
+                          for sym in ('os_b62_encode_i64', 'os_b62_decode_i64', 'os_crc8', 'os_crc16_ccitt', 'os_crc16_ccitt_pub'):
+                              print(f'    hasattr({sym}) = {hasattr(direct, sym)}')
+                  except Exception as e:
+                      print(f'  _try_load_rs({base!r}) raised: {e}')
+                      traceback.print_exc()
+
+              # D.2 — Call load_native_library
+              print('\n  --- D.2: load_native_library ---')
+              _nl._LIB_CACHE.clear()  # ensure fresh
+              for base in ('os_base62', 'os_security'):
+                  try:
+                      lib = load_native_library(base)
+                      print(f'  load_native_library({base!r}) => {lib}')
+                      if lib is not None:
+                          print(f'    lib._handle = {lib._handle:#x}')
+                  except Exception as e:
+                      print(f'  load_native_library({base!r}) raised: {e}')
+                      traceback.print_exc()
+              print(f'  _LIB_CACHE (after) = {dict((k, type(v).__name__ if v else None) for k, v in _nl._LIB_CACHE.items())}')
+
+              # D.3 — Monkey-patch and retry with inline tracing
+              print('\n  --- D.3: Monkey-patched _try_load_rs with tracing ---')
+              _nl._LIB_CACHE.clear()
+              _orig_try = _nl._try_load_rs_from_python_extension
+              def _traced_try(base_name):
+                  import ctypes as _ct
+                  req = _nl._rs_extension_symbol_requirements(base_name)
+                  print(f'    [trace] base_name={base_name!r} required_symbols={req}')
+                  if req is None:
+                      print('    [trace] => None (no requirements)')
+                      return None
+                  # Manually enumerate candidates
+                  candidates = []
+                  try:
+                      from importlib import metadata as _md
+                      for dn in ('opensynaptic-rscore', 'opensynaptic_rscore', 'opensynaptic'):
+                          try:
+                              d = _md.distribution(dn)
+                              for rp in list(getattr(d, 'files', None) or []):
+                                  nm = Path(str(rp)).name.lower()
+                                  if (nm.startswith('_native') or nm.startswith('opensynaptic_rscore')) and Path(nm).suffix.lower() in {'.so', '.pyd', '.dylib', '.dll'}:
+                                      loc = d.locate_file(rp)
+                                      candidates.append((str(loc), f'RECORD:{dn}'))
+                          except Exception:
+                              pass
+                  except Exception:
+                      pass
+                  # Try import
+                  try:
+                      import importlib as _il
+                      m = _il.import_module('opensynaptic_rscore.opensynaptic_rscore')
+                      mf = getattr(m, '__file__', None)
+                      if mf:
+                          candidates.append((mf, 'import'))
+                  except Exception:
+                      pass
+                  print(f'    [trace] candidates={candidates}')
+                  for cpath, src in candidates:
+                      p = Path(cpath)
+                      if not p.exists():
+                          print(f'    [trace] {src}: {cpath} does not exist')
+                          continue
+                      for ln, lc in [('PyDLL', _ct.PyDLL), ('CDLL', _ct.CDLL)]:
+                          try:
+                              lib = lc(str(p))
+                              res = {s: hasattr(lib, s) for s in req}
+                              ok = all(res.values())
+                              print(f'    [trace] {src} {ln}: {res} => {"OK" if ok else "FAIL"}')
+                              if ok:
+                                  return lib
+                          except Exception as ex:
+                              print(f'    [trace] {src} {ln}: EXCEPTION {ex}')
+                  # Also call original to compare
+                  orig_result = _orig_try(base_name)
+                  print(f'    [trace] original _try_load_rs({base_name!r}) => {orig_result}')
+                  return orig_result
+              _nl._try_load_rs_from_python_extension = _traced_try
+              for base in ('os_base62', 'os_security'):
+                  _nl._LIB_CACHE.pop(base, None)
+                  lib = load_native_library(base)
+                  print(f'  load_native_library({base!r}) [patched] => {lib}')
+              _nl._try_load_rs_from_python_extension = _orig_try
+          except Exception as e:
+              print(f'  Failed to import has_native_library: {e}')
+              traceback.print_exc()
+
+          # ── Step E: check native_dirs ──
+          print('\n--- native_dirs ---')
+          try:
+              from opensynaptic.utils.c.native_loader import _native_dirs
+              for d in _native_dirs():
+                  exists = d.exists()
+                  contents = list(d.iterdir()) if exists else []
+                  print(f'  {d}: exists={exists} files={[f.name for f in contents[:10]]}')
+          except Exception as e:
+              # Fallback: compute manually
+              nl_file = Path(__import__('opensynaptic.utils.c.native_loader', fromlist=['_native_dirs']).__file__)
+              root = nl_file.parent
+              for d in [root / 'bin', root]:
+                  exists = d.exists()
+                  contents = list(d.iterdir()) if exists else []
+                  print(f'  {d}: exists={exists} files={[f.name for f in contents[:10]]}')
+          PYEOF
+                    echo "Python loading trace exit code: $?"
+
+                    echo "================================================================"
+                    echo "=== DIAGNOSTIC END ==="
+                    echo "================================================================"
+                    # ── End diagnostic block ────────────────────────────────────────
+
+                    PYCODE="from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; from opensynaptic.utils.c.native_loader import has_native_library; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); print('HAS_OS_BASE62=' + str(has_native_library('os_base62'))); print('HAS_OS_SECURITY=' + str(has_native_library('os_security'))); assert 'site-packages' in opensynaptic.__file__; assert 'site-packages' in opensynaptic_rscore.__file__; assert os.path.exists(get_lib_path('OS_Symbols.json')); assert has_native_library('os_base62'); assert has_native_library('os_security')"
+                    "$VERIFY_ROOT/venv/bin/python" -c "$PYCODE"
+                    "$VERIFY_ROOT/venv/bin/os-node" repair-config --json
+                    "$VERIFY_ROOT/venv/bin/os-node" --no-wizard snapshot
+                    popd
+
+      - name: Smoke-test built wheel (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $verifyRoot = Join-Path $env:RUNNER_TEMP 'opensynaptic-wheel-smoke'
+          $homeDir = Join-Path $verifyRoot 'home'
+          $workDir = Join-Path $verifyRoot 'work'
+          $venvDir = Join-Path $verifyRoot 'venv'
+          $wheel = Get-ChildItem "dist/opensynaptic-*-${{ matrix.smoke_wheel_tag }}-*.whl" | Select-Object -First 1
+          if (-not $wheel) {
+            throw 'No compatible wheel found for smoke test.'
+          }
+
+          Remove-Item $verifyRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $homeDir,$workDir -Force | Out-Null
+
+          python -m venv $venvDir
+          & "$venvDir\Scripts\python.exe" -m pip install --upgrade pip
+          & "$venvDir\Scripts\python.exe" -m pip install $wheel.FullName
+
+          $oldUserProfile = $env:USERPROFILE
+          $oldHome = $env:HOME
+          $oldUsersite = $env:PYTHONNOUSERSITE
+          $oldAutoBuild = $env:OPENSYNAPTIC_AUTO_BUILD_NATIVE
+          $oldAutoRepair = $env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR
+          $hadPythonPath = Test-Path Env:PYTHONPATH
+          if ($hadPythonPath) {
+            $oldPythonPath = $env:PYTHONPATH
+          }
+
+          $env:USERPROFILE = $homeDir
+          $env:HOME = $homeDir
+          $env:PYTHONNOUSERSITE = '1'
+          $env:OPENSYNAPTIC_AUTO_BUILD_NATIVE = '0'
+          $env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR = '0'
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+
+          Push-Location $workDir
+          try {
+            $code = "from importlib.metadata import version; import os, opensynaptic, opensynaptic_rscore; from opensynaptic.utils.paths import get_lib_path, get_user_config_path; from opensynaptic.utils.c.native_loader import has_native_library; print('PKG_VERSION=' + version('opensynaptic')); print('PKG_FILE=' + opensynaptic.__file__); print('RSCORE_FILE=' + opensynaptic_rscore.__file__); print('USER_CONFIG=' + get_user_config_path()); print('LIB_OS_SYMBOLS=' + get_lib_path('OS_Symbols.json')); print('HAS_OS_BASE62=' + str(has_native_library('os_base62'))); print('HAS_OS_SECURITY=' + str(has_native_library('os_security'))); assert 'site-packages' in opensynaptic.__file__.lower(); assert 'site-packages' in opensynaptic_rscore.__file__.lower(); assert os.path.exists(get_lib_path('OS_Symbols.json')); assert has_native_library('os_base62'); assert has_native_library('os_security')"
+            & "$venvDir\Scripts\python.exe" -c $code
+            & "$venvDir\Scripts\os-node.exe" repair-config --json
+            & "$venvDir\Scripts\os-node.exe" --no-wizard snapshot
+          }
+          finally {
+            Pop-Location
+            $env:USERPROFILE = $oldUserProfile
+            $env:HOME = $oldHome
+            if ($null -ne $oldUsersite) {
+              $env:PYTHONNOUSERSITE = $oldUsersite
+            }
+            else {
+              Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
+            }
+            if ($null -ne $oldAutoBuild) {
+              $env:OPENSYNAPTIC_AUTO_BUILD_NATIVE = $oldAutoBuild
+            }
+            else {
+              Remove-Item Env:OPENSYNAPTIC_AUTO_BUILD_NATIVE -ErrorAction SilentlyContinue
+            }
+            if ($null -ne $oldAutoRepair) {
+              $env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR = $oldAutoRepair
+            }
+            else {
+              Remove-Item Env:OPENSYNAPTIC_AUTO_NATIVE_REPAIR -ErrorAction SilentlyContinue
+            }
+            if ($hadPythonPath) {
+              $env:PYTHONPATH = $oldPythonPath
+            }
+            else {
+              Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Upload user wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-user-wheel-${{ matrix.artifact_suffix }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build-user-sdist:
+    name: build-user-sdist
+    runs-on: ubuntu-latest
+    needs: [resolve-release]
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve-release.outputs.source_ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build tools
+        run: pip install maturin build
+
+      - name: Build user sdist
+        run: python -m build --sdist --outdir ${{ github.workspace }}/dist
+
+      - name: Verify sdist exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la "${{ github.workspace }}/dist/"
+          EXPECTED="${{ github.workspace }}/dist/opensynaptic-${{ needs.resolve-release.outputs.version }}.tar.gz"
+          if [[ ! -f "$EXPECTED" ]]; then
+            echo "::error::Expected sdist not found: $EXPECTED"
+            exit 1
+          fi
+
+      - name: Upload user sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-user-sdist
+          path: ${{ github.workspace }}/dist/*.tar.gz
+          if-no-files-found: error
+
+  verify-user-distributions:
+    name: verify-user-distributions
+    runs-on: ubuntu-latest
+    needs: [resolve-release, build-user-wheel, build-user-sdist]
+    steps:
+      - name: Download user wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-user-wheel-*
+          path: release-user-wheels
+          merge-multiple: true
+
+      - name: Download user sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-user-sdist
+          path: release-user-sdist
+
+      - name: Verify user distribution boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la release-user-wheels
+          ls -la release-user-sdist
+
+          if ls release-user-wheels/opensynaptic_rscore-* 1>/dev/null 2>&1; then
+            echo "::error::Unexpected opensynaptic_rscore artifact found in wheel release set"
+            exit 1
+          fi
+
+          if ! ls release-user-wheels/opensynaptic-*.whl 1>/dev/null 2>&1; then
+            echo "::error::No opensynaptic wheel artifacts found"
+            exit 1
+          fi
+
+          if ! ls release-user-sdist/opensynaptic-${{ needs.resolve-release.outputs.version }}.tar.gz 1>/dev/null 2>&1; then
+            echo "::error::Expected user sdist missing"
+            exit 1
+          fi
+
+          mkdir -p release-pypi-dist
+          cp release-user-wheels/*.whl release-pypi-dist/
+          cp release-user-sdist/*.tar.gz release-pypi-dist/
+
+      - name: Check PyPI distributions with twine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade twine pkginfo packaging readme-renderer
+          twine check release-pypi-dist/*
+
+      - name: Upload combined PyPI distribution set
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-pypi-dist
+          path: release-pypi-dist/*
+          if-no-files-found: error
+
+  build-developer-bundle:
+    name: build-developer-bundle
+    runs-on: ubuntu-latest
+    needs: [resolve-release]
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve-release.outputs.source_ref }}
+
+      - name: Build developer bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve-release.outputs.version }}"
+          ROOT="devkit/opensynaptic-dev-${VERSION}"
+          mkdir -p "$ROOT"
+
+          required_dirs=(src scripts tests libraries)
+          required_files=(README.md README.zh.md LICENSE pyproject.toml Config.json run-main.cmd run-main.sh)
+
+          for path in "${required_dirs[@]}"; do
+            if [[ ! -d "$path" ]]; then
+              echo "::error::Missing required developer bundle directory: $path"
+              exit 1
+            fi
+            cp -a "$path" "$ROOT/"
+          done
+
+          if [[ ! -d .github/workflows ]]; then
+            echo "::error::Missing required workflow directory: .github/workflows"
+            exit 1
+          fi
+          cp -a .github/workflows "$ROOT/.github_workflows"
+
+          for path in "${required_files[@]}"; do
+            if [[ ! -f "$path" ]]; then
+              echo "::error::Missing required developer bundle file: $path"
+              exit 1
+            fi
+          done
+          cp -a "${required_files[@]}" "$ROOT/"
+
+          optional_paths=(
+            docs
+            OpenSynaptic_Wiki
+            CODE_OF_CONDUCT.md
+            CONTRIBUTING.md
+            SECURITY.md
+            RELEASE_NOTES_v${VERSION}.md
+            TEST_REPORT_v${VERSION}.md
+            TEST_COVERAGE.md
+            GITHUB_PAGES_GUIDE.md
+            MIGRATION_REPORT.md
+            TRANSLATION_QA_REPORT.md
+            WIKI_OPTIMIZATION_REPORT.md
+            index.html
+            _config.yml
+          )
+
+          for path in "${optional_paths[@]}"; do
+            if [[ -e "$path" ]]; then
+              cp -a "$path" "$ROOT/"
+            fi
+          done
+
+          cat > "$ROOT/DEVKIT_README.txt" << 'EOF'
+          OpenSynaptic Developer Bundle
+
+          This bundle is for developers who want source-level debugging, local CI reproduction,
+          plugin development, and running validation scripts.
+
+          Quick start:
+          1. Create and activate a Python 3.11+ environment
+          2. Install editable with dev extras: pip install -e .[dev]
+          3. Run scripts in scripts/ and tests in tests/
+
+          Notes:
+          - User wheels are the direct-install runtime artifacts for supported platforms.
+          - The user sdist is for intentional source builds and downstream packagers.
+          - This developer bundle is for source workflows and must not be uploaded to PyPI.
+          - Documentation-like paths are included when present in the tagged source; some releases keep long-form docs in the Wiki/site repository instead of a top-level docs/ directory.
           EOF
 
-          cmake -S . -B /tmp/cmake_build_arm64 \
-            -DCMAKE_TOOLCHAIN_FILE=/tmp/aarch64-toolchain.cmake \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/tmp/cmake_install_arm64 \
-            -DOSRX_BUILD_EXAMPLES=OFF \
-            -DOSRX_BUILD_TESTS=OFF
-          cmake --build /tmp/cmake_build_arm64 --parallel
-          cmake --install /tmp/cmake_build_arm64 --prefix /tmp/cmake_install_arm64
+          mkdir -p dev-dist
+          tar -czf "dev-dist/opensynaptic-dev-${VERSION}.tar.gz" -C devkit "opensynaptic-dev-${VERSION}"
+          sha256sum "dev-dist/opensynaptic-dev-${VERSION}.tar.gz" > "dev-dist/opensynaptic-dev-${VERSION}.tar.gz.sha256"
 
-          cd /tmp && tar -czf "${CMAKE_NAME}" cmake_install_arm64/
-          echo "cmake_arm64_name=${CMAKE_NAME}" >> "$GITHUB_OUTPUT"
-          echo "Packaged: ${CMAKE_NAME}"
-
-      - name: Upload zip artifact
+      - name: Upload developer bundle artifact
         uses: actions/upload-artifact@v4
         with:
-          name: arduino-zip
-          path: /tmp/pkg/${{ steps.pack.outputs.zip_name }}
-          retention-days: 7
+          name: release-developer-bundle
+          path: dev-dist/*
+          if-no-files-found: error
 
-      - name: Upload tarball artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-tarball
-          path: /tmp/pkg/${{ steps.pack.outputs.tar_name }}
-          retention-days: 7
-
-      - name: Upload cmake x64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cmake-x64
-          path: /tmp/${{ steps.cmake_x64.outputs.cmake_x64_name }}
-          retention-days: 7
-
-      - name: Upload cmake aarch64 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cmake-arm64
-          path: /tmp/${{ steps.cmake_arm64.outputs.cmake_arm64_name }}
-          retention-days: 7
-
-  # -------------------------------------------------------------------------
-  # 4. Create GitHub Release and upload assets
-  # -------------------------------------------------------------------------
-  release:
-    name: Create GitHub Release
-    needs: [verify-version, package]
-    runs-on: ubuntu-22.04
+  github-release:
+    name: github-release
+    needs: [resolve-release, verify-user-distributions, build-developer-bundle]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.resolve-release.outputs.source_ref }}
 
-      - name: Download zip artifact
+      - name: Download release PyPI artifacts
         uses: actions/download-artifact@v4
         with:
-          name: arduino-zip
-          path: dist/
+          name: release-pypi-dist
+          path: release-assets/pypi-dist
 
-      - name: Download tarball artifact
+      - name: Download developer bundle artifacts
         uses: actions/download-artifact@v4
         with:
-          name: source-tarball
-          path: dist/
+          name: release-developer-bundle
+          path: release-assets/developer-bundle
 
-      - name: Download cmake x64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: cmake-x64
-          path: dist/
-
-      - name: Download cmake aarch64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: cmake-arm64
-          path: dist/
-
-      - name: Extract release notes for this version
-        id: notes
+      - name: Build GitHub Release body
+        shell: bash
         run: |
-          VER="${{ needs.verify-version.outputs.version }}"
-          NOTES=$(awk "/^## v${VER}/{found=1; next} found && /^## v/{exit} found{print}" \
-                  RELEASE_NOTES_v${VER}.md 2>/dev/null \
-                  || awk "/^## v${VER}/{found=1; next} found && /^## v/{exit} found{print}" \
-                  RELEASE_NOTES_v1.0.0.md 2>/dev/null \
-                  || echo "See RELEASE_NOTES for details.")
-          echo "$NOTES" > /tmp/release_notes.md
-          cat /tmp/release_notes.md
+          set -euo pipefail
+          NOTES="${{ needs.resolve-release.outputs.release_notes }}"
+          cat > RELEASE_BODY.md <<EOF
+          ## Release Asset Boundaries
 
-      - name: Create GitHub Release
+          - User wheels: prebuilt runtime packages for direct pip install on the supported release platforms.
+          - User sdist: source distribution for downstream packagers or intentional source builds; requires local Rust/C build toolchains.
+          - Developer bundle: source/debug/CI reproduction archive; not a PyPI artifact and not intended for end-user installation.
+
+          ---
+
+          EOF
+          cat "$NOTES" >> RELEASE_BODY.md
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "OSynaptic-RX v${{ needs.verify-version.outputs.version }}"
-          body_path: /tmp/release_notes.md
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          tag_name: ${{ needs.resolve-release.outputs.tag }}
+          name: OpenSynaptic ${{ needs.resolve-release.outputs.tag }}
+          body_path: RELEASE_BODY.md
+          prerelease: ${{ needs.resolve-release.outputs.prerelease == 'true' }}
+          overwrite_files: true
           files: |
-            dist/${{ needs.package.outputs.zip_name }}
-            dist/${{ needs.package.outputs.tar_name }}
-            dist/${{ needs.package.outputs.cmake_x64_name }}
-            dist/${{ needs.package.outputs.cmake_arm64_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            release-assets/pypi-dist/*
+            release-assets/developer-bundle/*
+
+  publish-testpypi:
+    name: publish-testpypi
+    needs: [resolve-release, verify-user-distributions, github-release]
+    runs-on: ubuntu-latest
+    environment: testpypi
+    continue-on-error: true
+    steps:
+      - name: Download release PyPI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-pypi-dist
+          path: release-pypi-dist
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          user: __token__
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          packages-dir: release-pypi-dist
+          skip-existing: true
+          verbose: true
+
+  publish-pypi:
+    name: publish-pypi
+    needs: [resolve-release, verify-user-distributions, github-release]
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - name: Download release PyPI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-pypi-dist
+          path: release-pypi-dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: release-pypi-dist
+          skip-existing: true
+          verbose: true
