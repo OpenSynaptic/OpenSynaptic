@@ -226,6 +226,10 @@ class WebUserService:
     def _is_auth_enabled(self):
         return bool(self._settings.get('auth_enabled', False))
 
+    def _get_db_manager(self):
+        """Return the DatabaseManager if available, otherwise None."""
+        return getattr(self.node, 'db_manager', None) if self.node else None
+
     def _allowed_write_prefixes(self):
         raw = self._settings.get('writable_config_prefixes', self.DEFAULT_WRITE_PREFIXES)
         if not isinstance(raw, list):

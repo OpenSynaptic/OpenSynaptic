@@ -191,6 +191,118 @@ def create_handler(service):
                 output = service.collect_all_display_sections(fmt=fmt)
                 service._json_response(self, 200, output)
                 return
+            # ------------------------------------------------------------------
+            # Data query API (/api/data/*)
+            # ------------------------------------------------------------------
+            if path == '/api/data/packets':
+                ok, code, err = service._authorize_request(self.headers, write=False, management=False)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                db = service._get_db_manager()
+                if db is None:
+                    service._json_response(self, 503, {'ok': False, 'error': 'database not configured'})
+                    return
+                device_id = str((query.get('device_id', [''])[0] or '')).strip() or None
+                status = str((query.get('status', [''])[0] or '')).strip() or None
+                since_raw = str((query.get('since', [''])[0] or '')).strip()
+                until_raw = str((query.get('until', [''])[0] or '')).strip()
+                limit_raw = str((query.get('limit', ['50'])[0] or '50')).strip()
+                offset_raw = str((query.get('offset', ['0'])[0] or '0')).strip()
+                try:
+                    since = int(since_raw) if since_raw else None
+                except Exception:
+                    since = None
+                try:
+                    until = int(until_raw) if until_raw else None
+                except Exception:
+                    until = None
+                try:
+                    limit = max(1, min(500, int(limit_raw or '50')))
+                except Exception:
+                    limit = 50
+                try:
+                    offset = max(0, int(offset_raw or '0'))
+                except Exception:
+                    offset = 0
+                result = db.query_packets(device_id=device_id, since=since, until=until, status=status, limit=limit, offset=offset)
+                service._json_response(self, 200, {'ok': True, **result})
+                return
+            if path.startswith('/api/data/packets/'):
+                ok, code, err = service._authorize_request(self.headers, write=False, management=False)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                db = service._get_db_manager()
+                if db is None:
+                    service._json_response(self, 503, {'ok': False, 'error': 'database not configured'})
+                    return
+                packet_uuid = path.split('/api/data/packets/', 1)[1].strip('/')
+                if not packet_uuid:
+                    service._json_response(self, 400, {'ok': False, 'error': 'packet_uuid is required'})
+                    return
+                result = db.query_packet(packet_uuid)
+                if result is None:
+                    service._json_response(self, 404, {'ok': False, 'error': 'packet not found', 'packet_uuid': packet_uuid})
+                    return
+                service._json_response(self, 200, {'ok': True, **result})
+                return
+            if path == '/api/data/sensors':
+                ok, code, err = service._authorize_request(self.headers, write=False, management=False)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                db = service._get_db_manager()
+                if db is None:
+                    service._json_response(self, 503, {'ok': False, 'error': 'database not configured'})
+                    return
+                device_id = str((query.get('device_id', [''])[0] or '')).strip() or None
+                sensor_id = str((query.get('sensor_id', [''])[0] or '')).strip() or None
+                since_raw = str((query.get('since', [''])[0] or '')).strip()
+                until_raw = str((query.get('until', [''])[0] or '')).strip()
+                limit_raw = str((query.get('limit', ['50'])[0] or '50')).strip()
+                offset_raw = str((query.get('offset', ['0'])[0] or '0')).strip()
+                try:
+                    since = int(since_raw) if since_raw else None
+                except Exception:
+                    since = None
+                try:
+                    until = int(until_raw) if until_raw else None
+                except Exception:
+                    until = None
+                try:
+                    limit = max(1, min(500, int(limit_raw or '50')))
+                except Exception:
+                    limit = 50
+                try:
+                    offset = max(0, int(offset_raw or '0'))
+                except Exception:
+                    offset = 0
+                result = db.query_sensors(device_id=device_id, sensor_id=sensor_id, since=since, until=until, limit=limit, offset=offset)
+                service._json_response(self, 200, {'ok': True, **result})
+                return
+            if path == '/api/data/devices':
+                ok, code, err = service._authorize_request(self.headers, write=False, management=False)
+                if not ok:
+                    service._json_response(self, code, {'error': err})
+                    return
+                db = service._get_db_manager()
+                if db is None:
+                    service._json_response(self, 503, {'ok': False, 'error': 'database not configured'})
+                    return
+                limit_raw = str((query.get('limit', ['100'])[0] or '100')).strip()
+                offset_raw = str((query.get('offset', ['0'])[0] or '0')).strip()
+                try:
+                    limit = max(1, min(500, int(limit_raw or '100')))
+                except Exception:
+                    limit = 100
+                try:
+                    offset = max(0, int(offset_raw or '0'))
+                except Exception:
+                    offset = 0
+                result = db.query_devices(limit=limit, offset=offset)
+                service._json_response(self, 200, {'ok': True, **result})
+                return
             service._json_response(self, 404, {'error': 'not found'})
 
         def do_POST(self):
