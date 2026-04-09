@@ -1,9 +1,3 @@
----
-layout: default
-title: OpenSynaptic - 高性能物联网协议栈
-language: zh
----
-
 # OpenSynaptic
 
 **2-N-2 高性能物联网协议栈** — 将传感器读数标准化为 UCUM 单位，通过 Base62 编码压缩，包装成二进制数据包，并通过可插拔的传输器分发（TCP / UDP / UART / LoRa / MQTT / CAN）。
