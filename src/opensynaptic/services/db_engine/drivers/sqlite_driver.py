@@ -12,7 +12,7 @@ class SQLiteDriver(BaseDBDriver):
     def connect(self):
         if self.conn is None:
             db_path = self.config.get('path') or self.config.get('database') or ':memory:'
-            self.conn = sqlite3.connect(db_path)
+            self.conn = sqlite3.connect(db_path, check_same_thread=False)
         return self.conn
 
     def ensure_schema(self):

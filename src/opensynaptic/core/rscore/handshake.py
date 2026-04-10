@@ -2,6 +2,7 @@ from opensynaptic.core.common.base import BaseOSHandshakeManager, NativeLibraryU
 from opensynaptic.core.rscore._ffi_proxy import RsFFIProxyBase
 import json
 import struct
+import threading
 import time
 
 
@@ -56,6 +57,8 @@ class OSHandshakeManager(BaseOSHandshakeManager, RsFFIProxyBase):
         self.last_server_time = 0
         self._seq_counter = 0
         self._secure_sessions = {}
+        self._ts_watermark = {}  # per-AID last-accepted timestamp for anti-replay
+        self._ts_lock = threading.Lock()
         try:
             rs_codec = self._init_ffi('RsOSHandshakeManager', 'Rust handshake manager is unavailable', *args, **kwargs)
             self._rs_cmd_is_data = getattr(rs_codec, "cmd_is_data", None)
@@ -364,4 +367,28 @@ class OSHandshakeManager(BaseOSHandshakeManager, RsFFIProxyBase):
         except Exception:
             self.last_server_time = 0
         return self.last_server_time
+
+    def check_timestamp(self, aid, ts):
+        """Evaluate ts against the per-AID last-accepted-timestamp watermark.
+
+        Returns 'ACCEPT', 'REPLAY', or 'OUT_OF_ORDER'.
+        The first call for a given AID is always ACCEPT and initialises the watermark.
+        Strictly increasing timestamps advance the watermark and return ACCEPT.
+        Equal timestamps return REPLAY; decreasing timestamps return OUT_OF_ORDER.
+        """
+        key = str(aid) if aid is not None else ''
+        if not key:
+            return 'ACCEPT'
+        ts_int = int(ts or 0)
+        with self._ts_lock:
+            last = self._ts_watermark.get(key)
+            if last is None:
+                self._ts_watermark[key] = ts_int
+                return 'ACCEPT'
+            if ts_int > last:
+                self._ts_watermark[key] = ts_int
+                return 'ACCEPT'
+            if ts_int == last:
+                return 'REPLAY'
+            return 'OUT_OF_ORDER'
 

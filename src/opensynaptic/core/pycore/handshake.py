@@ -80,6 +80,7 @@ class OSHandshakeManager:
         # 角色：'duplex' | 'tx_only' | 'rx_only'
         _role = str(device_role or 'duplex').lower().strip()
         self.device_role = _role if _role in ('duplex', 'tx_only', 'rx_only') else 'duplex'
+        self._ts_watermark = {}  # per-AID last-accepted timestamp for anti-replay
         self._load_secure_sessions()
 
     def _session_to_json(self, session):
@@ -252,6 +253,28 @@ class OSHandshakeManager:
         except Exception:
             pass
 
+    def check_timestamp(self, aid, ts):
+        """Evaluate ts against the per-AID last-accepted-timestamp watermark.
+
+        Returns 'ACCEPT', 'REPLAY', or 'OUT_OF_ORDER'.
+        The first call for a given AID is always ACCEPT and initialises the watermark.
+        Strictly increasing timestamps advance the watermark and return ACCEPT.
+        Equal timestamps return REPLAY; decreasing timestamps return OUT_OF_ORDER.
+        """
+        key, _ = self._normalize_aid(aid)
+        ts_int = int(ts or 0)
+        with self._lock:
+            last = self._ts_watermark.get(key)
+            if last is None:
+                self._ts_watermark[key] = ts_int
+                return 'ACCEPT'
+            if ts_int > last:
+                self._ts_watermark[key] = ts_int
+                return 'ACCEPT'
+            if ts_int == last:
+                return 'REPLAY'
+            return 'OUT_OF_ORDER'
+
     def is_secure_data_cmd(self, cmd):
         return cmd in CMD.SECURE_DATA_CMDS
 
@@ -340,7 +363,13 @@ class OSHandshakeManager:
                 seq = struct.unpack('>H', packet[1:3])[0]
             if len(packet) > 3:
                 meta_raw = packet[3:].decode('utf-8', errors='ignore')
-                meta = json.loads(meta_raw) if meta_raw.strip() else {}
+                if meta_raw.strip():
+                    try:
+                        parsed = json.loads(meta_raw)
+                        if isinstance(parsed, dict):
+                            meta = parsed
+                    except Exception:
+                        meta = {}
         except Exception as e:
             os_log.err('HND', 'PARSE', e, {'stage': 'id_request'})
         assigned_id = None
