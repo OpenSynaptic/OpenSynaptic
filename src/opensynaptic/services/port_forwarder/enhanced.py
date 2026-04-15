@@ -815,6 +815,12 @@ class EnhancedPortForwarder(PortForwarder):
                 'total': len(self.middlewares),
             }
 
+    def get_stats(self) -> dict:
+        with self._lock:
+            result = dict(self.stats)
+            result['features_enabled'] = dict(self.features_enabled)
+            return result
+
     def handle_stats(self, args, **kwargs) -> dict:
         with self._lock:
-            return {'statistics': dict(self.stats)}
+            return {'statistics': self.get_stats()}
