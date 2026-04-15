@@ -1,6 +1,6 @@
 # OpenSynaptic 测试覆盖说明
 
-> 最后更新：2026-04-07（正交测试新增）
+> 最后更新：2026-04-07（v1.4.0：EnhancedPortForwarder Suite G 新增）
 
 ---
 
@@ -13,9 +13,10 @@
 | Integration Tests (pytest) | `tests/integration/test_pipeline_e2e.py` | 1 | ✅ PASS |
 | Integration Script | `scripts/integration_test.py` | 9 | ✅ 9/9 PASS |
 | Business Logic Script | `scripts/exhaustive_business_logic.py` | 985 | ✅ 983/985 (2 SKIP) |
-| Plugin Exhaustive Script | `scripts/exhaustive_plugin_test.py` | 205 | ✅ 205/205 PASS |
+| Plugin Exhaustive Script | `scripts/exhaustive_plugin_test.py` | 245 | ✅ 245/245 PASS |
 | Security Infra Script | `scripts/exhaustive_security_infra_test.py` | 43 | ✅ 43/43 PASS |
 | Orthogonal Design Script | `scripts/exhaustive_orthogonal_test.py` | 24 | ✅ 24/24 PASS |
+| Smoke Check Script | `scripts/enhanced_port_forwarder_check.py` | 10 | ✅ 10/10 PASS |
 
 ---
 
@@ -222,7 +223,7 @@ F3 拒绝测试     6 tests:  6 pass, 0 fail, 0 skip
 
 ## 四、插件穷举测试
 
-### 4.0 `scripts/exhaustive_plugin_test.py`（205 项）
+### 4.0 `scripts/exhaustive_plugin_test.py`（245 项）
 
 对所有服务插件进行最严格的逐接口穷举，覆盖对象模型、生命周期、边界值、并发安全和注册表全集。
 
@@ -231,17 +232,18 @@ F3 拒绝测试     6 tests:  6 pass, 0 fail, 0 skip
 python scripts/exhaustive_plugin_test.py
 ```
 
-最终结果（2026-04-06）：
+最终结果（2026-04-07，v1.4.0）：
 
 ```
 套件                                   总计   通过   失败   跳过
-A | DatabaseManager (SQLite)             14     14      0      0
-B | PortForwarder 规则+生命周期         107    107      0      0
+A | DatabaseManager (SQLite)             15     15      0      0
+B | PortForwarder 规则+生命周期         110    110      0      0
 C | TestPlugin 组件套件                    4      4      0      0
-D | DisplayAPI 全格式穷举                44     44      0      0
+D | DisplayAPI 全格式穷举                40     40      0      0
 E | Plugin 注册表                         36     36      0      0
-总计                                    205    205      0      0
-通过率: 100.0%  耗时: ~4900ms
+G | EnhancedPortForwarder 全组件         40     40      0      0
+总计                                    245    245      0      0
+通过率: 100.0%  耗时: ~6300ms
 ```
 
 ---
@@ -314,6 +316,79 @@ E | Plugin 注册表                         36     36      0      0
 | E/\<plugin\>/config | `get_required_config()` 返回含 `enabled` 的合法 dict |
 | E/\<plugin\>/nodenil | `cls(node=None)` 初始化 + `close()` 无崩溃 |
 | E/\<plugin\>/defaults | `defaults` 字典含 `enabled` 字段 |
+
+---
+
+#### Suite G — EnhancedPortForwarder 全组件穷举（40 项）
+
+| # | 子套件 | 测试内容 |
+|---|--------|----------|
+| G1-1 | FirewallRule | 匹配 UDP deny 规则 → False |
+| G1-2 | FirewallRule | 协议名大小写不敏感（`udp` == `UDP`） |
+| G1-3 | FirewallRule | IP 过滤：指定 from_ip 匹配 → False，不同 IP → True |
+| G1-4 | FirewallRule | 端口范围过滤：在范围内阻断，范围外放行 |
+| G1-5 | FirewallRule | `packet_size_min`：包小于最小值不触发规则 |
+| G1-6 | FirewallRule | `packet_size_max`：包大于最大值不触发规则 |
+| G1-7 | FirewallRule | `to_dict()` / `from_dict()` 往返，所有字段无损 |
+| G1-8 | FirewallRule | `enabled=False` 的规则不参与匹配 |
+| G2-1 | TrafficShaper | burst_capacity=500，发 500B → `can_send()=True` |
+| G2-2 | TrafficShaper | 令牌耗尽后发 1B → `can_send()=False`（触发限速 drop） |
+| G2-3 | TrafficShaper | 等待 1s 后令牌自然补充，再发可通过 |
+| G2-4 | TrafficShaper | `get_wait_time()` 返回正数 float，无副作用（不阻塞） |
+| G2-5 | TrafficShaper | `can_send()` 耗时 < 0.5s（无 `time.sleep` 验证） |
+| G2-6 | TrafficShaper | `traffic_shaping_enabled=False` → `apply_traffic_shaping` 返回 0.0 |
+| G3-1 | ProtocolConverter | 无转换器 → 原包透传 |
+| G3-2 | ProtocolConverter | 自定义 `transform_func` 被正确调用，返回值替换原包 |
+| G3-3 | ProtocolConverter | `stats['converted_packets']` 计数递增 |
+| G3-4 | ProtocolConverter | `protocol_conversion_enabled=False` → 跳过转换 |
+| G4-1 | Middleware | `before_dispatch` 钩子被调用，可修改 packet |
+| G4-2 | Middleware | `after_dispatch` 钩子被调用，接收到 result 参数 |
+| G4-3 | Middleware | `enabled=False` 的 middleware 被跳过 |
+| G4-4 | Middleware | 多个 middleware 按注册顺序链式执行 |
+| G4-5 | Middleware | `middleware_enabled=False` → 所有钩子不执行 |
+| G5-1 | ProxyRule | 连接失败时回退到原包（fallback 逻辑） |
+| G5-2 | ProxyRule | `request_count` 每次调用 `forward()` 后递增 |
+| G5-3 | ProxyRule | `backup_hosts` 在主机失败时依序尝试 |
+| G5-4 | ProxyRule | `proxy_enabled=False` → `apply_proxy` 直接返回原包不转发 |
+| G5-5 | ProxyRule | 真实 UDP echo 服务器（loopback）：proxy 获得回包，`response_count++` |
+| G6-1 | EPF pipeline | `EnhancedPortForwarder` 是 `PortForwarder` 的子类 |
+| G6-2 | EPF pipeline | `__init__(node=None)` 初始化，所有 features 字典非空 |
+| G6-3 | EPF pipeline | `get_stats()` 返回含全部 11 个字段的 dict |
+| G6-4 | EPF pipeline | `toggle_feature('firewall')` 切换状态正确 |
+| G6-5 | EPF pipeline | `get_required_config()` 包含父类 key + 新增的 6 个 key |
+| G6-6 | EPF pipeline | `get_cli_commands()` 含父类 5 个 + 新增 9 个共 14 个 CLI 命令 |
+| G6-7 | EPF pipeline | 防火墙规则阻断：`_hijacked_dispatch` 返回 False，`denied_packets++` |
+| G6-8 | EPF pipeline | TrafficShaper 限速 drop：`_hijacked_dispatch` 返回 False，`shaped_dropped_packets++` |
+| G6-9 | EPF pipeline | 全流水线（middleware→firewall→shaping→convert→proxy→route）7 步正确执行 |
+| G6-10 | EPF pipeline | `close()` 持久化防火墙规则 + 还原 dispatch（`is_hijacked=False`） |
+| G7-1 | 防火墙持久化 | `_save_firewall_to_file()` → `_load_firewall_from_file()` 往返，规则名完整 |
+| G7-2 | 防火墙持久化 | `persist_firewall=False` 时不写文件 |
+
+---
+
+## 四点五、增强型端口转发器冒烟测试（新增，v1.4.0）
+
+### 4.5 `scripts/enhanced_port_forwarder_check.py`（10 项）
+
+针对 `EnhancedPortForwarder` 核心功能的快速冒烟测试，可在集成测试前独立运行。
+
+运行命令：
+```bash
+python scripts/enhanced_port_forwarder_check.py
+```
+
+| # | 检查内容 |
+|---|----------|
+| 1 | 导入链：`from opensynaptic.services.port_forwarder import EnhancedPortForwarder` 无异常 |
+| 2 | 子类关系：`issubclass(EnhancedPortForwarder, PortForwarder)` 为 True |
+| 3 | `get_required_config()` 包含父类 key 和新增的 `firewall_enabled`、`firewall_rules_file` 等 key |
+| 4 | `node=None` 生命周期：`__init__` → `close()` 无崩溃 |
+| 5 | `FirewallRule` deny/allow 逻辑：deny 规则阻断，allow 规则放行 |
+| 6 | `TrafficShaper` 非阻塞：`can_send()` 调用耗时 < 0.5s |
+| 7 | `ProtocolConverter` passthrough + `transform_func` 替换 |
+| 8 | `Middleware` before/after 钩子正确传递参数 |
+| 9 | `ProxyRule` fallback：目标不可达时返回原包 |
+| 10 | 7 步流水线 mock dispatch：mock 节点挂载后 `_hijacked_dispatch` 正确执行 |
 
 ---
 

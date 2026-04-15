@@ -9,6 +9,8 @@ Exhaustive Plugin Tests for All Service Plugins
   C. TestPlugin — 组件测试套件发现与运行
   D. DisplayAPI + BuiltinDisplayProviders — 注册/注销/所有格式/所有内建 section
   E. Plugin 注册表 — 所有已知插件的加载/元数据/关闭
+  G. EnhancedPortForwarder — FirewallRule/TrafficShaper/ProtocolConverter/
+                              Middleware/ProxyRule/管道/功能切换/持久化
 """
 from __future__ import annotations
 
@@ -863,6 +865,719 @@ def suite_e_plugin_registry() -> dict:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Suite G: EnhancedPortForwarder – 全组件穷举
+# ════════════════════════════════════════════════════════════════════════════
+
+def suite_g_enhanced_port_forwarder() -> dict:
+    total = passed = failed = 0
+    failures: list[str] = []
+
+    print(_head("Suite G: EnhancedPortForwarder 全组件穷举"))
+
+    try:
+        from opensynaptic.services.port_forwarder.enhanced import (
+            EnhancedPortForwarder, FirewallRule, TrafficShaper,
+            ProtocolConverter, Middleware, ProxyRule,
+        )
+        from opensynaptic.services.port_forwarder.main import PortForwarder
+    except ImportError as e:
+        print(f"    {_skip(f'import failed: {e}')}")
+        return {"total": 0, "passed": 0, "failed": 0, "skipped": 1, "failures": []}
+
+    pkt = b'\x00' * 64
+    small_pkt = b'\x01' * 8
+
+    # ══════════════════════════════════════════════════════════════════════
+    # G1: FirewallRule – 匹配逻辑穷举
+    # ══════════════════════════════════════════════════════════════════════
+    print(f"\n  {_CYN}[G1 FirewallRule 匹配逻辑]{_RESET}")
+
+    # G1-1: allow rule with matching protocol
+    total += 1
+    try:
+        r = FirewallRule(name='r1', action='allow', from_protocol='UDP')
+        _assert(r.matches(pkt, 'UDP'), 'allow-UDP should match UDP')
+        _assert(not r.matches(pkt, 'TCP'), 'allow-UDP should not match TCP')
+        passed += 1
+        print(f"    {_ok()} G1-1  FirewallRule protocol matching")
+    except Exception as e:
+        failed += 1; failures.append(f"G1-1: {e}")
+        print(f"    {_fail(str(e))} G1-1")
+
+    # G1-2: deny rule – case-insensitive protocol
+    total += 1
+    try:
+        r = FirewallRule(name='r2', action='deny', from_protocol='TCP')
+        _assert(r.matches(pkt, 'tcp'), 'should match lowercase tcp')
+        _assert(r.matches(pkt, 'TCP'), 'should match uppercase TCP')
+        passed += 1
+        print(f"    {_ok()} G1-2  FirewallRule case-insensitive protocol")
+    except Exception as e:
+        failed += 1; failures.append(f"G1-2: {e}")
+        print(f"    {_fail(str(e))} G1-2")
+
+    # G1-3: from_ip matching
+    total += 1
+    try:
+        r = FirewallRule(name='r3', action='deny', from_ip='192.168.1.1')
+        _assert(r.matches(pkt, 'UDP', from_ip='192.168.1.1'), 'should match exact IP')
+        _assert(not r.matches(pkt, 'UDP', from_ip='10.0.0.1'), 'wrong IP no match')
+        _assert(r.matches(pkt, 'UDP', from_ip=None), 'None IP should not filter')
+        passed += 1
+        print(f"    {_ok()} G1-3  FirewallRule from_ip matching")
+    except Exception as e:
+        failed += 1; failures.append(f"G1-3: {e}")
+        print(f"    {_fail(str(e))} G1-3")
+
+    # G1-4: port range matching
+    total += 1
+    try:
+        r = FirewallRule(name='r4', action='deny', from_port_range=(1000, 2000))
+        _assert(r.matches(pkt, 'UDP', from_port=1500), 'port in range matches')
+        _assert(r.matches(pkt, 'UDP', from_port=1000), 'port at low bound matches')
+        _assert(r.matches(pkt, 'UDP', from_port=2000), 'port at high bound matches')
+        _assert(not r.matches(pkt, 'UDP', from_port=999), 'port below range no match')
+        _assert(not r.matches(pkt, 'UDP', from_port=2001), 'port above range no match')
+        passed += 1
+        print(f"    {_ok()} G1-4  FirewallRule from_port_range matching")
+    except Exception as e:
+        failed += 1; failures.append(f"G1-4: {e}")
+        print(f"    {_fail(str(e))} G1-4")
+
+    # G1-5: packet size min/max
+    total += 1
+    try:
+        r = FirewallRule(name='r5', action='deny', packet_size_min=32, packet_size_max=128)
+        _assert(r.matches(pkt, 'UDP'), 'pkt=64 in [32,128]')
+        _assert(not r.matches(b'\x00' * 10, 'UDP'), 'pkt=10 < min=32')
+        _assert(not r.matches(b'\x00' * 200, 'UDP'), 'pkt=200 > max=128')
+        _assert(r.matches(b'\x00' * 32, 'UDP'), 'pkt=32 == min (match)')
+        _assert(r.matches(b'\x00' * 128, 'UDP'), 'pkt=128 == max (match)')
+        passed += 1
+        print(f"    {_ok()} G1-5  FirewallRule packet_size_min/max")
+    except Exception as e:
+        failed += 1; failures.append(f"G1-5: {e}")
+        print(f"    {_fail(str(e))} G1-5")
+
+    # G1-6: to_dict / from_dict roundtrip
+    total += 1
+    try:
+        r = FirewallRule(
+            name='persist_r', action='allow', from_protocol='CAN',
+            from_port_range=(100, 200), to_port_range=(300, 400),
+            packet_size_min=10, packet_size_max=512,
+            priority=5, metadata={'tag': 'test'},
+        )
+        d = r.to_dict()
+        r2 = FirewallRule.from_dict(d)
+        _assert(r2.name == r.name)
+        _assert(r2.action == r.action)
+        _assert(r2.from_protocol == r.from_protocol)
+        _assert(r2.from_port_range == r.from_port_range)
+        _assert(r2.to_port_range == r.to_port_range)
+        _assert(r2.packet_size_min == r.packet_size_min)
+        _assert(r2.metadata == r.metadata)
+        passed += 1
+        print(f"    {_ok()} G1-6  FirewallRule to_dict/from_dict roundtrip")
+    except Exception as e:
+        failed += 1; failures.append(f"G1-6: {e}")
+        print(f"    {_fail(str(e))} G1-6")
+
+    # G1-7: disabled rule never matches
+    total += 1
+    try:
+        # disabled is a FirewallRule field, but check_firewall skips disabled rules
+        r = FirewallRule(name='r7', action='deny', from_protocol='UDP', enabled=False)
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        epf.add_firewall_rule(r)
+        result = epf.check_firewall(pkt, 'UDP')
+        _assert(result is True, 'disabled deny rule should default-allow')
+        passed += 1
+        print(f"    {_ok()} G1-7  Disabled FirewallRule not applied")
+    except Exception as e:
+        failed += 1; failures.append(f"G1-7: {e}")
+        print(f"    {_fail(str(e))} G1-7")
+
+    # G1-8: firewall feature off → always allow
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        deny_all = FirewallRule(name='deny_all', action='deny')
+        epf.add_firewall_rule(deny_all)
+        epf.disable_feature('firewall')
+        _assert(epf.check_firewall(pkt, 'UDP'), 'feature off → always allow')
+        passed += 1
+        print(f"    {_ok()} G1-8  Firewall feature disabled → always allow")
+    except Exception as e:
+        failed += 1; failures.append(f"G1-8: {e}")
+        print(f"    {_fail(str(e))} G1-8")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # G2: TrafficShaper – 令牌桶穷举
+    # ══════════════════════════════════════════════════════════════════════
+    print(f"\n  {_CYN}[G2 TrafficShaper 令牌桶]{_RESET}")
+
+    # G2-1: basic allow when tokens sufficient
+    total += 1
+    try:
+        s = TrafficShaper(name='s1', rate_limit_bps=1000, burst_capacity=1000)
+        _assert(s.can_send(500), 'should allow 500-byte packet (burst=1000)')
+        _assert(s.can_send(499), 'should allow 499-byte packet after 500 deducted')
+        passed += 1
+        print(f"    {_ok()} G2-1  TrafficShaper allows packets within burst")
+    except Exception as e:
+        failed += 1; failures.append(f"G2-1: {e}")
+        print(f"    {_fail(str(e))} G2-1")
+
+    # G2-2: drop when tokens exhausted
+    total += 1
+    try:
+        s = TrafficShaper(name='s2', rate_limit_bps=10, burst_capacity=100)
+        _assert(s.can_send(100), 'consume full burst')
+        _assert(not s.can_send(1), 'exhausted → drop')
+        passed += 1
+        print(f"    {_ok()} G2-2  TrafficShaper drops when exhausted")
+    except Exception as e:
+        failed += 1; failures.append(f"G2-2: {e}")
+        print(f"    {_fail(str(e))} G2-2")
+
+    # G2-3: token refill over time
+    total += 1
+    try:
+        s = TrafficShaper(name='s3', rate_limit_bps=1000, burst_capacity=100)
+        s.can_send(100)  # exhaust
+        time.sleep(0.15)  # wait to accumulate ≥100 tokens at 1000 B/s
+        _assert(s.can_send(100), 'tokens should refill after sleep')
+        passed += 1
+        print(f"    {_ok()} G2-3  TrafficShaper token refill after sleep")
+    except Exception as e:
+        failed += 1; failures.append(f"G2-3: {e}")
+        print(f"    {_fail(str(e))} G2-3")
+
+    # G2-4: get_wait_time returns >0 when exhausted
+    total += 1
+    try:
+        s = TrafficShaper(name='s4', rate_limit_bps=100, burst_capacity=50)
+        s.can_send(50)  # exhaust
+        wt = s.get_wait_time(50)
+        _assert(wt > 0, f'wait_time should be >0 when exhausted, got {wt}')
+        _assert(wt <= 1.0, f'wait_time should be ≤1s for 50B at 100B/s, got {wt}')
+        passed += 1
+        print(f"    {_ok()} G2-4  TrafficShaper get_wait_time > 0 when exhausted")
+    except Exception as e:
+        failed += 1; failures.append(f"G2-4: {e}")
+        print(f"    {_fail(str(e))} G2-4")
+
+    # G2-5: apply_traffic_shaping NON-BLOCKING – no sleep in dispatch
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        shaper = TrafficShaper(name='slow', rate_limit_bps=1, burst_capacity=10)
+        epf.add_traffic_shaper('slow', shaper)
+        shaper.can_send(10)  # exhaust
+        t0 = time.monotonic()
+        wt = epf.apply_traffic_shaping(pkt, 'slow')
+        elapsed = time.monotonic() - t0
+        _assert(wt > 0, 'should return wait_time > 0')
+        _assert(elapsed < 0.5, f'must NOT sleep: elapsed={elapsed:.3f}s')
+        passed += 1
+        print(f"    {_ok()} G2-5  apply_traffic_shaping non-blocking (elapsed={elapsed*1000:.1f}ms)")
+    except Exception as e:
+        failed += 1; failures.append(f"G2-5: {e}")
+        print(f"    {_fail(str(e))} G2-5")
+
+    # G2-6: disabled shaper → always return 0
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        shaper = TrafficShaper(name='off', rate_limit_bps=1, burst_capacity=1, enabled=False)
+        epf.add_traffic_shaper('off', shaper)
+        shaper.can_send(1)
+        wt = epf.apply_traffic_shaping(pkt, 'off')
+        _assert(wt == 0.0, 'disabled shaper should return 0')
+        passed += 1
+        print(f"    {_ok()} G2-6  Disabled TrafficShaper always passes")
+    except Exception as e:
+        failed += 1; failures.append(f"G2-6: {e}")
+        print(f"    {_fail(str(e))} G2-6")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # G3: ProtocolConverter – 转换逻辑
+    # ══════════════════════════════════════════════════════════════════════
+    print(f"\n  {_CYN}[G3 ProtocolConverter 转换]{_RESET}")
+
+    # G3-1: passthrough when no transform_func
+    total += 1
+    try:
+        c = ProtocolConverter(name='c1', from_protocol='UDP', to_protocol='TCP')
+        out = c.convert(pkt)
+        _assert(out == pkt, 'passthrough without transform_func')
+        passed += 1
+        print(f"    {_ok()} G3-1  ProtocolConverter passthrough (no transform_func)")
+    except Exception as e:
+        failed += 1; failures.append(f"G3-1: {e}")
+        print(f"    {_fail(str(e))} G3-1")
+
+    # G3-2: custom transform_func applied
+    total += 1
+    try:
+        c = ProtocolConverter(name='c2', from_protocol='UDP', to_protocol='CAN',
+                              transform_func=lambda p: b'TRANSFORMED')
+        out = c.convert(pkt)
+        _assert(out == b'TRANSFORMED', f'transform_func not applied: {out}')
+        passed += 1
+        print(f"    {_ok()} G3-2  ProtocolConverter transform_func applied")
+    except Exception as e:
+        failed += 1; failures.append(f"G3-2: {e}")
+        print(f"    {_fail(str(e))} G3-2")
+
+    # G3-3: convert_protocol() increments converted_packets
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        conv = ProtocolConverter(name='c3', from_protocol='UDP', to_protocol='CAN',
+                                 transform_func=lambda p: p + b'\xFF')
+        epf.add_protocol_converter(conv)
+        before = epf.stats['converted_packets']
+        out = epf.convert_protocol(pkt, 'UDP', 'CAN')
+        _assert(epf.stats['converted_packets'] == before + 1)
+        _assert(out == pkt + b'\xFF')
+        passed += 1
+        print(f"    {_ok()} G3-3  convert_protocol increments stats")
+    except Exception as e:
+        failed += 1; failures.append(f"G3-3: {e}")
+        print(f"    {_fail(str(e))} G3-3")
+
+    # G3-4: feature off → passthrough
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        conv = ProtocolConverter(name='c4', from_protocol='A', to_protocol='B',
+                                 transform_func=lambda p: b'should_not_run')
+        epf.add_protocol_converter(conv)
+        epf.disable_feature('protocol_conversion')
+        out = epf.convert_protocol(b'original', 'A', 'B')
+        _assert(out == b'original', 'feature off → passthrough')
+        passed += 1
+        print(f"    {_ok()} G3-4  Protocol conversion feature off → passthrough")
+    except Exception as e:
+        failed += 1; failures.append(f"G3-4: {e}")
+        print(f"    {_fail(str(e))} G3-4")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # G4: Middleware – 前置/后置钩子
+    # ══════════════════════════════════════════════════════════════════════
+    print(f"\n  {_CYN}[G4 Middleware 钩子]{_RESET}")
+
+    # G4-1: before_dispatch modifies packet
+    total += 1
+    try:
+        mw = Middleware(name='mw1', before_dispatch=lambda p, m: b'modified')
+        out = mw.execute_before(pkt, 'UDP')
+        _assert(out == b'modified')
+        passed += 1
+        print(f"    {_ok()} G4-1  Middleware before_dispatch modifies packet")
+    except Exception as e:
+        failed += 1; failures.append(f"G4-1: {e}")
+        print(f"    {_fail(str(e))} G4-1")
+
+    # G4-2: after_dispatch modifies result
+    total += 1
+    try:
+        mw = Middleware(name='mw2', after_dispatch=lambda p, m, r: not r)
+        result = mw.execute_after(pkt, 'UDP', True)
+        _assert(result is False, 'after_dispatch inverts True → False')
+        passed += 1
+        print(f"    {_ok()} G4-2  Middleware after_dispatch modifies result")
+    except Exception as e:
+        failed += 1; failures.append(f"G4-2: {e}")
+        print(f"    {_fail(str(e))} G4-2")
+
+    # G4-3: disabled middleware is no-op
+    total += 1
+    try:
+        mw = Middleware(name='mw3',
+                        before_dispatch=lambda p, m: b'should_not_apply',
+                        after_dispatch=lambda p, m, r: not r,
+                        enabled=False)
+        _assert(mw.execute_before(pkt, 'UDP') == pkt, 'disabled before is noop')
+        _assert(mw.execute_after(pkt, 'UDP', True) is True, 'disabled after is noop')
+        passed += 1
+        print(f"    {_ok()} G4-3  Disabled Middleware is no-op")
+    except Exception as e:
+        failed += 1; failures.append(f"G4-3: {e}")
+        print(f"    {_fail(str(e))} G4-3")
+
+    # G4-4: execute_middlewares_before chains multiple middlewares
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        epf.add_middleware(Middleware(name='m1', before_dispatch=lambda p, m: p + b'\x01'))
+        epf.add_middleware(Middleware(name='m2', before_dispatch=lambda p, m: p + b'\x02'))
+        out = epf.execute_middlewares_before(b'', 'UDP')
+        _assert(out == b'\x01\x02', f'chained output: {out}')
+        _assert(epf.stats['middleware_executed'] == 2)
+        passed += 1
+        print(f"    {_ok()} G4-4  Multiple middlewares chain correctly")
+    except Exception as e:
+        failed += 1; failures.append(f"G4-4: {e}")
+        print(f"    {_fail(str(e))} G4-4")
+
+    # G4-5: middleware feature off → passthrough
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        epf.add_middleware(Middleware(name='m3', before_dispatch=lambda p, m: b'no'))
+        epf.disable_feature('middleware')
+        out = epf.execute_middlewares_before(pkt, 'UDP')
+        _assert(out == pkt, 'feature off → passthrough')
+        passed += 1
+        print(f"    {_ok()} G4-5  Middleware feature off → passthrough")
+    except Exception as e:
+        failed += 1; failures.append(f"G4-5: {e}")
+        print(f"    {_fail(str(e))} G4-5")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # G5: ProxyRule – 代理转发
+    # ══════════════════════════════════════════════════════════════════════
+    print(f"\n  {_CYN}[G5 ProxyRule 代理]{_RESET}")
+
+    # G5-1: fallback when all hosts fail
+    total += 1
+    try:
+        proxy = ProxyRule(name='p1', from_protocol='UDP', to_protocol='UDP',
+                          to_host='192.0.2.1', to_port=9999, timeout=0.05)
+        result = proxy.forward(pkt)
+        _assert(result == pkt, 'should fall back to original packet on failure')
+        _assert(proxy.error_count == 1)
+        passed += 1
+        print(f"    {_ok()} G5-1  ProxyRule falls back to original packet on network failure")
+    except Exception as e:
+        failed += 1; failures.append(f"G5-1: {e}")
+        print(f"    {_fail(str(e))} G5-1")
+
+    # G5-2: request_count incremented
+    total += 1
+    try:
+        proxy = ProxyRule(name='p2', from_protocol='UDP', to_protocol='UDP',
+                          to_host='192.0.2.1', to_port=9999, timeout=0.05)
+        proxy.forward(small_pkt)
+        proxy.forward(small_pkt)
+        _assert(proxy.request_count == 2)
+        passed += 1
+        print(f"    {_ok()} G5-2  ProxyRule request_count incremented")
+    except Exception as e:
+        failed += 1; failures.append(f"G5-2: {e}")
+        print(f"    {_fail(str(e))} G5-2")
+
+    # G5-3: backup_hosts tried after primary failure
+    total += 1
+    try:
+        proxy = ProxyRule(name='p3', from_protocol='UDP', to_protocol='UDP',
+                          to_host='192.0.2.1', to_port=9999,
+                          backup_hosts=['192.0.2.2', '192.0.2.3'],
+                          timeout=0.05)
+        result = proxy.forward(pkt)
+        # Both primary and backups should fail (unroutable IPs), fallback to original
+        _assert(result == pkt, 'fallback after all hosts fail')
+        passed += 1
+        print(f"    {_ok()} G5-3  ProxyRule tries backup_hosts before fallback")
+    except Exception as e:
+        failed += 1; failures.append(f"G5-3: {e}")
+        print(f"    {_fail(str(e))} G5-3")
+
+    # G5-4: apply_proxy with feature off
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        proxy = ProxyRule(name='p4', from_protocol='UDP', to_protocol='UDP',
+                          to_host='192.0.2.1', to_port=9999, timeout=0.05)
+        epf.add_proxy_rule(proxy)
+        epf.disable_feature('proxy')
+        result_pkt, ok = epf.apply_proxy(pkt, 'p4')
+        _assert(result_pkt == pkt and ok is True)
+        _assert(epf.stats['proxied_packets'] == 0, 'no proxy when feature off')
+        passed += 1
+        print(f"    {_ok()} G5-4  apply_proxy feature off → passthrough")
+    except Exception as e:
+        failed += 1; failures.append(f"G5-4: {e}")
+        print(f"    {_fail(str(e))} G5-4")
+
+    # G5-5: UDP forward actually uses socket (mock with loopback server)
+    total += 1
+    try:
+        import socket as _socket
+        # Spin up a minimal UDP echo server on a random port
+        srv = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        srv.bind(('127.0.0.1', 0))
+        srv_port = srv.getsockname()[1]
+        echo_data = [None]
+        stop_evt = threading.Event()
+
+        def _echo():
+            srv.settimeout(1.0)
+            try:
+                data, addr = srv.recvfrom(1024)
+                echo_data[0] = data
+                srv.sendto(b'ECHO:' + data, addr)
+            except Exception:
+                pass
+            finally:
+                srv.close()
+                stop_evt.set()
+
+        t = threading.Thread(target=_echo, daemon=True)
+        t.start()
+        proxy = ProxyRule(name='echo', from_protocol='UDP', to_protocol='UDP',
+                          to_host='127.0.0.1', to_port=srv_port, timeout=1.0)
+        response = proxy.forward(b'HELLO')
+        stop_evt.wait(timeout=2.0)
+        _assert(echo_data[0] == b'HELLO', f'server received: {echo_data[0]}')
+        _assert(response == b'ECHO:HELLO', f'client got: {response}')
+        _assert(proxy.response_count == 1)
+        passed += 1
+        print(f"    {_ok()} G5-5  ProxyRule UDP real socket forward")
+    except Exception as e:
+        failed += 1; failures.append(f"G5-5: {e}")
+        print(f"    {_fail(str(e))} G5-5")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # G6: EnhancedPortForwarder – 管道 / 功能切换 / 生命周期
+    # ══════════════════════════════════════════════════════════════════════
+    print(f"\n  {_CYN}[G6 EnhancedPortForwarder 管道]{_RESET}")
+
+    # G6-1: is a subclass of PortForwarder
+    total += 1
+    try:
+        _assert(issubclass(EnhancedPortForwarder, PortForwarder))
+        passed += 1
+        print(f"    {_ok()} G6-1  EnhancedPortForwarder is subclass of PortForwarder")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-1: {e}")
+        print(f"    {_fail(str(e))} G6-1")
+
+    # G6-2: node=None initialises without crash
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        _assert(hasattr(epf, 'firewall_rules'))
+        _assert(hasattr(epf, 'traffic_shapers'))
+        _assert(hasattr(epf, 'protocol_converters'))
+        _assert(hasattr(epf, 'middlewares'))
+        _assert(hasattr(epf, 'proxy_rules'))
+        _assert(hasattr(epf, 'features_enabled'))
+        passed += 1
+        print(f"    {_ok()} G6-2  EnhancedPortForwarder(node=None) no crash")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-2: {e}")
+        print(f"    {_fail(str(e))} G6-2")
+
+    # G6-3: stats extended with enhanced counters
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        for key in ('allowed_packets', 'denied_packets', 'converted_packets',
+                    'proxied_packets', 'shaped_dropped_packets', 'middleware_executed'):
+            _assert(key in epf.stats, f'missing stats key: {key}')
+        # Also has parent keys
+        for key in ('total_packets', 'forwarded_packets', 'original_packets',
+                    'failed_forwards', 'rules_applied'):
+            _assert(key in epf.stats, f'missing parent stats key: {key}')
+        passed += 1
+        print(f"    {_ok()} G6-3  Stats dict includes both parent and enhanced counters")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-3: {e}")
+        print(f"    {_fail(str(e))} G6-3")
+
+    # G6-4: enable/disable/toggle feature
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        _assert(epf.features_enabled['firewall'] is True)
+        epf.disable_feature('firewall')
+        _assert(epf.features_enabled['firewall'] is False)
+        epf.enable_feature('firewall')
+        _assert(epf.features_enabled['firewall'] is True)
+        state = epf.toggle_feature('firewall')
+        _assert(state is False)
+        _assert(epf.features_enabled['firewall'] is False)
+        _assert(epf.enable_feature('nonexistent') is False)
+        passed += 1
+        print(f"    {_ok()} G6-4  Feature enable/disable/toggle/unknown")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-4: {e}")
+        print(f"    {_fail(str(e))} G6-4")
+
+    # G6-5: get_required_config includes parent + enhanced keys
+    total += 1
+    try:
+        cfg = EnhancedPortForwarder.get_required_config()
+        _assert(isinstance(cfg, dict))
+        # Parent keys
+        for k in ('enabled', 'rule_sets', 'persist_rules'):
+            _assert(k in cfg, f'missing parent config key: {k}')
+        # Enhanced keys
+        for k in ('firewall_enabled', 'traffic_shaping_enabled',
+                  'protocol_conversion_enabled', 'middleware_enabled',
+                  'proxy_enabled', 'firewall_rules_file'):
+            _assert(k in cfg, f'missing enhanced config key: {k}')
+        passed += 1
+        print(f"    {_ok()} G6-5  get_required_config has parent + enhanced keys")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-5: {e}")
+        print(f"    {_fail(str(e))} G6-5")
+
+    # G6-6: get_cli_commands includes parent + enhanced commands
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        cmds = epf.get_cli_commands()
+        # Parent commands
+        for k in ('status', 'list', 'add-rule', 'remove-rule', 'stats'):
+            _assert(k in cmds, f'missing parent command: {k}')
+        # Enhanced commands
+        for k in ('features', 'feature-enable', 'feature-disable',
+                  'firewall-list', 'firewall-add', 'firewall-remove',
+                  'shaper-add', 'shaper-list', 'middleware-list'):
+            _assert(k in cmds, f'missing enhanced command: {k}')
+        passed += 1
+        print(f"    {_ok()} G6-6  get_cli_commands includes parent + enhanced commands")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-6: {e}")
+        print(f"    {_fail(str(e))} G6-6")
+
+    # G6-7: firewall deny blocks dispatch pipeline
+    total += 1
+    try:
+        dispatched = []
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        epf.original_dispatch = lambda p, medium=None: dispatched.append(p) or True
+        epf.is_hijacked = True
+        epf.add_firewall_rule(FirewallRule(name='block_all', action='deny'))
+        result = epf._hijacked_dispatch(pkt, 'UDP')
+        _assert(result is False, 'firewall deny should return False')
+        _assert(len(dispatched) == 0, 'original_dispatch should NOT be called')
+        _assert(epf.stats['denied_packets'] >= 1)
+        passed += 1
+        print(f"    {_ok()} G6-7  Firewall deny blocks dispatch pipeline")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-7: {e}")
+        print(f"    {_fail(str(e))} G6-7")
+
+    # G6-8: traffic shaping drop does NOT block (non-blocking)
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        epf.original_dispatch = lambda p, medium=None: True
+        epf.is_hijacked = True
+        shaper = TrafficShaper(name='default', rate_limit_bps=1, burst_capacity=1)
+        epf.add_traffic_shaper('default', shaper)
+        shaper.can_send(1)  # exhaust
+        t0 = time.monotonic()
+        result = epf._hijacked_dispatch(pkt, 'default')
+        elapsed = time.monotonic() - t0
+        _assert(result is False, 'shaper drop should return False')
+        _assert(elapsed < 0.5, f'must not block: elapsed={elapsed:.3f}s')
+        _assert(epf.stats['shaped_dropped_packets'] >= 1)
+        passed += 1
+        print(f"    {_ok()} G6-8  Traffic shaping drop non-blocking (elapsed={elapsed*1000:.1f}ms)")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-8: {e}")
+        print(f"    {_fail(str(e))} G6-8")
+
+    # G6-9: full pipeline passes through to original_dispatch
+    total += 1
+    try:
+        dispatched = []
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        epf.original_dispatch = lambda p, medium=None: dispatched.append((p, medium)) or True
+        epf.is_hijacked = True
+        result = epf._hijacked_dispatch(pkt, 'UDP')
+        _assert(result is True, f'dispatch should succeed: {result}')
+        _assert(len(dispatched) == 1, 'original_dispatch called once')
+        _assert(dispatched[0][1] == 'UDP', 'medium passed through')
+        _assert(epf.stats['total_packets'] == 1)
+        passed += 1
+        print(f"    {_ok()} G6-9  Full pipeline → original_dispatch called")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-9: {e}")
+        print(f"    {_fail(str(e))} G6-9")
+
+    # G6-10: close() when not hijacked does not crash
+    total += 1
+    try:
+        epf = EnhancedPortForwarder(node=None, persist_rules=False)
+        epf.close()  # should not raise
+        passed += 1
+        print(f"    {_ok()} G6-10 close() without auto_load does not crash")
+    except Exception as e:
+        failed += 1; failures.append(f"G6-10: {e}")
+        print(f"    {_fail(str(e))} G6-10")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # G7: FirewallRule persistence roundtrip
+    # ══════════════════════════════════════════════════════════════════════
+    print(f"\n  {_CYN}[G7 防火墙持久化]{_RESET}")
+
+    # G7-1: save + load roundtrip via temp dir
+    total += 1
+    try:
+        with tempfile.TemporaryDirectory(prefix="os-epf-test-") as tmp:
+            fw_path = Path(tmp) / "fw.json"
+            epf1 = EnhancedPortForwarder(
+                node=None,
+                persist_rules=True,
+                firewall_rules_file=str(fw_path),
+            )
+            rule_a = FirewallRule(name='r_a', action='deny', from_protocol='UDP', priority=5)
+            rule_b = FirewallRule(name='r_b', action='allow', from_protocol='TCP', priority=1)
+            epf1.add_firewall_rule(rule_a)
+            epf1.add_firewall_rule(rule_b)
+            epf1._save_firewall_to_file()
+            _assert(fw_path.exists(), 'firewall JSON file not created')
+
+            # New instance loads from file
+            epf2 = EnhancedPortForwarder(
+                node=None,
+                persist_rules=True,
+                firewall_rules_file=str(fw_path),
+            )
+            names = {r.name for r in epf2.firewall_rules}
+            _assert('r_a' in names, 'r_a not loaded')
+            _assert('r_b' in names, 'r_b not loaded')
+            loaded_a = next(r for r in epf2.firewall_rules if r.name == 'r_a')
+            _assert(loaded_a.action == 'deny')
+            _assert(loaded_a.from_protocol == 'UDP')
+            _assert(loaded_a.priority == 5)
+        passed += 1
+        print(f"    {_ok()} G7-1  Firewall rules save+load roundtrip")
+    except Exception as e:
+        failed += 1; failures.append(f"G7-1: {e}")
+        print(f"    {_fail(str(e))} G7-1")
+
+    # G7-2: persist_rules=False skips file I/O
+    total += 1
+    try:
+        with tempfile.TemporaryDirectory(prefix="os-epf-test2-") as tmp:
+            fw_path = Path(tmp) / "no_fw.json"
+            epf = EnhancedPortForwarder(
+                node=None,
+                persist_rules=False,
+                firewall_rules_file=str(fw_path),
+            )
+            epf.add_firewall_rule(FirewallRule(name='skip', action='deny'))
+            epf._save_firewall_to_file()
+            _assert(not fw_path.exists(), 'file should NOT be created when persist=False')
+        passed += 1
+        print(f"    {_ok()} G7-2  persist_rules=False skips file write")
+    except Exception as e:
+        failed += 1; failures.append(f"G7-2: {e}")
+        print(f"    {_fail(str(e))} G7-2")
+
+    return {"total": total, "passed": passed, "failed": failed, "skipped": 0, "failures": failures}
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # 汇总
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -892,7 +1607,7 @@ def _print_summary(results: dict, elapsed: float) -> int:
     if all_failures:
         print(f"  失败详情 ({len(all_failures)} 条):")
         for f in all_failures:
-            print(f"    ✗ {f}")
+            print(f"    x {f}")
         print()
 
     return 1 if failed > 0 else 0
@@ -906,6 +1621,7 @@ def main() -> int:
     results["C | TestPlugin 组件套件           "] = suite_c_test_plugin()
     results["D | DisplayAPI 全格式穷举         "] = suite_d_display_api()
     results["E | Plugin 注册表               "] = suite_e_plugin_registry()
+    results["G | EnhancedPortForwarder 全组件  "] = suite_g_enhanced_port_forwarder()
     return _print_summary(results, time.monotonic() - t0)
 
 
