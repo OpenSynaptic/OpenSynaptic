@@ -348,6 +348,7 @@ class EnhancedPortForwarder(PortForwarder):
             'denied_packets': 0,
             'converted_packets': 0,
             'proxied_packets': 0,
+            'shaped_packets': 0,
             'shaped_dropped_packets': 0,
             'middleware_executed': 0,
         })
@@ -610,6 +611,8 @@ class EnhancedPortForwarder(PortForwarder):
                                 f'Dropped: shaper needs {wait_time:.3f}s',
                                 {'medium': medium, 'wait_time': wait_time})
                     return False
+                if self.features_enabled.get('traffic_shaping', True):
+                    self.stats['shaped_packets'] += 1
 
                 # Step 4 – protocol conversion
                 packet = self.convert_protocol(packet, medium or '', medium or '')
