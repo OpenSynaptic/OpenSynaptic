@@ -106,6 +106,7 @@ sdist-include = [
     "src/opensynaptic/core/rscore/rust/tests/",
     "src/opensynaptic/core/rscore/rust/benches/",
 ]
+
 # Exclude source/build files that must not appear in binary wheels.
 # (They are kept in the sdist via sdist-include.)
 exclude = [
@@ -126,12 +127,5 @@ exclude = [
     "src/opensynaptic/utils/c/bin/*.exp",
     "src/opensynaptic/utils/c/bin/*.tmp.*",
 ]
-sdist-include = [
-    "LICENSE", 
-    "README.md",
-    "src/opensynaptic/core/rscore/rust/.cargo/config.toml",
-    "src/opensynaptic/",
-    "src/opensynaptic_rscore/",
-]
-license = "Apache-2.0"
 
+license = "Apache-2.0"
