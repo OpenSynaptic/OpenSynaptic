@@ -85,22 +85,40 @@ manifest-path = "src/opensynaptic/core/rscore/rust/Cargo.toml"
 features = ["python-module"]
 python-source = "src"
 python-packages = ["opensynaptic", "opensynaptic_rscore"]
+
 include = [
     { path = "src/opensynaptic/utils/c/bin/*.dll", format = "wheel" },
     { path = "src/opensynaptic/utils/c/bin/*.so", format = "wheel" },
     { path = "src/opensynaptic/utils/c/bin/*.dylib", format = "wheel" },
 ]
+
+sdist-include = [
+    "LICENSE",
+    "README.md",
+    "src/opensynaptic/",
+    "src/opensynaptic_rscore/",
+    "src/opensynaptic/core/rscore/rust/",
+    "src/opensynaptic/core/rscore/rust/src/",
+    "src/opensynaptic/core/rscore/rust/Cargo.toml",
+    "src/opensynaptic/core/rscore/rust/Cargo.lock",
+    "src/opensynaptic/core/rscore/rust/.cargo/",
+    "src/opensynaptic/core/rscore/rust/examples/",
+    "src/opensynaptic/core/rscore/rust/tests/",
+    "src/opensynaptic/core/rscore/rust/benches/",
+]
 # Exclude source/build files that must not appear in binary wheels.
 # (They are kept in the sdist via sdist-include.)
 exclude = [
     # Rust source — compiled into the .pyd, not needed at runtime
-    "src/opensynaptic/core/rscore/rust/src/**",
-    "src/opensynaptic/core/rscore/rust/Cargo.toml",
-    "src/opensynaptic/core/rscore/rust/Cargo.lock",
-    "src/opensynaptic/core/rscore/rust/.cargo/**",
+    { path = "src/opensynaptic/core/rscore/rust/src/**", format = "wheel" },
+    { path = "src/opensynaptic/core/rscore/rust/Cargo.toml", format = "wheel" },
+    { path = "src/opensynaptic/core/rscore/rust/Cargo.lock", format = "wheel" },
+    { path = "src/opensynaptic/core/rscore/rust/.cargo/**", format = "wheel" },
+
     # C source — compiled into .dll/.so by build_native.py, not needed at runtime
     "src/opensynaptic/utils/base62/base62_native.c",
     "src/opensynaptic/utils/security/security_native.c",
+
     # MSVC intermediate/import-library files (generated on Windows dev machines)
     "src/opensynaptic/utils/c/*.obj",
     "src/opensynaptic/utils/c/bin/*.obj",
